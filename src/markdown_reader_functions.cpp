@@ -1,5 +1,4 @@
 #include "markdown_reader.hpp"
-#include "markdown_reader_files.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
