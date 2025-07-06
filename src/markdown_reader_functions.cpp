@@ -1,4 +1,5 @@
 #include "markdown_reader.hpp"
+#include "markdown_types.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -15,59 +16,19 @@ namespace duckdb {
 // Bind Data Structures
 //===--------------------------------------------------------------------===//
 
-struct MarkdownReadDocumentBindData : public FunctionData {
+struct MarkdownReadDocumentBindData : public TableFunctionData {
     vector<string> files;
     MarkdownReader::MarkdownReadOptions options;
-    
-    unique_ptr<FunctionData> Copy() const override {
-        auto result = make_uniq<MarkdownReadDocumentBindData>();
-        result->files = files;
-        result->options = options;
-        return std::move(result);
-    }
-    
-    bool Equals(const FunctionData &other_p) const override {
-        auto &other = other_p.Cast<MarkdownReadDocumentBindData>();
-        return files == other.files;
-    }
+    idx_t current_file_index = 0;
 };
 
-struct MarkdownReadSectionBindData : public FunctionData {
+struct MarkdownReadSectionBindData : public TableFunctionData {
     vector<string> files;
     MarkdownReader::MarkdownReadOptions options;
-    
-    unique_ptr<FunctionData> Copy() const override {
-        auto result = make_uniq<MarkdownReadSectionBindData>();
-        result->files = files;
-        result->options = options;
-        return std::move(result);
-    }
-    
-    bool Equals(const FunctionData &other_p) const override {
-        auto &other = other_p.Cast<MarkdownReadSectionBindData>();
-        return files == other.files;
-    }
+    vector<markdown_utils::MarkdownSection> all_sections;
+    idx_t current_section_index = 0;
 };
 
-//===--------------------------------------------------------------------===//
-// Local State for Execution
-//===--------------------------------------------------------------------===//
-
-struct MarkdownReadDocumentState : public LocalTableFunctionState {
-    idx_t file_index;
-    bool finished;
-    
-    MarkdownReadDocumentState() : file_index(0), finished(false) {}
-};
-
-struct MarkdownReadSectionState : public LocalTableFunctionState {
-    idx_t file_index;
-    idx_t section_index;
-    vector<markdown_utils::MarkdownSection> current_sections;
-    bool finished;
-    
-    MarkdownReadSectionState() : file_index(0), section_index(0), finished(false) {}
-};
 
 //===--------------------------------------------------------------------===//
 // Helper Functions
@@ -160,26 +121,20 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
     return std::move(result);
 }
 
-unique_ptr<LocalTableFunctionState> MarkdownReadDocumentInit(ExecutionContext &context, TableFunctionInitInput &input,
-                                                            GlobalTableFunctionState *global_state) {
-    return make_uniq<MarkdownReadDocumentState>();
-}
-
 void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context,
                                                   TableFunctionInput &input,
                                                   DataChunk &output) {
     auto &bind_data = input.bind_data->Cast<MarkdownReadDocumentBindData>();
-    auto &state = input.local_state->Cast<MarkdownReadDocumentState>();
     
-    if (state.finished || state.file_index >= bind_data.files.size()) {
+    if (bind_data.current_file_index >= bind_data.files.size()) {
         output.SetCardinality(0);
         return;
     }
     
     idx_t output_idx = 0;
     
-    while (state.file_index < bind_data.files.size() && output_idx < STANDARD_VECTOR_SIZE) {
-        auto &file_path = bind_data.files[state.file_index];
+    while (bind_data.current_file_index < bind_data.files.size() && output_idx < STANDARD_VECTOR_SIZE) {
+        auto &file_path = bind_data.files[bind_data.current_file_index];
         
         try {
             // Read file content
@@ -243,11 +198,7 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context,
             throw InvalidInputException("Error reading Markdown file %s: %s", file_path, e.what());
         }
         
-        state.file_index++;
-    }
-    
-    if (state.file_index >= bind_data.files.size()) {
-        state.finished = true;
+        bind_data.current_file_index++;
     }
     
     output.SetCardinality(output_idx);
@@ -273,6 +224,23 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
     
     // Parse options
     ParseMarkdownOptions(input, result->options);
+    
+    // Pre-process all files to extract sections
+    for (const auto &file_path : result->files) {
+        try {
+            string content = ReadMarkdownFile(context, file_path, result->options);
+            auto sections = ProcessSections(content, result->options);
+            
+            // Add file path to each section for later retrieval
+            for (auto &section : sections) {
+                section.title = file_path + "|" + section.title; // Store file path temporarily
+                result->all_sections.push_back(section);
+            }
+        } catch (const std::exception &e) {
+            // Skip files that can't be read
+            continue;
+        }
+    }
     
     // Define return columns for sections
     names.emplace_back("file_path");
@@ -305,59 +273,30 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
     return std::move(result);
 }
 
-unique_ptr<LocalTableFunctionState> MarkdownReadSectionInit(ExecutionContext &context, TableFunctionInitInput &input,
-                                                           GlobalTableFunctionState *global_state) {
-    return make_uniq<MarkdownReadSectionState>();
-}
-
 void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context,
                                                  TableFunctionInput &input,
                                                  DataChunk &output) {
     auto &bind_data = input.bind_data->Cast<MarkdownReadSectionBindData>();
-    auto &state = input.local_state->Cast<MarkdownReadSectionState>();
     
-    if (state.finished) {
+    if (bind_data.current_section_index >= bind_data.all_sections.size()) {
         output.SetCardinality(0);
         return;
     }
     
     idx_t output_idx = 0;
     
-    while (output_idx < STANDARD_VECTOR_SIZE) {
-        // If we need to load a new file
-        if (state.current_sections.empty() || state.section_index >= state.current_sections.size()) {
-            if (state.file_index >= bind_data.files.size()) {
-                state.finished = true;
-                break;
-            }
-            
-            // Load next file
-            auto &file_path = bind_data.files[state.file_index];
-            
-            try {
-                string content = ReadMarkdownFile(context, file_path, bind_data.options);
-                state.current_sections = ProcessSections(content, bind_data.options);
-                state.section_index = 0;
-                
-                // If no sections found, move to next file
-                if (state.current_sections.empty()) {
-                    state.file_index++;
-                    continue;
-                }
-                
-            } catch (const std::exception &e) {
-                throw InvalidInputException("Error reading Markdown file %s: %s", file_path, e.what());
-            }
-        }
+    while (bind_data.current_section_index < bind_data.all_sections.size() && output_idx < STANDARD_VECTOR_SIZE) {
+        const auto &section = bind_data.all_sections[bind_data.current_section_index];
         
-        // Output current section
-        const auto &section = state.current_sections[state.section_index];
-        const auto &file_path = bind_data.files[state.file_index];
+        // Extract file path from temporarily stored title (file_path|actual_title)
+        auto pipe_pos = section.title.find('|');
+        string file_path = section.title.substr(0, pipe_pos);
+        string actual_title = section.title.substr(pipe_pos + 1);
         
         output.data[0].SetValue(output_idx, Value(file_path));
         output.data[1].SetValue(output_idx, Value(section.id));
         output.data[2].SetValue(output_idx, Value(section.level));
-        output.data[3].SetValue(output_idx, Value(section.title));
+        output.data[3].SetValue(output_idx, Value(actual_title));
         output.data[4].SetValue(output_idx, Value(section.content));
         output.data[5].SetValue(output_idx, section.parent_id.empty() ? Value() : Value(section.parent_id));
         output.data[6].SetValue(output_idx, Value(static_cast<int32_t>(section.position)));
@@ -365,14 +304,7 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context,
         output.data[8].SetValue(output_idx, Value::BIGINT(static_cast<int64_t>(section.end_line)));
         
         output_idx++;
-        state.section_index++;
-        
-        // If we've finished all sections in this file, move to next file
-        if (state.section_index >= state.current_sections.size()) {
-            state.file_index++;
-            state.current_sections.clear();
-            state.section_index = 0;
-        }
+        bind_data.current_section_index++;
     }
     
     output.SetCardinality(output_idx);
@@ -384,7 +316,7 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context,
 
 void MarkdownReader::RegisterFunction(DatabaseInstance &db) {
     // Register read_markdown function
-    TableFunction read_markdown_func("read_markdown", {LogicalType::VARCHAR}, MarkdownReadDocumentsFunction, MarkdownReadDocumentsBind, MarkdownReadDocumentInit);
+    TableFunction read_markdown_func("read_markdown", {LogicalType::VARCHAR}, MarkdownReadDocumentsFunction, MarkdownReadDocumentsBind);
     
     // Add named parameters
     read_markdown_func.named_parameters["extract_metadata"] = LogicalType::BOOLEAN;
@@ -396,7 +328,7 @@ void MarkdownReader::RegisterFunction(DatabaseInstance &db) {
     ExtensionUtil::RegisterFunction(db, read_markdown_func);
     
     // Register read_markdown_sections function
-    TableFunction read_sections_func("read_markdown_sections", {LogicalType::VARCHAR}, MarkdownReadSectionsFunction, MarkdownReadSectionsBind, MarkdownReadSectionInit);
+    TableFunction read_sections_func("read_markdown_sections", {LogicalType::VARCHAR}, MarkdownReadSectionsFunction, MarkdownReadSectionsBind);
     
     // Add named parameters for sections
     read_sections_func.named_parameters["extract_metadata"] = LogicalType::BOOLEAN;
