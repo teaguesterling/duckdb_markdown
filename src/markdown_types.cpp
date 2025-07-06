@@ -92,12 +92,9 @@ void MarkdownTypes::Register(DatabaseInstance& db) {
     ExtensionUtil::RegisterType(db, "markdown", markdown_type);
     ExtensionUtil::RegisterType(db, "md", markdown_type);
     
-    // Register Markdown<->HTML cast functions
-    ExtensionUtil::RegisterCastFunction(db, markdown_type, LogicalType::VARCHAR, MarkdownToHTMLCast);
-
-    // Register Markdown<->VARCHAR cast functions
-    ExtensionUtil::RegisterCastFunction(db, LogicalType::VARCHAR, markdown_type, VarcharToMarkdownCast);
-    ExtensionUtil::RegisterCastFunction(db, markdown_type, LogicalType::VARCHAR, MarkdownToVarcharCast);
+    // Register Markdown<->VARCHAR cast functions (isomorphic - raw markdown)
+    ExtensionUtil::RegisterCastFunction(db, LogicalType(LogicalTypeId::VARCHAR), markdown_type, VarcharToMarkdownCast);
+    ExtensionUtil::RegisterCastFunction(db, markdown_type, LogicalType(LogicalTypeId::VARCHAR), MarkdownToVarcharCast);
 }
 
 } // namespace duckdb

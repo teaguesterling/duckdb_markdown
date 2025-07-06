@@ -1,0 +1,260 @@
+mkdir -p build/release
+cmake  -DEXTENSION_STATIC_BUILD=1 -DDUCKDB_EXTENSION_CONFIGS='/mnt/aux-data/teague/Projects/duckdb_markdown/extension_config.cmake'   -DOSX_BUILD_ARCH=   -DVCPKG_BUILD=1 -DCMAKE_TOOLCHAIN_FILE='/home/teague/Dev/vcpkg/scripts/buildsystems/vcpkg.cmake' -DDUCKDB_EXPLICIT_PLATFORM='' -DCUSTOM_LINKER= -DOVERRIDE_GIT_DESCRIBE="" -DUNITTEST_ROOT_DIRECTORY="/mnt/aux-data/teague/Projects/duckdb_markdown/" -DBENCHMARK_ROOT_DIRECTORY="/mnt/aux-data/teague/Projects/duckdb_markdown/" -DENABLE_UNITTEST_CPP_TESTS=FALSE  -DVCPKG_MANIFEST_DIR='/mnt/aux-data/teague/Projects/duckdb_markdown/' -DCMAKE_BUILD_TYPE=Release -S "./duckdb/" -B build/release
+-- Running vcpkg install
+Detecting compiler hash for triplet x64-linux...
+Compiler found: /usr/bin/c++
+The following packages are already installed:
+    cmark-gfm:x64-linux@0.29.0.13
+  * vcpkg-cmake:x64-linux@2024-04-23
+  * vcpkg-cmake-config:x64-linux@2024-05-23
+cmark-gfm provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(cmark-gfm CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE libcmark-gfm_static)
+
+  find_package(cmark-gfm-extensions CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE libcmark-gfm-extensions_static)
+
+cmark-gfm provides pkg-config modules:
+
+  # CommonMark parsing, rendering, and manipulation with GitHub Flavored Markdown extensions
+  libcmark-gfm
+
+All requested installations completed successfully in: 62.9 us
+-- Running vcpkg install - done
+-- git hash 2063dda3e6, version v1.3.1, extension folder v1.3.1
+-- Extensions will be deployed to: /mnt/aux-data/teague/Projects/duckdb_markdown/build/release/repository
+-- Load extension 'markdown' from '/mnt/aux-data/teague/Projects/duckdb_markdown' @ de8e403
+-- Load extension 'core_functions' from '/mnt/aux-data/teague/Projects/duckdb_markdown/duckdb/extensions' @ v1.3.1
+-- Load extension 'parquet' from '/mnt/aux-data/teague/Projects/duckdb_markdown/duckdb/extensions' @ v1.3.1
+-- Load extension 'jemalloc' from '/mnt/aux-data/teague/Projects/duckdb_markdown/duckdb/extensions' @ v1.3.1
+CMake Deprecation Warning at /mnt/aux-data/teague/Projects/duckdb_markdown/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Extensions linked into DuckDB: [markdown, core_functions, parquet, jemalloc]
+-- Tests loaded for extensions: [markdown]
+-- Configuring done (2.0s)
+-- Generating done (0.6s)
+-- Build files have been written to: /mnt/aux-data/teague/Projects/duckdb_markdown/build/release
+cmake --build build/release --config Release
+gmake[1]: Entering directory '/mnt/aux-data/teague/Projects/duckdb_markdown/build/release'
+[  6%] Built target duckdb_zstd
+[  6%] Built target duckdb_platform_binary
+[  7%] Built target duckdb_platform
+[  7%] Built target duckdb_optimizer
+[  8%] Built target duckdb_optimizer_compressed_materialization
+[  8%] Built target duckdb_optimizer_join_order
+[  8%] Built target duckdb_optimizer_matcher
+[  8%] Built target duckdb_optimizer_pullup
+[  8%] Built target duckdb_optimizer_pushdown
+[  8%] Built target duckdb_optimizer_rules
+[  9%] Built target duckdb_optimizer_statistics_expr
+[  9%] Built target duckdb_optimizer_statistics_op
+[ 10%] Built target duckdb_planner
+[ 10%] Built target duckdb_planner_expression
+[ 10%] Built target duckdb_bind_expression
+[ 10%] Built target duckdb_bind_query_node
+[ 11%] Built target duckdb_bind_statement
+[ 11%] Built target duckdb_bind_tableref
+[ 11%] Built target duckdb_expression_binders
+[ 11%] Built target duckdb_planner_filter
+[ 11%] Built target duckdb_planner_operator
+[ 11%] Built target duckdb_planner_subquery
+[ 11%] Built target duckdb_parser
+[ 11%] Built target duckdb_constraints
+[ 11%] Built target duckdb_expression
+[ 11%] Built target duckdb_parsed_data
+[ 11%] Built target duckdb_query_node
+[ 11%] Built target duckdb_statement
+[ 11%] Built target duckdb_parser_tableref
+[ 11%] Built target duckdb_transformer_constraint
+[ 12%] Built target duckdb_transformer_expression
+[ 12%] Built target duckdb_transformer_helpers
+[ 12%] Built target duckdb_transformer_statement
+[ 12%] Built target duckdb_transformer_tableref
+[ 12%] Built target duckdb_function
+[ 12%] Built target duckdb_func_aggr
+[ 12%] Built target duckdb_aggr_distr
+[ 12%] Built target duckdb_func_cast
+[ 12%] Built target duckdb_union_cast
+[ 12%] Built target duckdb_func_pragma
+[ 12%] Built target duckdb_func_scalar
+[ 12%] Built target duckdb_func_compressed_materialization
+[ 12%] Built target duckdb_func_date
+[ 13%] Built target duckdb_func_generic_main
+[ 13%] Built target duckdb_func_list_nested
+[ 13%] Built target duckdb_function_map
+[ 13%] Built target duckdb_func_ops_main
+[ 13%] Built target duckdb_func_seq
+[ 14%] Built target duckdb_func_string_main
+[ 14%] Built target duckdb_func_string_regexp
+[ 14%] Built target duckdb_func_struct_main
+[ 14%] Built target duckdb_func_system
+[ 14%] Built target duckdb_func_table
+[ 14%] Built target duckdb_table_func_system
+[ 15%] Built target duckdb_func_table_version
+[ 15%] Built target duckdb_arrow_conversion
+[ 15%] Built target duckdb_func_window
+[ 15%] Built target duckdb_catalog
+[ 15%] Built target duckdb_catalog_entries
+[ 15%] Built target duckdb_catalog_entries_dependency
+[ 15%] Built target duckdb_catalog_default_entries
+[ 16%] Built target duckdb_common
+[ 16%] Built target duckdb_adbc
+[ 17%] Built target duckdb_adbc_nanoarrow
+[ 17%] Built target duckdb_common_arrow
+[ 17%] Built target duckdb_common_arrow_appender
+[ 17%] Built target duckdb_common_crypto
+[ 17%] Built target duckdb_common_enums
+[ 18%] Built target duckdb_common_exception
+[ 18%] Built target duckdb_common_multi_file
+[ 18%] Built target duckdb_common_operators
+[ 18%] Built target duckdb_progress_bar
+[ 19%] Built target duckdb_common_tree_renderer
+[ 19%] Built target duckdb_row_operations
+[ 19%] Built target duckdb_common_serializer
+[ 19%] Built target duckdb_sort
+[ 19%] Built target duckdb_common_types
+[ 19%] Built target duckdb_common_types_column
+[ 19%] Built target duckdb_common_types_row
+[ 19%] Built target duckdb_value_operations
+[ 21%] Built target duckdb_vector_operations
+[ 21%] Built target duckdb_logging
+[ 21%] Built target duckdb_execution
+[ 21%] Built target duckdb_expression_executor
+[ 21%] Built target duckdb_nested_loop_join
+[ 21%] Built target duckdb_operator_aggregate
+[ 21%] Built target duckdb_csv_buffer_manager
+[ 22%] Built target duckdb_csv_encode
+[ 22%] Built target duckdb_csv_scanner
+[ 22%] Built target duckdb_csv_sniffer
+[ 22%] Built target duckdb_csv_state_machine
+[ 22%] Built target duckdb_operator_csv_table_function
+[ 22%] Built target duckdb_csv_util
+[ 23%] Built target duckdb_operator_filter
+[ 23%] Built target duckdb_operator_helper
+[ 23%] Built target duckdb_operator_join
+[ 23%] Built target duckdb_operator_order
+[ 23%] Built target duckdb_operator_persistent
+[ 24%] Built target duckdb_operator_projection
+[ 24%] Built target duckdb_operator_scan
+[ 24%] Built target duckdb_operator_schema
+[ 24%] Built target duckdb_operator_set
+[ 24%] Built target duckdb_physical_plan
+[ 25%] Built target duckdb_execution_index
+[ 25%] Built target duckdb_execution_index_art
+[ 25%] Built target duckdb_sample
+[ 26%] Built target duckdb_main
+[ 26%] Built target duckdb_main_capi
+[ 26%] Built target duckdb_main_capi_cast
+[ 26%] Built target duckdb_generated_extension_loader
+[ 27%] Built target duckdb_main_extension
+[ 27%] Built target duckdb_common_http
+[ 28%] Built target duckdb_main_relation
+[ 28%] Built target duckdb_main_secret
+[ 28%] Built target duckdb_main_settings
+[ 28%] Built target duckdb_main_buffered_data
+[ 28%] Built target duckdb_main_chunk_scan_state
+[ 28%] Built target duckdb_parallel
+[ 28%] Built target duckdb_storage
+[ 29%] Built target duckdb_storage_buffer
+[ 29%] Built target duckdb_storage_checkpoint
+[ 29%] Built target duckdb_storage_compression
+[ 29%] Built target duckdb_storage_compression_chimp
+[ 29%] Built target duckdb_storage_compression_alp
+[ 29%] Built target duckdb_storage_compression_roaring
+[ 29%] Built target duckdb_storage_compression_dictionary
+[ 30%] Built target duckdb_storage_compression_dict_fsst
+[ 30%] Built target duckdb_storage_metadata
+[ 30%] Built target duckdb_storage_serialization
+[ 31%] Built target duckdb_storage_statistics
+[ 31%] Built target duckdb_storage_table
+[ 31%] Built target duckdb_transaction
+[ 33%] Built target duckdb_verification
+[ 34%] Built target duckdb_core_functions_algebraic
+[ 35%] Built target duckdb_core_functions_distributive
+[ 35%] Built target duckdb_core_functions_holistic
+[ 35%] Built target duckdb_core_functions_nested
+[ 36%] Built target duckdb_core_functions_regression
+[ 36%] Built target duckdb_core_functions_array
+[ 36%] Built target duckdb_core_functions_bit
+[ 36%] Built target duckdb_core_functions_blob
+[ 36%] Built target duckdb_core_functions_date
+[ 36%] Built target duckdb_core_functions_debug
+[ 36%] Built target duckdb_core_functions_enum
+[ 36%] Built target duckdb_core_functions_generic
+[ 36%] Built target duckdb_core_functions_list
+[ 37%] Built target duckdb_core_functions_map
+[ 37%] Built target duckdb_core_functions_math
+[ 37%] Built target duckdb_core_functions_operators
+[ 37%] Built target duckdb_core_functions_random
+[ 37%] Built target duckdb_core_functions_string
+[ 37%] Built target duckdb_core_functions_struct
+[ 37%] Built target duckdb_core_functions_union
+[ 37%] Built target duckdb_parquet_decoders
+[ 37%] Built target duckdb_parquet_readers
+[ 38%] Built target duckdb_parquet_writers
+[ 50%] Built target jemalloc
+[ 50%] Built target duckdb_fmt
+[ 52%] Built target duckdb_pg_query
+[ 57%] Built target duckdb_re2
+[ 58%] Built target duckdb_miniz
+[ 59%] Built target duckdb_utf8proc
+[ 60%] Built target duckdb_hyperloglog
+[ 61%] Built target duckdb_skiplistlib
+[ 62%] Built target duckdb_fastpforlib
+[ 66%] Built target duckdb_mbedtls
+[ 67%] Built target duckdb_fsst
+[ 67%] Built target duckdb_yyjson
+[ 67%] Built target jemalloc_extension
+[ 77%] Built target parquet_extension
+[ 77%] Built target core_functions_extension
+[ 79%] Built target markdown_extension
+[ 79%] Built target duckdb_static
+[ 79%] Linking CXX shared library loadable_extension_optimizer_demo.duckdb_extension
+[ 79%] Built target loadable_extension_optimizer_demo_loadable_extension
+[ 79%] Linking CXX shared library markdown.duckdb_extension
+[ 80%] Built target markdown_loadable_extension
+[ 80%] Linking CXX shared library core_functions.duckdb_extension
+[ 81%] Built target core_functions_loadable_extension
+[ 81%] Linking CXX shared library parquet.duckdb_extension
+[ 92%] Built target parquet_loadable_extension
+[ 92%] Linking CXX shared library loadable_extension_demo.duckdb_extension
+[ 93%] Built target loadable_extension_demo_loadable_extension
+[ 93%] repository
+[ 93%] Built target duckdb_local_extension_repo
+[ 93%] Linking CXX shared library libduckdb.so
+[ 93%] Built target duckdb
+[ 93%] Built target sqlite3_api_wrapper_sqlite3
+[ 93%] Built target sqlite3_udf_api
+[ 94%] Built target sqlite3_api_wrapper_static
+[ 94%] Linking CXX shared library libsqlite3_api_wrapper.so
+[ 94%] Built target sqlite3_api_wrapper
+[ 94%] Linking CXX executable test_sqlite3_api_wrapper
+[ 94%] Built target test_sqlite3_api_wrapper
+[ 95%] Built target duckdb_linenoise
+[ 96%] Linking CXX executable ../../duckdb
+[ 96%] Built target shell
+[ 97%] Building CXX object test/helpers/CMakeFiles/test_helpers.dir/test_helpers.cpp.o
+[ 97%] Building CXX object test/helpers/CMakeFiles/test_helpers.dir/capi_tester.cpp.o
+[ 97%] Building CXX object test/helpers/CMakeFiles/test_helpers.dir/pid.cpp.o
+[ 97%] Linking CXX static library libtest_helpers.a
+[ 97%] Built target test_helpers
+[ 98%] Building CXX object test/sqlite/CMakeFiles/test_sqlite.dir/ub_test_sqlite.cpp.o
+[ 98%] Built target test_sqlite
+[ 98%] Building CXX object test/persistence/CMakeFiles/test_persistence.dir/ub_test_persistence.cpp.o
+[ 98%] Built target test_persistence
+[ 98%] Building CXX object test/CMakeFiles/unittest.dir/unittest.cpp.o
+[ 99%] Linking CXX executable unittest
+[ 99%] Built target unittest
+[ 99%] Building CXX object third_party/imdb/CMakeFiles/imdb.dir/imdb.cpp.o
+[100%] Linking CXX static library libimdb.a
+[100%] Built target imdb
+gmake[1]: Leaving directory '/mnt/aux-data/teague/Projects/duckdb_markdown/build/release'

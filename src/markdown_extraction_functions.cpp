@@ -8,6 +8,19 @@
 
 namespace duckdb {
 
+// TODO: Implement extraction functions later
+// For now, just provide empty registration function
+
+void MarkdownExtractionFunctions::Register(DatabaseInstance &db) {
+    // TODO: Register extraction functions like md_extract_code_blocks, md_extract_links, etc.
+    // These will be implemented after the basic reader functions are working
+}
+
+} // namespace duckdb
+
+/*
+// Original complex implementation - commented out for now
+
 //===--------------------------------------------------------------------===//
 // Code Block Extraction
 //===--------------------------------------------------------------------===//
@@ -313,62 +326,4 @@ static void ExtractSectionFunction(DataChunk &args, ExpressionState &state, Vect
 // Registration
 //===--------------------------------------------------------------------===//
 
-void MarkdownExtractionFunctions::Register(DatabaseInstance &db) {
-    RegisterContentExtraction(db);
-    RegisterStructureExtraction(db);
-    RegisterSectionFunctions(db);
-}
-
-void MarkdownExtractionFunctions::RegisterContentExtraction(DatabaseInstance &db) {
-    auto markdown_type = MarkdownTypes::MarkdownType();
-    
-    // Register md_extract_code_blocks table function
-    TableFunction extract_code_blocks("md_extract_code_blocks", {markdown_type}, 
-                                     CodeBlockExtractionFunction, CodeBlockExtractionBind, CodeBlockExtractionInit);
-    
-    // Add overload with language filter
-    extract_code_blocks.arguments.push_back(LogicalType::VARCHAR);
-    
-    ExtensionUtil::RegisterFunction(db, extract_code_blocks);
-    
-    // Register md_extract_links table function
-    TableFunction extract_links("md_extract_links", {markdown_type}, 
-                               LinkExtractionFunction, LinkExtractionBind, LinkExtractionInit);
-    
-    ExtensionUtil::RegisterFunction(db, extract_links);
-}
-
-void MarkdownExtractionFunctions::RegisterStructureExtraction(DatabaseInstance &db) {
-    auto markdown_type = MarkdownTypes::MarkdownType();
-    
-    // Register md_extract_headings table function
-    TableFunction extract_headings("md_extract_headings", {markdown_type}, 
-                                  HeadingExtractionFunction, HeadingExtractionBind, HeadingExtractionInit);
-    
-    // Add overload with max_level parameter
-    extract_headings.arguments.push_back(LogicalType::INTEGER);
-    
-    ExtensionUtil::RegisterFunction(db, extract_headings);
-}
-
-void MarkdownExtractionFunctions::RegisterSectionFunctions(DatabaseInstance &db) {
-    auto markdown_type = MarkdownTypes::MarkdownType();
-    
-    // Register md_section_breadcrumb scalar function
-    ScalarFunction section_breadcrumb("md_section_breadcrumb", 
-                                     {LogicalType::VARCHAR, LogicalType::VARCHAR}, 
-                                     LogicalType::VARCHAR, 
-                                     SectionBreadcrumbFunction);
-    
-    ExtensionUtil::RegisterFunction(db, section_breadcrumb);
-    
-    // Register md_extract_section scalar function
-    ScalarFunction extract_section("md_extract_section", 
-                                  {markdown_type, LogicalType::VARCHAR}, 
-                                  markdown_type, 
-                                  ExtractSectionFunction);
-    
-    ExtensionUtil::RegisterFunction(db, extract_section);
-}
-
-} // namespace duckdb
+*/

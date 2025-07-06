@@ -26,16 +26,23 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
         
         if (StringUtil::Contains(path, "*") || StringUtil::Contains(path, "?")) {
             // Glob pattern
-            files = fs.Glob(path, context);
+            auto glob_results = fs.Glob(path);
+            for (const auto &file : glob_results) {
+                files.push_back(file.path);
+            }
         } else {
             // Check if it's a directory
             if (fs.DirectoryExists(path)) {
                 // Add markdown files from directory
-                auto dir_files = fs.Glob(fs.JoinPath(path, "*.md"), context);
-                auto markdown_files = fs.Glob(fs.JoinPath(path, "*.markdown"), context);
+                auto dir_files = fs.Glob(fs.JoinPath(path, "*.md"));
+                auto markdown_files = fs.Glob(fs.JoinPath(path, "*.markdown"));
                 
-                files.insert(files.end(), dir_files.begin(), dir_files.end());
-                files.insert(files.end(), markdown_files.begin(), markdown_files.end());
+                for (const auto &file : dir_files) {
+                    files.push_back(file.path);
+                }
+                for (const auto &file : markdown_files) {
+                    files.push_back(file.path);
+                }
             } else {
                 // Single file
                 files.push_back(path);
@@ -59,11 +66,15 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
     
     // Filter for markdown files and validate existence
     vector<string> markdown_files;
-    const auto &fs = FileSystem::GetFileSystem(context);
+    auto &fs = FileSystem::GetFileSystem(context);
     
     for (const auto &file : files) {
         // Check if file has markdown extension
-        string extension = fs.ExtractFileExtension(file);
+        string extension = "";
+        auto dot_pos = file.find_last_of('.');
+        if (dot_pos != string::npos) {
+            extension = file.substr(dot_pos + 1);
+        }
         std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
         
         if (extension == "md" || extension == "markdown") {
@@ -89,20 +100,19 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 
 string MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &file_path,
                                        const MarkdownReadOptions &options) {
-    const auto &fs = FileSystem::GetFileSystem(context);
+    auto &fs = FileSystem::GetFileSystem(context);
+    
+    // Read file content
+    auto file_handle = fs.OpenFile(file_path, FileOpenFlags::FILE_FLAGS_READ);
+    const auto file_size = fs.GetFileSize(*file_handle);
     
     // Check file size
     if (options.maximum_file_size > 0) {
-        const auto file_size = fs.GetFileSize(file_path);
         if (file_size > options.maximum_file_size) {
             throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", 
                                        file_path, file_size, options.maximum_file_size);
         }
     }
-    
-    // Read file content
-    auto file_handle = fs.OpenFile(file_path, FileFlags::FILE_FLAGS_READ);
-    const auto file_size = fs.GetFileSize(file_path);
     
     string content;
     content.resize(file_size);
@@ -167,23 +177,8 @@ void RegisterMarkdownCopyFunctions(DatabaseInstance& db) {
     // COPY table TO 'file.md' (FORMAT MARKDOWN);
 }
 
-CopyFunction GetMarkdownCopyFunction() {
-    // TODO: Implement markdown copy function
-    // This is a placeholder that would need to be implemented
-    // to support COPY operations with markdown files
-    
-    CopyFunction copy_function("markdown");
-    copy_function.copy_to_bind = nullptr;  // TODO: Implement markdown copy_to_bind
-    copy_function.copy_to_initialize_local = nullptr;  // TODO: Implement
-    copy_function.copy_to_sink = nullptr;  // TODO: Implement
-    copy_function.copy_to_combine = nullptr;  // TODO: Implement
-    copy_function.copy_to_finalize = nullptr;  // TODO: Implement
-    copy_function.copy_from_bind = nullptr;  // TODO: Implement markdown copy_from_bind
-    copy_function.copy_from_function = nullptr;  // TODO: Implement
-    
-    copy_function.extension = "markdown";
-    
-    return copy_function;
-}
+// CopyFunction GetMarkdownCopyFunction() {
+//     // TODO: Implement markdown copy function later
+// }
 
 } // namespace duckdb

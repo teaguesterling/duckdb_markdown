@@ -22,7 +22,7 @@ void MarkdownFunctions::RegisterValidationFunction(DatabaseInstance &db) {
     // Basic Markdown validity check for VARCHAR
     ScalarFunction md_valid_varchar("md_valid", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, 
         [](DataChunk &args, ExpressionState &state, Vector &result) {
-            const auto &input_vector = args.data[0];
+            auto &input_vector = args.data[0];
             
             UnaryExecutor::ExecuteWithNulls<string_t, bool>(input_vector, result, args.size(),
                 [&](string_t md_str, ValidityMask &mask, idx_t idx) {
@@ -44,7 +44,7 @@ void MarkdownFunctions::RegisterValidationFunction(DatabaseInstance &db) {
     // Markdown validity check for MD type (always returns true for valid MD objects)
     ScalarFunction md_valid_md("md_valid", {markdown_type}, LogicalType::BOOLEAN, 
         [](DataChunk &args, ExpressionState &state, Vector &result) {
-            const auto &input_vector = args.data[0];
+            auto &input_vector = args.data[0];
             UnaryExecutor::ExecuteWithNulls<string_t, bool>(input_vector, result, args.size(),
                 [&](string_t md_str, ValidityMask &mask, idx_t idx) {
                     return mask.RowIsValid(idx);

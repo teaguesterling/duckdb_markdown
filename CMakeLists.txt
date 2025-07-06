@@ -26,8 +26,9 @@ build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 # Link cmark-gfm in both the static library and the loadable extension
-target_link_libraries(${EXTENSION_NAME} libcmark-gfm_static libcmark-gfm-extensions_static)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} libcmark-gfm_static libcmark-gfm-extensions_static)
+# Note: Order matters - extensions depends on core, so core must come after extensions
+target_link_libraries(${EXTENSION_NAME} libcmark-gfm-extensions_static libcmark-gfm_static)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} libcmark-gfm-extensions_static libcmark-gfm_static)
 
 # DuckDB extension requires C++17
 set_property(TARGET ${EXTENSION_NAME} PROPERTY CXX_STANDARD 17)

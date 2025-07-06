@@ -42,6 +42,10 @@ public:
         idx_t maximum_file_size = 16777216;     // 16MB default maximum file size
         markdown_utils::MarkdownFlavor flavor = markdown_utils::MarkdownFlavor::GFM;
         
+        // Column inclusion options
+        bool include_filepath = false;          // Whether to include file_path column
+        bool content_as_varchar = false;        // Whether content should be varchar instead of markdown
+        
         // Section reader specific
         bool include_content = true;            // Whether to include section content
         int32_t min_level = 1;                  // Minimum heading level
