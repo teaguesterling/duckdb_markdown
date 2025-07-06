@@ -1,0 +1,161 @@
+# name: test/sql/markdown_api.test
+# description: Test new Markdown extension API design
+# group: [markdown]
+
+require markdown
+
+# =================================================================
+# Test 1: Default behavior - content as markdown type, no filepath
+# =================================================================
+
+query I
+SELECT typeof(content) FROM read_markdown('test/docs/test.md');
+----
+md
+
+statement ok
+CREATE TABLE test_docs AS SELECT * FROM read_markdown('test/docs/test.md');
+
+query I
+SELECT column_name FROM (DESCRIBE test_docs) ORDER BY column_name;
+----
+content
+
+# =================================================================
+# Test 2: Parameterized filepath inclusion
+# =================================================================
+
+query II
+SELECT file_path, typeof(content) FROM read_markdown('test/docs/test.md', include_filepath=true);
+----
+test/docs/test.md	md
+
+statement ok
+CREATE TABLE docs_with_path AS SELECT * FROM read_markdown('test/docs/test.md', include_filepath=true);
+
+query I
+SELECT column_name FROM (DESCRIBE docs_with_path) ORDER BY column_name;
+----
+content
+file_path
+
+# =================================================================
+# Test 3: Content as varchar parameter
+# =================================================================
+
+query I
+SELECT typeof(content) FROM read_markdown('test/docs/test.md', content_as_varchar=true);
+----
+varchar
+
+# =================================================================
+# Test 4: Markdown type isomorphism with varchar
+# =================================================================
+
+query I
+SELECT '# Hello **World**'::markdown::varchar = '# Hello **World**';
+----
+true
+
+query I
+SELECT '# Hello **World**'::varchar::markdown::varchar = '# Hello **World**';
+----
+true
+
+# =================================================================
+# Test 5: Sections without filepath and position
+# =================================================================
+
+statement ok
+CREATE TABLE test_sections AS SELECT * FROM read_markdown_sections('test/docs/test.md');
+
+query I
+SELECT column_name FROM (DESCRIBE test_sections) ORDER BY column_name;
+----
+content
+end_line
+level
+parent_id
+section_id
+start_line
+title
+
+query I
+SELECT typeof(content) FROM read_markdown_sections('test/docs/test.md') LIMIT 1;
+----
+md
+
+# =================================================================
+# Test 6: Sections with filepath parameter
+# =================================================================
+
+statement ok
+CREATE TABLE sections_with_path AS SELECT * FROM read_markdown_sections('test/docs/test.md', include_filepath=true);
+
+query I
+SELECT column_name FROM (DESCRIBE sections_with_path) ORDER BY column_name;
+----
+content
+end_line
+file_path
+level
+parent_id
+section_id
+start_line
+title
+
+# =================================================================
+# Test 7: Sections with content as varchar
+# =================================================================
+
+query I
+SELECT typeof(content) FROM read_markdown_sections('test/docs/test.md', content_as_varchar=true) LIMIT 1;
+----
+varchar
+
+# =================================================================
+# Test 8: Verify markdown functions work with markdown type
+# =================================================================
+
+query I
+SELECT md_to_html(content) LIKE '<h1>%' FROM read_markdown('test/docs/test.md');
+----
+true
+
+query I
+SELECT md_to_text(content) LIKE 'Test Document%' FROM read_markdown('test/docs/test.md');
+----
+true
+
+# =================================================================
+# Test 9: Metadata extraction with markdown type
+# =================================================================
+
+query I
+SELECT md_extract_metadata(content::markdown) LIKE '%Example Document%' FROM read_markdown('test/docs/metadata_example.md');
+----
+true
+
+# =================================================================
+# Test 10: Combined parameters test
+# =================================================================
+
+statement ok
+CREATE TABLE full_featured AS 
+SELECT * FROM read_markdown('test/docs/metadata_example.md', 
+                           include_filepath=true, 
+                           extract_metadata=true, 
+                           include_stats=true);
+
+query I
+SELECT column_name FROM (DESCRIBE full_featured) ORDER BY column_name;
+----
+content
+file_path
+metadata
+stats
+
+query I
+SELECT typeof(content) FROM full_featured;
+----
+md
