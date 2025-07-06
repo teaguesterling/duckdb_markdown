@@ -1,0 +1,167 @@
+# name: test/sql/markdown_basic.test
+# description: Basic Markdown extension functionality tests
+# group: [markdown]
+
+# Before we load the extension, this will fail
+statement error
+SELECT md_to_html('# Hello');
+----
+Catalog Error: Scalar Function with name md_to_html does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require markdown
+
+# Test basic Markdown to HTML conversion
+query I
+SELECT md_to_html('# Hello World');
+----
+<h1>Hello World</h1>
+
+query I
+SELECT md_to_html('**Bold** and *italic* text');
+----
+<strong>Bold</strong> and <em>italic</em> text
+
+# Test Markdown to text conversion (for FTS)
+query I
+SELECT md_to_text('# Hello World\n\nThis is **bold** text.');
+----
+Hello World
+
+This is bold text.
+
+# Test Markdown validation
+query I
+SELECT md_valid('# Valid Markdown');
+----
+true
+
+query I
+SELECT md_valid('');
+----
+false
+
+# Test value to Markdown conversion
+query I
+SELECT value_to_md('Hello World');
+----
+Hello World
+
+# Test reading Markdown files
+statement ok
+CREATE TABLE markdown_docs AS 
+SELECT * FROM read_markdown('test/markdown/simple.md');
+
+# Should have file_path and content columns
+query II
+SELECT file_path, length(content) > 0 FROM markdown_docs;
+----
+test/markdown/simple.md	true
+
+# Test reading Markdown sections
+statement ok
+CREATE TABLE doc_sections AS 
+SELECT * FROM read_markdown_sections('test/markdown/structured.md');
+
+# Should have sections with different levels
+query III
+SELECT section_id, level, title FROM doc_sections ORDER BY position;
+----
+introduction	1	Introduction
+getting-started	2	Getting Started
+installation	3	Installation
+usage	2	Usage
+
+# Test section content inclusion/exclusion
+statement ok
+CREATE TABLE toc AS 
+SELECT * FROM read_markdown_sections('test/markdown/structured.md', include_content=false);
+
+query I
+SELECT length(content) FROM toc LIMIT 1;
+----
+0
+
+# Test FTS integration preparation
+statement ok
+CREATE TABLE searchable_docs AS
+SELECT 
+    file_path,
+    section_id,
+    title,
+    md_to_text(content) as searchable_text
+FROM read_markdown_sections('test/markdown/*.md');
+
+# Should be able to create FTS index on searchable_text
+# (This would work with the FTS extension)
+# PRAGMA create_fts_index('searchable_docs', 'title', 'searchable_text');
+
+# Test metadata extraction
+query I
+SELECT md_extract_metadata('---\ntitle: Test Doc\nauthor: John Doe\n---\n\n# Content');
+----
+{"title":"Test Doc","author":"John Doe"}
+
+# Test statistics calculation
+statement ok
+CREATE TABLE doc_stats AS
+SELECT 
+    file_path,
+    md_stats(content) as stats
+FROM read_markdown('test/markdown/*.md');
+
+# Test code block extraction
+statement ok
+CREATE TABLE code_blocks AS
+SELECT 
+    file_path,
+    section_id,
+    code.*
+FROM read_markdown_sections('test/markdown/code_examples.md') s
+CROSS JOIN LATERAL md_extract_code_blocks(s.content) code;
+
+query II
+SELECT language, length(code) > 0 FROM code_blocks WHERE language = 'sql';
+----
+sql	true
+
+# Test link extraction
+statement ok
+CREATE TABLE doc_links AS
+SELECT 
+    file_path,
+    link.*
+FROM read_markdown('test/markdown/links.md') d
+CROSS JOIN LATERAL md_extract_links(d.content) link;
+
+query II
+SELECT text, url FROM doc_links WHERE url LIKE 'http%';
+----
+DuckDB	https://duckdb.org
+
+# Test error handling with invalid files
+statement ok
+CREATE TABLE ignore_errors AS 
+SELECT * FROM read_markdown(['test/markdown/valid.md', 'test/markdown/missing.md'], ignore_errors=true);
+
+# Should only get the valid file
+query I
+SELECT COUNT(*) FROM ignore_errors;
+----
+1
+
+# Test direct file path support (like YAML extension)
+query I
+SELECT file_path FROM 'test/markdown/simple.md';
+----
+test/markdown/simple.md
+
+# Test glob patterns
+statement ok
+CREATE TABLE glob_docs AS 
+SELECT * FROM 'test/markdown/*.md';
+
+query I
+SELECT COUNT(*) > 0 FROM glob_docs;
+----
+true

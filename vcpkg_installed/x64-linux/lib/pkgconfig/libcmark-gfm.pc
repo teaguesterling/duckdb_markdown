@@ -1,0 +1,11 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libcmark-gfm
+Description: CommonMark parsing, rendering, and manipulation with GitHub Flavored Markdown extensions
+Version: 0.29.0.gfm.13
+
+Libs: "-L${libdir}" -lcmark-gfm -lcmark-gfm-extensions
+Cflags: "-I${includedir}"

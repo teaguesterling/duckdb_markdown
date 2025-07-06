@@ -1,0 +1,23 @@
+Package: vcpkg-cmake-config
+Version: 2024-05-23
+Architecture: x64-linux
+Multi-Arch: same
+Abi: ac22dabcd2a0371ed664d8b3d435c92f39fc2201332bf1788de298115620fde3
+Status: install ok installed
+
+Package: vcpkg-cmake
+Version: 2024-04-23
+Architecture: x64-linux
+Multi-Arch: same
+Abi: 4a91629dc7364a43491ed8058a5c2254f1b81265bb66652e3e7de8ce05ce15c3
+Status: install ok installed
+
+Package: cmark-gfm
+Version: 0.29.0.13
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-linux
+Multi-Arch: same
+Abi: 013ac63e32739c98d2f6f7b78f4a625bdb5789fc2188c48715758acc293bb713
+Description: GitHub Flavored Markdown parser based on cmark.
+Status: install ok installed
+

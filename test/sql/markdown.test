@@ -1,0 +1,23 @@
+# name: test/sql/markdown.test
+# description: test markdown extension
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+SELECT markdown('Sam');
+----
+Catalog Error: Scalar Function with name markdown does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require markdown
+
+# Confirm the extension works
+query I
+SELECT markdown('Sam');
+----
+Markdown Sam 🐥
+
+query I
+SELECT markdown_openssl_version('Michael') ILIKE 'Markdown Michael, my linked OpenSSL version is OpenSSL%';
+----
+true
