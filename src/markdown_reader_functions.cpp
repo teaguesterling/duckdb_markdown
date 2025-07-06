@@ -139,7 +139,7 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
     
     if (result->options.extract_metadata) {
         names.emplace_back("metadata");
-        return_types.emplace_back(LogicalType::JSON());
+        return_types.emplace_back(LogicalType::VARCHAR);
     }
     
     if (result->options.include_stats) {

@@ -209,13 +209,59 @@ void MarkdownFunctions::RegisterStatsFunctions(DatabaseInstance &db) {
         });
     
     ExtensionUtil::RegisterFunction(db, md_stats_fun);
+    
+    // Register md_extract_section function
+    ScalarFunction md_extract_section("md_extract_section", {markdown_type, LogicalType::VARCHAR}, markdown_type,
+        [](DataChunk &args, ExpressionState &state, Vector &result) {
+            auto &markdown_vector = args.data[0];
+            auto &section_id_vector = args.data[1];
+            
+            BinaryExecutor::Execute<string_t, string_t, string_t>(
+                markdown_vector, section_id_vector, result, args.size(),
+                [&](string_t markdown_str, string_t section_id_str) -> string_t {
+                    if (markdown_str.GetSize() == 0 || section_id_str.GetSize() == 0) {
+                        return string_t();
+                    }
+                    
+                    try {
+                        const std::string section_content = markdown_utils::ExtractSection(
+                            markdown_str.GetString(), section_id_str.GetString());
+                        return StringVector::AddString(result, section_content);
+                    } catch (const std::exception &e) {
+                        return string_t();
+                    }
+                });
+        });
+    
+    ExtensionUtil::RegisterFunction(db, md_extract_section);
+    
+    // Register md_section_breadcrumb function
+    ScalarFunction md_section_breadcrumb("md_section_breadcrumb", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+        [](DataChunk &args, ExpressionState &state, Vector &result) {
+            auto &file_path_vector = args.data[0];
+            auto &section_id_vector = args.data[1];
+            
+            BinaryExecutor::Execute<string_t, string_t, string_t>(
+                file_path_vector, section_id_vector, result, args.size(),
+                [&](string_t file_path_str, string_t section_id_str) -> string_t {
+                    if (file_path_str.GetSize() == 0 || section_id_str.GetSize() == 0) {
+                        return string_t();
+                    }
+                    
+                    const std::string breadcrumb = markdown_utils::GenerateBreadcrumb(
+                        file_path_str.GetString(), section_id_str.GetString());
+                    return StringVector::AddString(result, breadcrumb);
+                });
+        });
+    
+    ExtensionUtil::RegisterFunction(db, md_section_breadcrumb);
 }
 
 void MarkdownFunctions::RegisterMetadataFunctions(DatabaseInstance &db) {
     auto markdown_type = MarkdownTypes::MarkdownType();
     
     // md_extract_metadata function - extract frontmatter as JSON
-    ScalarFunction md_extract_metadata_fun("md_extract_metadata", {markdown_type}, LogicalType::JSON(),
+    ScalarFunction md_extract_metadata_fun("md_extract_metadata", {markdown_type}, LogicalType::VARCHAR,
         [](DataChunk &args, ExpressionState &state, Vector &result) {
             UnaryExecutor::Execute<string_t, string_t>(
                 args.data[0], result, args.size(),

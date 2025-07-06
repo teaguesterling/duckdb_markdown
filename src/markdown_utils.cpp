@@ -218,9 +218,11 @@ std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
     std::sregex_iterator end;
     
     std::vector<std::pair<int32_t, std::string>> heading_stack; // level, id
+    std::vector<std::tuple<size_t, size_t, int32_t, std::string, std::string>> heading_positions; // start, end, level, title, id
     
-    for (; iter != end; ++iter) {
-        const std::smatch& match = *iter;
+    // First pass: collect all heading positions
+    for (auto current_iter = iter; current_iter != end; ++current_iter) {
+        const std::smatch& match = *current_iter;
         int32_t level = static_cast<int32_t>(match[1].length());
         std::string title = match[2].str();
         
@@ -229,6 +231,37 @@ std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
         }
         
         // Generate stable ID
+        std::string base_id = GenerateSectionId(title, id_counts);
+        id_counts[base_id]++;
+        std::string section_id = id_counts[base_id] > 1 ? 
+            base_id + "-" + std::to_string(id_counts[base_id] - 1) : base_id;
+        
+        size_t start_pos = match.position();
+        heading_positions.push_back({start_pos, 0, level, title, section_id});
+    }
+    
+    // Set end positions for each heading (start of next heading at same or higher level)
+    for (size_t i = 0; i < heading_positions.size(); ++i) {
+        auto& [start_pos, end_pos, level, title, section_id] = heading_positions[i];
+        
+        end_pos = markdown_str.length(); // Default to end of document
+        
+        // Find next heading at same or higher level
+        for (size_t j = i + 1; j < heading_positions.size(); ++j) {
+            auto& [next_start, next_end, next_level, next_title, next_id] = heading_positions[j];
+            if (next_level <= level) {
+                end_pos = next_start;
+                break;
+            }
+        }
+    }
+    
+    // Reset for second pass
+    id_counts.clear();
+    
+    // Second pass: create sections with content
+    for (const auto& [start_pos, end_pos, level, title, _] : heading_positions) {
+        // Regenerate ID (need to maintain same logic)
         std::string base_id = GenerateSectionId(title, id_counts);
         id_counts[base_id]++;
         std::string section_id = id_counts[base_id] > 1 ? 
@@ -262,10 +295,15 @@ std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
         section.title = title;
         section.parent_id = parent_id;
         section.position = position;
+        section.start_line = std::count(markdown_str.begin(), markdown_str.begin() + start_pos, '\n') + 1;
+        section.end_line = std::count(markdown_str.begin(), markdown_str.begin() + end_pos, '\n') + 1;
         
         if (include_content) {
-            // TODO: Extract actual section content
-            section.content = ""; // Placeholder
+            // Extract section content from start_pos to end_pos
+            section.content = markdown_str.substr(start_pos, end_pos - start_pos);
+            
+            // Clean up content - remove trailing whitespace and extra newlines
+            section.content = std::regex_replace(section.content, std::regex(R"(\s+$)"), "");
         }
         
         sections.push_back(section);
