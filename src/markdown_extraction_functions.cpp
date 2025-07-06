@@ -133,7 +133,8 @@ static unique_ptr<FunctionData> LinkExtractionBind(ClientContext &context, Table
     names.emplace_back("line_number");
     return_types.emplace_back(LogicalType::BIGINT);
     
-    return nullptr;
+    // Return empty bind data (no parameters needed for link extraction)
+    return make_uniq<TableFunctionData>();
 }
 
 static unique_ptr<GlobalTableFunctionState> LinkExtractionInit(ClientContext &context, TableFunctionInitInput &input) {

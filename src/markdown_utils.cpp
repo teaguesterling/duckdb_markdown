@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <regex>
 #include <sstream>
+#include <unordered_map>
+#include <map>
 
 // Include actual Markdown parser headers
 #include <cmark-gfm.h>
@@ -276,6 +278,19 @@ std::vector<MarkdownSection> ExtractHeadings(const std::string& markdown_str, in
     return ParseSections(markdown_str, 1, max_level, false);
 }
 
+std::string ExtractSection(const std::string& markdown_str, const std::string& section_id) {
+    // Parse sections with content
+    auto sections = ParseSections(markdown_str, 1, 6, true);
+    
+    for (const auto& section : sections) {
+        if (section.id == section_id) {
+            return section.content;
+        }
+    }
+    
+    return ""; // Section not found
+}
+
 //===--------------------------------------------------------------------===//
 // Content Extraction
 //===--------------------------------------------------------------------===//
@@ -390,7 +405,7 @@ std::string GenerateBreadcrumb(const std::string& file_path, const std::string& 
 }
 
 bool ValidateInternalLink(const std::string& markdown_str, const std::string& link_target) {
-    if (!link_target.starts_with("#")) {
+    if (!StringUtil::StartsWith(link_target, "#")) {
         return true; // External link, assume valid
     }
     

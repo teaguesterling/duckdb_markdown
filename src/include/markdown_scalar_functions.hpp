@@ -1,27 +1,35 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/function/scalar_function.hpp"
 
 namespace duckdb {
 
+/**
+ * @brief Markdown scalar functions for converting and validating Markdown content
+ * 
+ * This class provides scalar functions for:
+ * - Converting Markdown to HTML (md_to_html)
+ * - Converting Markdown to plain text (md_to_text) 
+ * - Converting values to Markdown (value_to_md)
+ * - Validating Markdown syntax (md_valid)
+ * - Extracting metadata (md_extract_metadata)
+ * - Calculating statistics (md_stats)
+ */
 class MarkdownFunctions {
 public:
+    /**
+     * @brief Register all Markdown scalar functions with DuckDB
+     * 
+     * @param db The database instance to register the functions with
+     */
     static void Register(DatabaseInstance &db);
 
 private:
-    // Register basic Markdown validation and conversion functions
     static void RegisterValidationFunction(DatabaseInstance &db);
-    
-    // Register Markdown conversion functions (to HTML, text, etc.)
     static void RegisterConversionFunctions(DatabaseInstance &db);
-    
-    // Register Markdown type functions (md_to_html, md_to_text, value_to_md)
     static void RegisterMarkdownTypeFunctions(DatabaseInstance &db);
-    
-    // Register Markdown statistics functions
     static void RegisterStatsFunctions(DatabaseInstance &db);
-    
-    // Register Markdown metadata functions
     static void RegisterMetadataFunctions(DatabaseInstance &db);
 };
 

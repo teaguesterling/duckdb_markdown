@@ -150,33 +150,62 @@ void MarkdownFunctions::RegisterStatsFunctions(DatabaseInstance &db) {
     
     ScalarFunction md_stats_fun("md_stats", {markdown_type}, stats_struct_type,
         [](DataChunk &args, ExpressionState &state, Vector &result) {
-            UnaryExecutor::Execute<string_t, string_t>(
-                args.data[0], result, args.size(),
-                [&](string_t md_str) -> string_t {
-                    if (md_str.GetSize() == 0) {
-                        return string_t();
+            auto &markdown_vector = args.data[0];
+            
+            for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
+                try {
+                    Value md_value = markdown_vector.GetValue(row_idx);
+                    
+                    if (md_value.IsNull()) {
+                        result.SetValue(row_idx, Value());
+                        continue;
                     }
                     
-                    try {
-                        auto stats = markdown_utils::CalculateStats(md_str.GetString());
-                        
-                        // Create struct value
+                    string md_str = StringValue::Get(md_value);
+                    
+                    if (md_str.empty()) {
+                        // Return empty stats struct
                         child_list_t<Value> struct_values;
-                        struct_values.push_back(std::make_pair("word_count", Value::BIGINT(stats.word_count)));
-                        struct_values.push_back(std::make_pair("char_count", Value::BIGINT(stats.char_count)));
-                        struct_values.push_back(std::make_pair("line_count", Value::BIGINT(stats.line_count)));
-                        struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(stats.heading_count)));
-                        struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(stats.code_block_count)));
-                        struct_values.push_back(std::make_pair("link_count", Value::BIGINT(stats.link_count)));
-                        struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
+                        struct_values.push_back(std::make_pair("word_count", Value::BIGINT(0)));
+                        struct_values.push_back(std::make_pair("char_count", Value::BIGINT(0)));
+                        struct_values.push_back(std::make_pair("line_count", Value::BIGINT(0)));
+                        struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(0)));
+                        struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(0)));
+                        struct_values.push_back(std::make_pair("link_count", Value::BIGINT(0)));
+                        struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(0.0)));
                         
-                        // Convert struct to string representation for vector storage
-                        // (This is a simplification - actual implementation would be more complex)
-                        return StringVector::AddString(result, "stats", 5);
-                    } catch (const std::exception& e) {
-                        throw InvalidInputException("Error calculating Markdown statistics: %s", e.what());
+                        result.SetValue(row_idx, Value::STRUCT(struct_values));
+                        continue;
                     }
-                });
+                    
+                    auto stats = markdown_utils::CalculateStats(md_str);
+                    
+                    // Create struct value
+                    child_list_t<Value> struct_values;
+                    struct_values.push_back(std::make_pair("word_count", Value::BIGINT(stats.word_count)));
+                    struct_values.push_back(std::make_pair("char_count", Value::BIGINT(stats.char_count)));
+                    struct_values.push_back(std::make_pair("line_count", Value::BIGINT(stats.line_count)));
+                    struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(stats.heading_count)));
+                    struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(stats.code_block_count)));
+                    struct_values.push_back(std::make_pair("link_count", Value::BIGINT(stats.link_count)));
+                    struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
+                    
+                    result.SetValue(row_idx, Value::STRUCT(struct_values));
+                    
+                } catch (const std::exception& e) {
+                    // Return empty stats on error
+                    child_list_t<Value> struct_values;
+                    struct_values.push_back(std::make_pair("word_count", Value::BIGINT(0)));
+                    struct_values.push_back(std::make_pair("char_count", Value::BIGINT(0)));
+                    struct_values.push_back(std::make_pair("line_count", Value::BIGINT(0)));
+                    struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(0)));
+                    struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(0)));
+                    struct_values.push_back(std::make_pair("link_count", Value::BIGINT(0)));
+                    struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(0.0)));
+                    
+                    result.SetValue(row_idx, Value::STRUCT(struct_values));
+                }
+            }
         });
     
     ExtensionUtil::RegisterFunction(db, md_stats_fun);
