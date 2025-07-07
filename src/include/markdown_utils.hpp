@@ -110,6 +110,15 @@ struct MarkdownImage {
     idx_t line_number;
 };
 
+struct MarkdownTable {
+    std::vector<std::string> headers;  // Table headers
+    std::vector<std::string> alignments; // Column alignments (left, right, center)
+    std::vector<std::vector<std::string>> rows; // Table data rows
+    idx_t line_number;
+    idx_t num_columns;
+    idx_t num_rows;
+};
+
 // Extract code blocks
 std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str, 
                                         const std::string& language_filter = "");
@@ -119,6 +128,9 @@ std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str);
 
 // Extract images
 std::vector<MarkdownImage> ExtractImages(const std::string& markdown_str);
+
+// Extract tables
+std::vector<MarkdownTable> ExtractTables(const std::string& markdown_str);
 
 // Extract headings for TOC
 std::vector<MarkdownSection> ExtractHeadings(const std::string& markdown_str, int32_t max_level = 6);

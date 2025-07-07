@@ -340,83 +340,60 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str,
                                         const std::string& language_filter) {
     std::vector<CodeBlock> code_blocks;
     
-    // Parse fenced code blocks using simple string operations
-    size_t pos = 0;
-    idx_t line_number = 1;
+    if (markdown_str.empty()) {
+        return code_blocks;
+    }
     
-    while (pos < markdown_str.length()) {
-        // Find the start of a code fence
-        size_t fence_start = markdown_str.find("```", pos);
-        if (fence_start == std::string::npos) {
-            break;
-        }
+    // Parse with cmark-gfm
+    cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+    cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+    cmark_node *doc = cmark_parser_finish(parser);
+    
+    // Walk the AST looking for code block nodes
+    cmark_iter *iter = cmark_iter_new(doc);
+    cmark_event_type ev_type;
+    
+    while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+        cmark_node *cur = cmark_iter_get_node(iter);
         
-        // Count lines up to fence start
-        for (size_t i = pos; i < fence_start; i++) {
-            if (markdown_str[i] == '\n') {
-                line_number++;
+        if (ev_type == CMARK_EVENT_ENTER && cmark_node_get_type(cur) == CMARK_NODE_CODE_BLOCK) {
+            CodeBlock block;
+            
+            // Get code block properties
+            const char *info = cmark_node_get_fence_info(cur);
+            const char *literal = cmark_node_get_literal(cur);
+            
+            block.info_string = info ? info : "";
+            block.code = literal ? literal : "";
+            block.line_number = cmark_node_get_start_line(cur);
+            
+            // Extract language from info string (first word)
+            std::string language;
+            if (!block.info_string.empty()) {
+                size_t space_pos = block.info_string.find(' ');
+                if (space_pos != std::string::npos) {
+                    language = block.info_string.substr(0, space_pos);
+                } else {
+                    language = block.info_string;
+                }
+                
+                // Trim whitespace
+                StringUtil::Trim(language);
+            }
+            block.language = language;
+            
+            // Apply language filter if specified
+            if (language_filter.empty() || 
+                StringUtil::Lower(block.language) == StringUtil::Lower(language_filter)) {
+                code_blocks.push_back(block);
             }
         }
-        
-        // Extract the language info from the same line as the opening fence
-        size_t line_end = markdown_str.find('\n', fence_start);
-        if (line_end == std::string::npos) {
-            break; // No newline after fence
-        }
-        
-        std::string info_line = markdown_str.substr(fence_start + 3, line_end - fence_start - 3);
-        std::string language;
-        std::string info_string = info_line;
-        
-        // Extract language (first word of info string)
-        size_t space_pos = info_line.find(' ');
-        if (space_pos != std::string::npos) {
-            language = info_line.substr(0, space_pos);
-        } else {
-            language = info_line;
-        }
-        
-        // Remove leading/trailing whitespace
-        while (!language.empty() && (language.front() == ' ' || language.front() == '\t')) {
-            language = language.substr(1);
-        }
-        while (!language.empty() && (language.back() == ' ' || language.back() == '\t')) {
-            language = language.substr(0, language.length() - 1);
-        }
-        
-        // Find the closing fence
-        size_t fence_end = markdown_str.find("```", line_end);
-        if (fence_end == std::string::npos) {
-            break; // No closing fence
-        }
-        
-        // Extract the code content
-        std::string code = markdown_str.substr(line_end + 1, fence_end - line_end - 1);
-        
-        // Remove trailing newline if present
-        if (!code.empty() && code.back() == '\n') {
-            code = code.substr(0, code.length() - 1);
-        }
-        
-        // Apply language filter if specified
-        if (language_filter.empty() || 
-            StringUtil::Lower(language) == StringUtil::Lower(language_filter)) {
-            
-            CodeBlock block;
-            block.language = language;
-            block.code = code;
-            block.line_number = line_number + 1; // Code starts on line after fence
-            block.info_string = info_string;
-            
-            code_blocks.push_back(block);
-        }
-        
-        // Move past the closing fence
-        pos = fence_end + 3;
-        
-        // Count the line with the closing fence
-        line_number++;
     }
+    
+    // Cleanup
+    cmark_iter_free(iter);
+    cmark_node_free(doc);
+    cmark_parser_free(parser);
     
     return code_blocks;
 }
@@ -424,32 +401,58 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str,
 std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str) {
     std::vector<MarkdownLink> links;
     
-    // Extract inline links
-    std::regex link_regex(R"(\[([^\]]+)\]\(([^)]+)\))");
-    std::sregex_iterator iter(markdown_str.begin(), markdown_str.end(), link_regex);
-    std::sregex_iterator end;
-    
-    for (; iter != end; ++iter) {
-        const std::smatch& match = *iter;
-        MarkdownLink link;
-        link.text = match[1].str();
-        link.url = match[2].str();
-        link.is_reference = false;
-        
-        // Split URL and title if present
-        auto space_pos = link.url.find(' ');
-        if (space_pos != std::string::npos) {
-            link.title = link.url.substr(space_pos + 1);
-            link.url = link.url.substr(0, space_pos);
-            
-            // Remove quotes from title
-            if (link.title.front() == '"' && link.title.back() == '"') {
-                link.title = link.title.substr(1, link.title.length() - 2);
-            }
-        }
-        
-        links.push_back(link);
+    if (markdown_str.empty()) {
+        return links;
     }
+    
+    // Parse with cmark-gfm
+    cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+    cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+    cmark_node *doc = cmark_parser_finish(parser);
+    
+    // Walk the AST looking for link nodes
+    cmark_iter *iter = cmark_iter_new(doc);
+    cmark_event_type ev_type;
+    
+    while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+        cmark_node *cur = cmark_iter_get_node(iter);
+        
+        if (ev_type == CMARK_EVENT_ENTER && cmark_node_get_type(cur) == CMARK_NODE_LINK) {
+            MarkdownLink link;
+            
+            // Get link properties
+            const char *url = cmark_node_get_url(cur);
+            const char *title = cmark_node_get_title(cur);
+            
+            link.url = url ? url : "";
+            link.title = title ? title : "";
+            link.line_number = cmark_node_get_start_line(cur);
+            link.is_reference = false; // TODO: Detect reference links
+            
+            // Get link text from child text nodes
+            cmark_node *child = cmark_node_first_child(cur);
+            std::string text;
+            while (child) {
+                if (cmark_node_get_type(child) == CMARK_NODE_TEXT) {
+                    const char *child_text = cmark_node_get_literal(child);
+                    if (child_text) text += child_text;
+                } else if (cmark_node_get_type(child) == CMARK_NODE_CODE) {
+                    // Handle inline code within links
+                    const char *code_text = cmark_node_get_literal(child);
+                    if (code_text) text += code_text;
+                }
+                child = cmark_node_next(child);
+            }
+            link.text = text;
+            
+            links.push_back(link);
+        }
+    }
+    
+    // Cleanup
+    cmark_iter_free(iter);
+    cmark_node_free(doc);
+    cmark_parser_free(parser);
     
     return links;
 }
@@ -457,33 +460,172 @@ std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str) {
 std::vector<MarkdownImage> ExtractImages(const std::string& markdown_str) {
     std::vector<MarkdownImage> images;
     
-    // Extract images (similar to links but with leading !)
-    std::regex image_regex(R"(!\[([^\]]*)\]\(([^)]+)\))");
-    std::sregex_iterator iter(markdown_str.begin(), markdown_str.end(), image_regex);
+    if (markdown_str.empty()) {
+        return images;
+    }
+    
+    // Parse with cmark-gfm
+    cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+    cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+    cmark_node *doc = cmark_parser_finish(parser);
+    
+    // Walk the AST looking for image nodes
+    cmark_iter *iter = cmark_iter_new(doc);
+    cmark_event_type ev_type;
+    
+    while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+        cmark_node *cur = cmark_iter_get_node(iter);
+        
+        if (ev_type == CMARK_EVENT_ENTER && cmark_node_get_type(cur) == CMARK_NODE_IMAGE) {
+            MarkdownImage image;
+            
+            // Get image properties
+            const char *url = cmark_node_get_url(cur);
+            const char *title = cmark_node_get_title(cur);
+            
+            image.url = url ? url : "";
+            image.title = title ? title : "";
+            image.line_number = cmark_node_get_start_line(cur); // Native line tracking!
+            
+            // Get alt text from child text nodes
+            cmark_node *child = cmark_node_first_child(cur);
+            std::string alt_text;
+            while (child) {
+                if (cmark_node_get_type(child) == CMARK_NODE_TEXT) {
+                    const char *text = cmark_node_get_literal(child);
+                    if (text) alt_text += text;
+                }
+                child = cmark_node_next(child);
+            }
+            image.alt_text = alt_text;
+            
+            images.push_back(image);
+        }
+    }
+    
+    // Cleanup
+    cmark_iter_free(iter);
+    cmark_node_free(doc);
+    cmark_parser_free(parser);
+    
+    return images;
+}
+
+std::vector<MarkdownTable> ExtractTables(const std::string& markdown_str) {
+    std::vector<MarkdownTable> tables;
+    
+    if (markdown_str.empty()) {
+        return tables;
+    }
+    
+    // For now, use a simpler regex-based approach for tables since the cmark-gfm table
+    // extension node types are not easily accessible. We can revisit this later.
+    
+    // Parse tables using simple regex - this handles basic GFM tables
+    std::regex table_regex(R"((?:^|\n)((?:\|[^\n]*\|[ \t]*\n?)+))", std::regex_constants::multiline);
+    std::sregex_iterator iter(markdown_str.begin(), markdown_str.end(), table_regex);
     std::sregex_iterator end;
     
     for (; iter != end; ++iter) {
         const std::smatch& match = *iter;
-        MarkdownImage image;
-        image.alt_text = match[1].str();
-        image.url = match[2].str();
+        std::string table_content = match[1].str();
         
-        // Split URL and title if present
-        auto space_pos = image.url.find(' ');
-        if (space_pos != std::string::npos) {
-            image.title = image.url.substr(space_pos + 1);
-            image.url = image.url.substr(0, space_pos);
-            
-            // Remove quotes from title
-            if (image.title.front() == '"' && image.title.back() == '"') {
-                image.title = image.title.substr(1, image.title.length() - 2);
+        // Calculate line number
+        auto match_pos = match.position();
+        idx_t line_number = 1 + std::count(markdown_str.begin(), markdown_str.begin() + match_pos, '\n');
+        
+        // Split into lines
+        std::istringstream table_stream(table_content);
+        std::string line;
+        std::vector<std::string> table_lines;
+        
+        while (std::getline(table_stream, line)) {
+            StringUtil::Trim(line);
+            if (!line.empty()) {
+                table_lines.push_back(line);
             }
         }
         
-        images.push_back(image);
+        if (table_lines.size() < 2) {
+            continue; // Need at least header and separator
+        }
+        
+        MarkdownTable table;
+        table.line_number = line_number;
+        
+        // Find header row (first non-separator line)
+        size_t header_idx = 0;
+        
+        // Skip separator lines (lines with only |, -, :, and whitespace)
+        std::regex separator_regex(R"(^\s*\|?\s*[-|:\s]+\s*\|?\s*$)");
+        while (header_idx < table_lines.size() && std::regex_match(table_lines[header_idx], separator_regex)) {
+            header_idx++;
+        }
+        
+        if (header_idx >= table_lines.size()) {
+            continue; // No valid header found
+        }
+        
+        // Additional check: ensure this is the actual header row by checking if next line is separator
+        if (header_idx + 1 < table_lines.size() && !std::regex_match(table_lines[header_idx + 1], separator_regex)) {
+            // This might not be a proper markdown table format, but let's try anyway
+        }
+        
+        // Parse header row
+        std::string header_line = table_lines[header_idx];
+        // DEBUG: Output table parsing info to stderr (will show in build log)
+        // fprintf(stderr, "DEBUG: Header idx=%zu, line='%s'\n", header_idx, header_line.c_str());
+        if (header_line.front() == '|') header_line = header_line.substr(1);
+        if (header_line.back() == '|') header_line = header_line.substr(0, header_line.length() - 1);
+        
+        std::regex cell_regex(R"([^|]+)");
+        std::sregex_iterator cell_iter(header_line.begin(), header_line.end(), cell_regex);
+        std::sregex_iterator cell_end;
+        
+        for (; cell_iter != cell_end; ++cell_iter) {
+            std::string cell = (*cell_iter).str();
+            StringUtil::Trim(cell);
+            table.headers.push_back(cell);
+        }
+        
+        table.num_columns = table.headers.size();
+        
+        // Find data rows (skip separator lines)
+        for (size_t i = header_idx + 1; i < table_lines.size(); i++) {
+            // Skip separator lines
+            if (std::regex_match(table_lines[i], separator_regex)) {
+                continue;
+            }
+            std::string data_line = table_lines[i];
+            if (data_line.front() == '|') data_line = data_line.substr(1);
+            if (data_line.back() == '|') data_line = data_line.substr(0, data_line.length() - 1);
+            
+            std::vector<std::string> row_data;
+            std::sregex_iterator data_cell_iter(data_line.begin(), data_line.end(), cell_regex);
+            
+            for (; data_cell_iter != cell_end; ++data_cell_iter) {
+                std::string cell = (*data_cell_iter).str();
+                StringUtil::Trim(cell);
+                row_data.push_back(cell);
+            }
+            
+            // Pad row to match header column count
+            while (row_data.size() < table.num_columns) {
+                row_data.push_back("");
+            }
+            
+            table.rows.push_back(row_data);
+        }
+        
+        table.num_rows = table.rows.size();
+        
+        // Default to left alignment for now
+        table.alignments.resize(table.num_columns, "left");
+        
+        tables.push_back(table);
     }
     
-    return images;
+    return tables;
 }
 
 //===--------------------------------------------------------------------===//
