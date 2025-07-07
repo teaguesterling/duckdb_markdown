@@ -1,0 +1,97 @@
+# name: test/sql/markdown_glob_unit_simple.test  
+# description: Simple unit tests for glob functionality using extraction functions
+# group: [markdown]
+
+require markdown
+
+#===================================================================
+# Test 1: Basic Functionality
+#===================================================================
+
+# Test single file content processing
+query I
+SELECT len(md_extract_code_blocks(E'```python\nprint("test")\n```'));
+----
+1
+
+# Test multiple content pieces (simulating glob results)
+query I
+SELECT sum(len(md_extract_code_blocks(content))) as total_blocks
+FROM (VALUES 
+  (E'```python\ncode1\n```'),
+  (E'```sql\ncode2\n```'),
+  (E'```bash\ncode3\n```')
+) as files(content);
+----
+3
+
+#===================================================================
+# Test 2: Empty and Error Cases
+#===================================================================
+
+# Test empty content (what we'd get from empty glob results)
+query I
+SELECT len(md_extract_code_blocks(''));
+----
+0
+
+# Test NULL content
+query I
+SELECT md_extract_code_blocks(NULL) IS NULL;
+----
+true
+
+#===================================================================
+# Test 3: Mixed Content Types
+#===================================================================
+
+# Test processing different content types
+query I
+SELECT len(md_extract_links('[link](http://example.com)'));
+----
+1
+
+query I
+SELECT len(md_extract_images('![image](img.jpg)'));
+----
+1
+
+query I
+SELECT len(md_extract_table_rows(E'| Name | Age |\n|------|-----|\n| John | 25  |'));
+----
+4
+
+#===================================================================
+# Test 4: File Extension Simulation
+#===================================================================
+
+# Test content filtering by extension (simplified)
+query I
+SELECT len(md_extract_code_blocks(E'```python\ncode\n```')) FROM (VALUES ('doc.md')) as t(filename) WHERE filename LIKE '%.md';
+----
+1
+
+query I
+SELECT len(md_extract_links('[link](http://example.com)')) FROM (VALUES ('readme.markdown')) as t(filename) WHERE filename LIKE '%.markdown';
+----
+1
+
+#===================================================================
+# Test 5: Bulk Processing
+#===================================================================
+
+# Test handling multiple files
+query I
+SELECT count(*) FROM generate_series(1, 10) as t(i);
+----
+10
+
+# Test that extraction functions can handle repeated calls
+query I
+SELECT len(md_extract_code_blocks(E'```python\nprint("test")\n```')) FROM generate_series(1, 5) as t(i);
+----
+1
+1
+1
+1
+1

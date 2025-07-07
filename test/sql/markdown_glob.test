@@ -1,0 +1,103 @@
+# name: test/sql/markdown_glob.test
+# description: Test glob functionality for markdown file reading
+# group: [markdown]
+
+require markdown
+
+#===================================================================
+# Test Setup - Create test files
+#===================================================================
+
+# Create test directory structure
+statement ok
+CREATE TABLE test_content AS SELECT 'This is a test markdown file' as content;
+
+# Note: These tests assume we have read_markdown functionality
+# We'll test the glob patterns once the table functions are implemented
+
+#===================================================================
+# Test 1: Basic Glob Pattern Support
+#===================================================================
+
+# Test that glob patterns are detected and handled
+# This should not error even if no files match
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 2: File System Capability Detection
+#===================================================================
+
+# Test that the extension handles file systems without glob support
+# This should gracefully degrade rather than crash
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 3: Directory Handling
+#===================================================================
+
+# Test directory with trailing slash
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+# Test directory without trailing slash
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 4: Remote File System Handling
+#===================================================================
+
+# Test that remote URLs are handled properly
+# Should provide meaningful error messages for inaccessible remote files
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 5: Error Handling
+#===================================================================
+
+# Test ignore_errors parameter
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+# Test error messages for missing files
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 6: Mixed Input Types
+#===================================================================
+
+# Test list of files with glob patterns
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+# Test list combining files and directories
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 7: File Extension Filtering
+#===================================================================
+
+# Test that only .md and .markdown files are included
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+# Test case insensitive extension matching
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+#===================================================================
+# Test 8: Cross-Platform Path Handling
+#===================================================================
+
+# Test forward slashes vs backslashes
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available
+
+# Test absolute vs relative paths
+statement ok
+SELECT 1 WHERE FALSE; -- Placeholder until read_markdown is available

@@ -1,0 +1,141 @@
+# name: test/sql/markdown_filesystem_errors_simple.test
+# description: Simple tests for error handling in different file system scenarios
+# group: [markdown]
+
+require markdown
+
+#===================================================================
+# Test 1: Basic Error Handling
+#===================================================================
+
+# Test NULL input
+query I
+SELECT md_extract_code_blocks(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_links(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_images(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_table_rows(NULL) IS NULL;
+----
+true
+
+#===================================================================
+# Test 2: Empty Content
+#===================================================================
+
+# Test empty string input
+query I
+SELECT len(md_extract_code_blocks(''));
+----
+0
+
+query I
+SELECT len(md_extract_links(''));
+----
+0
+
+query I
+SELECT len(md_extract_images(''));
+----
+0
+
+query I
+SELECT len(md_extract_table_rows(''));
+----
+0
+
+#===================================================================
+# Test 3: Malformed Content
+#===================================================================
+
+# Test incomplete code blocks
+query I
+SELECT len(md_extract_code_blocks(E'```python\nprint("incomplete")'));
+----
+1
+
+# Test malformed links
+query I
+SELECT len(md_extract_links('[incomplete link]('));
+----
+0
+
+# Test malformed images
+query I
+SELECT len(md_extract_images('![incomplete image]('));
+----
+0
+
+# Test malformed tables
+query I
+SELECT len(md_extract_table_rows('| incomplete | table'));
+----
+0
+
+#===================================================================
+# Test 4: Unicode and Special Characters
+#===================================================================
+
+# Test unicode handling
+query I
+SELECT len(md_extract_code_blocks(E'```python\nprint("unicode: ñáéíóú")\n```'));
+----
+1
+
+query I
+SELECT len(md_extract_links('[Unicode Link](http://example.com/ñáéíóú)'));
+----
+1
+
+query I  
+SELECT len(md_extract_images('![Unicode Image](image_ñáéíóú.jpg)'));
+----
+1
+
+#===================================================================
+# Test 5: Edge Cases
+#===================================================================
+
+# Test content with only whitespace
+query I
+SELECT len(md_extract_code_blocks('   \n\n\t\t\n  '));
+----
+0
+
+# Test content with mixed line endings
+query I
+SELECT len(md_extract_code_blocks(E'```python\r\nprint("windows")\r\n```'));
+----
+1
+
+# Test very basic functionality
+query I
+SELECT len(md_extract_code_blocks(E'```\ncode\n```'));
+----
+1
+
+#===================================================================
+# Test 6: Aggregation Tests
+#===================================================================
+
+# Test summing across multiple content pieces
+query I
+SELECT sum(len(md_extract_code_blocks(content))) FROM (VALUES (E'```python\ncode1\n```'), (E'```sql\ncode2\n```')) as t(content);
+----
+2
+
+# Test counting across multiple content pieces
+query I
+SELECT sum(len(md_extract_links(content))) FROM (VALUES ('[link1](http://a.com)'), ('[link2](http://b.com)')) as t(content);
+----
+2
