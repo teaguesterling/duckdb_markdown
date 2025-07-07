@@ -6,4 +6,12 @@ duckdb_unittest_tempdir/
 testext
 test/python/__pycache__/
 .Rhistory
+make.out
 test_output/
+
+# Debug and temporary files
+debug_*
+test_*.sql
+test_*.md
+*.cpp.tmp
+SELECT*
