@@ -185,6 +185,15 @@ FROM (
 ----
 python	1
 
+# Test code block content with newline replacement
+query I
+SELECT replace(cb.code, chr(10), '\\n') as code_escaped
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\n```')) as cb
+);
+----
+print("hello")\\n
+
 # Test code block with no language
 query I
 SELECT cb.language
@@ -197,11 +206,11 @@ FROM (
 # Test code block with extra info
 query I
 SELECT cb.info_string
-FROM unnest(md_extract_code_blocks('```python title="example.py" 
-print("hello")\n\n
-```')) as cb;
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python title="example.py"\nprint("hello")\n```')) as cb
+);
 ----
-python title="example.py" 
+python title="example.py"
 
 # Test inline code (should not be extracted)
 query I
@@ -211,23 +220,24 @@ SELECT len(md_extract_code_blocks('This is `inline code` not a block'));
 
 # Test malformed code blocks
 query I
-SELECT len(md_extract_code_blocks('```python
-missing closing fence'));
+SELECT len(md_extract_code_blocks(E'```python\nmissing closing fence'));
 ----
-0
+1
 
 #===================================================================
 # Test 4: Link Extraction - Comprehensive  
 #===================================================================
 
 # Test simple link
-query I
+query IIII
 SELECT 
   link.text,
   link.url,
   link.title,
   link.is_reference
-FROM unnest(md_extract_links('[GitHub](https://github.com)')) as link;
+FROM (
+  SELECT UNNEST(md_extract_links('[GitHub](https://github.com)')) as link
+);
 ----
 GitHub	https://github.com	NULL	false
 

@@ -1,0 +1,36 @@
+# name: test/sql/markdown_newline_test.test
+# description: Test newline handling in markdown extraction using string replacement
+# group: [markdown]
+
+require markdown
+
+# ✅ SOLUTION: Test multiline code content with newline replacement
+# This technique successfully handles the test framework limitation with newlines
+query I
+SELECT replace(cb.code, chr(10), '\\n') as code_escaped
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\nprint("world")\n```')) as cb
+);
+----
+print("hello")\\nprint("world")\\n
+
+# ✅ Verify the technique works for different languages
+query I
+SELECT replace(cb.code, chr(10), ' | ') as code_with_separators
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```sql\nSELECT name\nFROM users\nWHERE active = 1;\n```')) as cb
+);
+----
+SELECT name | FROM users | WHERE active = 1; | 
+
+# ✅ Test that we can validate code structure without multiline issues
+query III
+SELECT 
+  cb.language,
+  length(cb.code) > 10 as has_substantial_code,
+  cb.line_number
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```javascript\nconsole.log("test");\nalert("done");\n```')) as cb
+);
+----
+javascript	true	1
