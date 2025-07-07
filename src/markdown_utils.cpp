@@ -340,10 +340,83 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str,
                                         const std::string& language_filter) {
     std::vector<CodeBlock> code_blocks;
     
-    // TODO: Extract fenced code blocks using simple string parsing
-    // For now, return empty vector to avoid regex dependency
-    // This will be implemented later using DuckDB string utilities
-    (void)language_filter; // Avoid unused parameter warning
+    // Parse fenced code blocks using simple string operations
+    size_t pos = 0;
+    idx_t line_number = 1;
+    
+    while (pos < markdown_str.length()) {
+        // Find the start of a code fence
+        size_t fence_start = markdown_str.find("```", pos);
+        if (fence_start == std::string::npos) {
+            break;
+        }
+        
+        // Count lines up to fence start
+        for (size_t i = pos; i < fence_start; i++) {
+            if (markdown_str[i] == '\n') {
+                line_number++;
+            }
+        }
+        
+        // Extract the language info from the same line as the opening fence
+        size_t line_end = markdown_str.find('\n', fence_start);
+        if (line_end == std::string::npos) {
+            break; // No newline after fence
+        }
+        
+        std::string info_line = markdown_str.substr(fence_start + 3, line_end - fence_start - 3);
+        std::string language;
+        std::string info_string = info_line;
+        
+        // Extract language (first word of info string)
+        size_t space_pos = info_line.find(' ');
+        if (space_pos != std::string::npos) {
+            language = info_line.substr(0, space_pos);
+        } else {
+            language = info_line;
+        }
+        
+        // Remove leading/trailing whitespace
+        while (!language.empty() && (language.front() == ' ' || language.front() == '\t')) {
+            language = language.substr(1);
+        }
+        while (!language.empty() && (language.back() == ' ' || language.back() == '\t')) {
+            language = language.substr(0, language.length() - 1);
+        }
+        
+        // Find the closing fence
+        size_t fence_end = markdown_str.find("```", line_end);
+        if (fence_end == std::string::npos) {
+            break; // No closing fence
+        }
+        
+        // Extract the code content
+        std::string code = markdown_str.substr(line_end + 1, fence_end - line_end - 1);
+        
+        // Remove trailing newline if present
+        if (!code.empty() && code.back() == '\n') {
+            code = code.substr(0, code.length() - 1);
+        }
+        
+        // Apply language filter if specified
+        if (language_filter.empty() || 
+            StringUtil::Lower(language) == StringUtil::Lower(language_filter)) {
+            
+            CodeBlock block;
+            block.language = language;
+            block.code = code;
+            block.line_number = line_number + 1; // Code starts on line after fence
+            block.info_string = info_string;
+            
+            code_blocks.push_back(block);
+        }
+        
+        // Move past the closing fence
+        pos = fence_end + 3;
+        
+        // Count the line with the closing fence
+        line_number++;
+    }
     
     return code_blocks;
 }
