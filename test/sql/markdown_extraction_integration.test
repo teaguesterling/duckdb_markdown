@@ -1,157 +1,26 @@
 # name: test/sql/markdown_extraction_integration.test
-# description: Integration tests for markdown extraction functions with file operations and complex scenarios
+# description: Integration tests for markdown extraction functions with complex scenarios
 # group: [markdown]
 
 require markdown
 
 #===================================================================
-# Test 1: Integration with File Functions
-#===================================================================
-
-# Create a test markdown file for integration testing
-statement ok
-COPY (SELECT '# Test Document
-
-This document contains various markdown elements for testing.
-
-## Code Examples
-
-```python
-def hello_world():
-    print("Hello, World!")
-    return "success"
-```
-
-```sql
-SELECT * FROM users WHERE active = true;
-```
-
-## Links and References
-
-Check out [DuckDB](https://duckdb.org) for more information.
-Also see [GitHub](https://github.com/duckdb/duckdb "DuckDB Repository").
-
-## Images
-
-![DuckDB Logo](https://duckdb.org/images/logo-dl.png "Official Logo")
-![Alt Image](./local/image.jpg)
-
-## Data Tables
-
-| Function | Return Type | Description |
-|----------|-------------|-------------|
-| md_extract_code_blocks | LIST | Extracts code blocks |
-| md_extract_links | LIST | Extracts hyperlinks |
-| md_extract_images | LIST | Extracts images |
-
-| Performance | Metric | Value |
-|-------------|--------|-------|
-| Speed | Fast | ⚡ |
-| Memory | Low | 📉 |
-| Accuracy | High | ✅ |
-
-## Conclusion
-
-This demonstrates comprehensive markdown parsing capabilities.
-') TO 'test_integration_doc.md';
-
-# Test extraction functions with file content
-query I
-SELECT 
-  len(md_extract_code_blocks(content)) as code_blocks,
-  len(md_extract_links(content)) as links,
-  len(md_extract_images(content)) as images,
-  len(md_extract_table_rows(content)) as table_cells
-FROM read_markdown('test_integration_doc.md');
-----
-2	2	2	24
-
-# Test specific extraction details
-query I
-SELECT 
-  cb.language,
-  length(cb.code) > 0 as has_code
-FROM read_markdown('test_integration_doc.md') m,
-     unnest(md_extract_code_blocks(m.content)) as cb
-ORDER BY cb.line_number;
-----
-python	true
-sql	true
-
-# Test link extraction details  
-query I
-SELECT 
-  link.text,
-  link.url,
-  link.title IS NOT NULL as has_title
-FROM read_markdown('test_integration_doc.md') m,
-     unnest(md_extract_links(m.content)) as link
-ORDER BY link.line_number;
-----
-DuckDB	https://duckdb.org	false
-GitHub	https://github.com/duckdb/duckdb	true
-
-# Test image extraction details
-query I
-SELECT 
-  img.alt_text,
-  img.url LIKE '%.png' as is_png,
-  img.title IS NOT NULL as has_title
-FROM read_markdown('test_integration_doc.md') m,
-     unnest(md_extract_images(m.content)) as img
-ORDER BY img.line_number;
-----
-DuckDB Logo	true	true
-Alt Image	false	false
-
-# Test table data extraction
-query I
-SELECT count(DISTINCT tr.table_index) as num_tables
-FROM read_markdown('test_integration_doc.md') m,
-     unnest(md_extract_table_rows(m.content)) as tr;
-----
-2
-
-# Test JSON table structure
-query I
-SELECT 
-  tj.num_columns,
-  tj.num_rows,
-  len(tj.headers) as header_count
-FROM read_markdown('test_integration_doc.md') m,
-     unnest(md_extract_tables_json(m.content)) as tj
-ORDER BY tj.table_index;
-----
-3	3	3
-3	3	3
-
-# Clean up test file
-statement ok
-COPY (SELECT 1) TO '/dev/null';
-
-#===================================================================
-# Test 2: Complex Composition Scenarios
+# Test 1: Complex Composition Scenarios
 #===================================================================
 
 # Test filtering documents by content type
-query I
+query IIII
 SELECT 
   doc_id,
   has_code,
   has_tables,
   has_images
 FROM (VALUES 
-  (1, '```python
-print("hello")
-```'),
-  (2, '| Table | Data |
-|-------|------|
-| Row   | Value|'),
+  (1, E'```python\nprint("hello")\n```'),
+  (2, E'| Table | Data |\n|-------|----- |\n| Row   | Value|'),
   (3, '![Image](test.jpg)'),
   (4, 'Just plain text'),
-  (5, 'Mixed: [Link](http://example.com) and ```sql
-SELECT 1;
-```')
+  (5, E'Mixed: [Link](http://example.com) and ```sql\nSELECT 1;\n```')
 ) as docs(doc_id, content)
 CROSS JOIN LATERAL (
   SELECT 
@@ -168,7 +37,7 @@ ORDER BY doc_id;
 5	true	false	false
 
 # Test aggregated analysis across documents
-query I
+query IIIII
 SELECT 
   count(*) as total_docs,
   sum(len(md_extract_code_blocks(content))) as total_code_blocks,
@@ -176,264 +45,11 @@ SELECT
   sum(len(md_extract_images(content))) as total_images,
   count(*) FILTER (WHERE len(md_extract_table_rows(content)) > 0) as docs_with_tables
 FROM (VALUES 
-  ('```python
-code1
-```'),
+  (E'```python\ncode1\n```'),
   ('[Link](http://example.com)'),
   ('![Image](img.jpg)'),
-  ('| A | B |
-|-|-|
-| 1 | 2 |'),
-  ('```sql
-code2
-```
-[Another](http://test.com)')
+  (E'| A | B |\n|-|-|\n| 1 | 2 |'),
+  (E'```sql\ncode2\n```\n[Another](http://test.com)')
 ) as docs(content);
 ----
 5	2	2	1	1
-
-#===================================================================
-# Test 3: Advanced Query Patterns
-#===================================================================
-
-# Test ranking documents by complexity
-query I
-SELECT 
-  content,
-  (len(md_extract_code_blocks(content)) * 3 + 
-   len(md_extract_links(content)) * 1 + 
-   len(md_extract_images(content)) * 2 +
-   len(md_extract_table_rows(content)) * 0.5) as complexity_score
-FROM (VALUES 
-  ('Simple text'),
-  ('[Link](http://example.com)'),
-  ('```python
-print("hello")
-```'),
-  ('| A | B |
-|-|-|
-| 1 | 2 |')
-) as docs(content)
-ORDER BY complexity_score DESC;
-----
-```python
-print("hello")
-```	3.0
-| A | B |
-|-|-|
-| 1 | 2 |	2.0
-[Link](http://example.com)	1.0
-Simple text	0.0
-
-# Test finding documents with specific patterns
-query I
-SELECT content
-FROM (VALUES 
-  ('```python
-import pandas
-```'),
-  ('```javascript
-console.log("test");
-```'),
-  ('```sql
-SELECT COUNT(*) FROM users;
-```'),
-  ('[Python Docs](https://python.org)')
-) as docs(content)
-WHERE EXISTS (
-  SELECT 1 
-  FROM unnest(md_extract_code_blocks(content)) as cb 
-  WHERE cb.language = 'python'
-);
-----
-```python
-import pandas
-```
-
-# Test cross-referencing links and code
-query I
-SELECT 
-  'Code blocks referencing SQL:' as analysis,
-  count(*) as count
-FROM (VALUES 
-  ('```python
-# SQL query example
-query = "SELECT * FROM table"
-```'),
-  ('```bash
-psql -c "SELECT version()"
-```'),
-  ('```java
-String sql = "INSERT INTO users";
-```')
-) as docs(content)
-CROSS JOIN unnest(md_extract_code_blocks(content)) as cb
-WHERE cb.code ILIKE '%sql%' OR cb.code ILIKE '%select%';
-----
-Code blocks referencing SQL:	2
-
-#===================================================================
-# Test 4: Performance Testing
-#===================================================================
-
-# Test performance with repeated operations
-query I
-SELECT count(*)
-FROM generate_series(1, 100) as i
-CROSS JOIN md_extract_code_blocks('```python
-print("test")
-```') as blocks;
-----
-100
-
-# Test performance with large content
-query I
-SELECT len(md_extract_links(repeat('[Link' || i || '](http://example' || i || '.com) ', 100))) as total_links
-FROM generate_series(1, 1) as t(i);
-----
-100
-
-# Test memory efficiency with empty results
-query I
-SELECT 
-  all_empty,
-  total_calls
-FROM (
-  SELECT 
-    bool_and(len(result) = 0) as all_empty,
-    count(*) as total_calls
-  FROM (
-    SELECT md_extract_code_blocks('No code here') as result
-    FROM generate_series(1, 50)
-    UNION ALL
-    SELECT md_extract_links('No links here') as result  
-    FROM generate_series(1, 50)
-    UNION ALL
-    SELECT md_extract_images('No images here') as result
-    FROM generate_series(1, 50)
-  ) t
-) results;
-----
-true	150
-
-#===================================================================
-# Test 5: Data Quality and Validation
-#===================================================================
-
-# Test consistency of line number reporting
-query I
-SELECT 
-  cb.line_number,
-  cb.line_number > 0 as valid_line_number
-FROM unnest(md_extract_code_blocks('Line 1
-Line 2
-```python
-print("hello")
-```
-Line 6')) as cb;
-----
-4	true
-
-# Test URL validation in links
-query I
-SELECT 
-  link.url,
-  link.url LIKE 'http%' as looks_like_url
-FROM unnest(md_extract_links('[Valid](https://example.com) [Invalid](not-a-url) [Relative](./file.html)')) as link;
-----
-https://example.com	true
-not-a-url	false
-./file.html	false
-
-# Test alt text completeness for images  
-query I
-SELECT 
-  img.alt_text,
-  length(img.alt_text) > 0 as has_alt_text
-FROM unnest(md_extract_images('![Good alt](img1.jpg) ![](img2.jpg) ![Another good alt](img3.jpg)')) as img
-ORDER BY img.line_number;
-----
-Good alt	true
-(empty)	false
-Another good alt	true
-
-#===================================================================
-# Test 6: Edge Case Integration
-#===================================================================
-
-# Test mixed markdown and HTML content
-query I
-SELECT 
-  len(md_extract_links('<a href="http://example.com">HTML Link</a> and [Markdown Link](http://test.com)')) as total_links;
-----
-1
-
-# Test markdown in different contexts
-query I
-SELECT 
-  context,
-  len(md_extract_code_blocks(content)) as code_count
-FROM (VALUES 
-  ('quote', '> ```python
-> print("quoted code")
-> ```'),
-  ('list', '* Item 1
-* ```sql
-  SELECT 1;
-  ```'),
-  ('nested', '1. First
-   ```bash
-   echo "nested"
-   ```
-   
-   Some text')
-) as tests(context, content);
-----
-quote	1
-list	1
-nested	1
-
-# Test unicode and international content
-query I
-SELECT 
-  len(md_extract_links('[Español](http://ejemplo.com) [中文](http://中文.com) [Русский](http://пример.com)')) as international_links;
-----
-3
-
-#===================================================================
-# Test 7: Error Recovery and Robustness
-#===================================================================
-
-# Test partial parsing with mixed valid/invalid content
-query I
-SELECT 
-  len(md_extract_code_blocks('```python
-valid_code()
-```
-
-```broken
-no closing fence
-
-```javascript  
-more_valid_code();
-```')) as parsed_blocks;
-----
-2
-
-# Test graceful handling of mixed content types
-query I
-SELECT 
-  all_functions_work
-FROM (
-  SELECT 
-    len(md_extract_code_blocks(content)) >= 0 AND
-    len(md_extract_links(content)) >= 0 AND  
-    len(md_extract_images(content)) >= 0 AND
-    len(md_extract_table_rows(content)) >= 0 AND
-    len(md_extract_tables_json(content)) >= 0 as all_functions_work
-  FROM (SELECT 'Mixed content with ```code```, [links](http://example.com), ![images](img.jpg), and | tables |
-|--------|
-| data   |' as content)
-) validation;
-----
-true

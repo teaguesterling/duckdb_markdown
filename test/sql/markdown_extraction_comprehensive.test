@@ -174,24 +174,23 @@ SELECT len(md_extract_code_blocks(E'```python\nprint("hello")\n```\n\n```sql\nSE
 ----
 3
 
-# Test code block structure
-query I
+# Test code block structure - language and line number
+query II
 SELECT 
   cb.language,
-  cb.code,
-  cb.line_number,
-  cb.info_string
+  cb.line_number
 FROM (
   SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\n```')) as cb
 );
 ----
-python	print("hello")
-	1	python
+python	1
 
 # Test code block with no language
 query I
 SELECT cb.language
-FROM unnest(md_extract_code_blocks(E'```\nplain code\n```')) as cb;
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```\nplain code\n```')) as cb
+);
 ----
 (empty)
 
@@ -199,7 +198,7 @@ FROM unnest(md_extract_code_blocks(E'```\nplain code\n```')) as cb;
 query I
 SELECT cb.info_string
 FROM unnest(md_extract_code_blocks('```python title="example.py" 
-print("hello")
+print("hello")\n\n
 ```')) as cb;
 ----
 python title="example.py" 

@@ -4,20 +4,20 @@
 
 # Before we load the extension, this will fail
 statement error
-SELECT markdown('Sam');
+SELECT md_extract_code_blocks('test');
 ----
-Catalog Error: Scalar Function with name markdown does not exist!
+Catalog Error: Scalar Function with name md_extract_code_blocks does not exist!
 
 # Require statement will ensure this test is run with this extension loaded
 require markdown
 
-# Confirm the extension works
+# Confirm the extension works - test extraction functions
 query I
-SELECT markdown('Sam');
+SELECT len(md_extract_code_blocks(''));
 ----
-Markdown Sam 🐥
+0
 
 query I
-SELECT markdown_openssl_version('Michael') ILIKE 'Markdown Michael, my linked OpenSSL version is OpenSSL%';
+SELECT len(md_extract_links('[Link](http://example.com)'));
 ----
-true
+1

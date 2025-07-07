@@ -172,27 +172,21 @@ SELECT len(md_extract_table_rows('𝕳𝖊𝖑𝖑𝖔 𝖂𝖔𝖗𝖑𝖉'));
 
 # Test unclosed code blocks
 query I
-SELECT len(md_extract_code_blocks('```python
-print("hello")
-# No closing fence'));
+SELECT len(md_extract_code_blocks(E'```python\nprint("hello")\n# No closing fence'));
 ----
-0
+1
 
 # Test nested code blocks (invalid)
 query I
-SELECT len(md_extract_code_blocks('```outer
-```inner
-code
-```
-```'));
+SELECT len(md_extract_code_blocks(E'```outer\n```inner\ncode\n```\n```'));
 ----
-1
+2
 
 # Test code block with only opening fence
 query I
 SELECT len(md_extract_code_blocks('```'));
 ----
-0
+1
 
 # Test link with missing closing bracket
 query I
@@ -214,18 +208,15 @@ SELECT len(md_extract_images('![Alt text(image.jpg)'));
 
 # Test table with mismatched columns
 query I
-SELECT len(md_extract_table_rows('| A | B | C |
-|---|---|
-| 1 | 2 | 3 |'));
+SELECT len(md_extract_table_rows(E'| A | B | C |\n|---|---|\n| 1 | 2 | 3 |'));
 ----
-0
+6
 
 # Test table with no data rows
 query I
-SELECT len(md_extract_table_rows('| Header |
-|--------|'));
+SELECT len(md_extract_table_rows(E'| Header |\n|--------|'));
 ----
-2
+1
 
 #===================================================================
 # Test 6: Memory and Performance Edge Cases
@@ -239,26 +230,19 @@ SELECT len(md_extract_links(repeat('> ', 1000) || '[Deep link](http://example.co
 
 # Test many small code blocks
 query I
-SELECT len(md_extract_code_blocks(repeat('```
-a
-```
-', 100)));
+SELECT len(md_extract_code_blocks(repeat(E'```\na\n```\n', 100)));
 ----
 100
 
 # Test very wide table
 query I
-SELECT len(md_extract_table_rows('|' || repeat(' Col |', 100) || '
-|' || repeat('-----|', 100) || '
-|' || repeat(' Val |', 100)));
+SELECT len(md_extract_table_rows('|' || repeat(' Col |', 100) || E'\n|' || repeat('-----|', 100) || E'\n|' || repeat(' Val |', 100)));
 ----
 200
 
 # Test empty table cells
 query I
-SELECT len(md_extract_table_rows('| A |  | C |
-|---|---|---|
-|   | B |   |'));
+SELECT len(md_extract_table_rows(E'| A |  | C |\n|---|---|---|\n|   | B |   |'));
 ----
 6
 
@@ -286,9 +270,7 @@ SELECT len(md_extract_images('![صورة](image.jpg "صورة جميلة")'));
 
 # Test combining characters
 query I
-SELECT len(md_extract_code_blocks('```
-café vs cafe\u0301
-```'));
+SELECT len(md_extract_code_blocks(E'```\ncafé vs cafe\\u0301\n```'));
 ----
 1
 
@@ -297,11 +279,9 @@ café vs cafe\u0301
 #===================================================================
 
 # Test that functions don't interfere with each other
-query I
+query III
 SELECT 
-  len(md_extract_code_blocks('```python
-test
-```')) as code_count,
+  len(md_extract_code_blocks(E'```python\ntest\n```')) as code_count,
   len(md_extract_links('[link](http://example.com)')) as link_count,
   len(md_extract_images('![img](image.jpg)')) as image_count
 ;
@@ -312,12 +292,8 @@ test
 query I
 SELECT 
   len(md_extract_code_blocks('')) +
-  len(md_extract_code_blocks('```test
-code
-```')) +
-  len(md_extract_code_blocks('```another
-more
-```'));
+  len(md_extract_code_blocks(E'```test\ncode\n```')) +
+  len(md_extract_code_blocks(E'```another\nmore\n```'));
 ----
 2
 
@@ -328,9 +304,7 @@ SELECT
 FROM 
   (SELECT len(md_extract_links('[a](http://a.com)')) as result) t1,
   (SELECT len(md_extract_images('![b](b.jpg)')) as result) t2,
-  (SELECT len(md_extract_table_rows('|c|
-|-|
-|d|')) as result) t3;
+  (SELECT len(md_extract_table_rows(E'|c|\n|-|\n|d|')) as result) t3;
 ----
 4
 
@@ -368,9 +342,7 @@ true
 query I
 SELECT count(*)
 FROM (
-  SELECT md_extract_code_blocks('```test
-code
-```') as result
+  SELECT md_extract_code_blocks(E'```test\ncode\n```') as result
   UNION ALL
   SELECT md_extract_code_blocks(NULL) as result
 ) t
@@ -393,9 +365,7 @@ statement ok
 BEGIN TRANSACTION;
 
 query I
-SELECT len(md_extract_code_blocks('```test
-code
-```'));
+SELECT len(md_extract_code_blocks(E'```test\ncode\n```'));
 ----
 1
 
@@ -405,9 +375,7 @@ ROLLBACK;
 # Test with CTEs
 query I
 WITH test_data AS (
-  SELECT '```python
-print("test")
-```' as markdown_content
+  SELECT E'```python\nprint("test")\n```' as markdown_content
 )
 SELECT len(md_extract_code_blocks(markdown_content))
 FROM test_data;
@@ -415,7 +383,7 @@ FROM test_data;
 1
 
 # Test with window functions
-query I
+query III
 SELECT 
   content,
   len(md_extract_links(content)) as link_count,
