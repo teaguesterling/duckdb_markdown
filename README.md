@@ -1,15 +1,8 @@
 # Markdown Extension for DuckDB
 
-This extension enables DuckDB to read and analyze Markdown files directly, providing comprehensive document intelligence capabilities for technical documentation, README files, and other Markdown content at scale.
+This extension enables DuckDB to extract and analyze content from Markdown text, providing powerful content analysis capabilities for documentation, README files, and other Markdown content.
 
 ## Installation
-
-### From Community Extensions
-
-```sql
-INSTALL markdown FROM community;
-LOAD markdown;
-```
 
 ### From Source
 
@@ -22,12 +15,11 @@ make test
 
 ## Key Features
 
-- **Document Reading**: Read Markdown files into DuckDB tables with `read_markdown` and `read_markdown_sections`
-- **Section-Based Analysis**: Parse documents into hierarchical sections with stable IDs
-- **Full-Text Search Ready**: Convert Markdown to plain text optimized for FTS indexing
-- **Content Extraction**: Extract code blocks, links, images, and metadata
-- **Native MD Type**: Full Markdown type support with conversion functions
-- **Documentation Intelligence**: Calculate statistics, validate links, analyze structure
+- **Content Extraction**: Extract code blocks, links, images, and tables from Markdown text
+- **Structured Output**: All functions return `LIST<STRUCT>` types for easy SQL composition
+- **Rich Metadata**: Detailed information including line numbers, types, and attributes
+- **Robust Parsing**: Uses cmark-gfm (GitHub Flavored Markdown) for accurate parsing
+- **SQL-First Design**: Functions work seamlessly with file operations, aggregations, and complex queries
 
 ## Quick Start
 
@@ -35,289 +27,291 @@ make test
 -- Load the extension
 LOAD markdown;
 
--- Read whole documents
-SELECT * FROM read_markdown('docs/*.md');
-
--- Parse into sections for detailed analysis  
-SELECT * FROM read_markdown_sections('docs/*.md', 
-    min_level=1, 
-    max_level=3,
-    include_content=true
+-- Extract code blocks from text
+SELECT cb.language, cb.code, cb.line_number
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\n```')) as cb
 );
 
--- Direct file querying
-SELECT * FROM 'README.md';
+-- Extract links from text  
+SELECT link.text, link.url
+FROM (
+  SELECT UNNEST(md_extract_links('[GitHub](https://github.com)')) as link
+);
 
--- Extract searchable text for FTS
+-- Analyze mixed content
 SELECT 
-    file_path,
-    section_id, 
-    title,
-    md_to_text(content) as searchable_text
-FROM read_markdown_sections('docs/*.md');
+  len(md_extract_code_blocks(content)) as code_blocks,
+  len(md_extract_links(content)) as links,
+  len(md_extract_images(content)) as images
+FROM (VALUES ('# Doc\n[Link](http://example.com)\n```sql\nSELECT 1;\n```')) as t(content);
 ```
 
 ## Core Functions
 
-### Reading Functions
+### Code Block Extraction
 
-#### `read_markdown(path, [options])`
-Returns one row per file with complete document content.
+#### `md_extract_code_blocks(markdown_text)`
+Extracts all code blocks from Markdown text.
+
+**Returns:** `LIST<STRUCT("language" VARCHAR, code VARCHAR, line_number BIGINT, info_string VARCHAR)>`
 
 ```sql
--- Basic usage
-SELECT * FROM read_markdown('docs/*.md');
--- Returns: file_path, content (MD type), metadata (JSON)
-
--- With options
-SELECT * FROM read_markdown('docs/*.md',
-    extract_metadata=true,
-    include_stats=true,
-    flavor='gfm'
+-- Extract all code blocks
+SELECT cb.language, cb.code, cb.line_number, cb.info_string
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python\ndef hello():\n    print("world")\n```')) as cb
 );
-```
+-- Returns: python | def hello():\n    print("world")\n | 1 | python
 
-#### `read_markdown_sections(path, [options])`
-Returns one row per section for detailed document analysis.
+-- Filter by language  
+SELECT cb.code
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(markdown_content)) as cb
+)
+WHERE cb.language = 'sql';
 
-```sql
--- Parse documents into sections
-SELECT * FROM read_markdown_sections('docs/*.md',
-    include_content=true,    -- Include section content
-    min_level=1,             -- Minimum heading level  
-    max_level=3,             -- Maximum heading level
-    flavor='gfm'             -- GitHub Flavored Markdown
-);
--- Returns: file_path, section_id, level, title, content, parent_id, position
-```
-
-### Conversion Functions
-
-```sql
--- Convert Markdown to HTML
-SELECT md_to_html(content) FROM read_markdown('README.md');
-
--- Convert to plain text (for FTS)
-SELECT md_to_text(content) FROM read_markdown('docs/*.md');
-
--- Create Markdown from values
-SELECT value_to_md({'title': 'Hello', 'content': 'World'});
-
--- Validate Markdown
-SELECT md_valid(content) FROM user_documents;
-```
-
-### Content Extraction
-
-```sql
--- Extract code blocks
+-- Count code blocks by language
 SELECT 
-    file_path,
-    code.*
-FROM read_markdown_sections('docs/*.md') s
-CROSS JOIN LATERAL md_extract_code_blocks(s.content, 'sql') code;
+  cb.language,
+  count(*) as block_count
+FROM documents d,
+     UNNEST(md_extract_code_blocks(d.content)) as cb
+GROUP BY cb.language;
+```
 
+### Link Extraction
+
+#### `md_extract_links(markdown_text)`
+Extracts all links from Markdown text.
+
+**Returns:** `LIST<STRUCT("text" VARCHAR, url VARCHAR, title VARCHAR, is_reference BOOLEAN, line_number BIGINT)>`
+
+```sql
 -- Extract all links
-SELECT 
-    file_path,
-    link.text,
-    link.url
-FROM read_markdown('docs/*.md') d
-CROSS JOIN LATERAL md_extract_links(d.content) link;
+SELECT link.text, link.url, link.title
+FROM (
+  SELECT UNNEST(md_extract_links('[GitHub](https://github.com "Git Platform")')) as link
+);
+-- Returns: GitHub | https://github.com | Git Platform
 
--- Extract metadata from frontmatter
-SELECT 
-    file_path,
-    md_extract_metadata(content) as metadata
-FROM read_markdown('blog/*.md');
+-- Find external links
+SELECT link.url
+FROM documents d,
+     UNNEST(md_extract_links(d.content)) as link
+WHERE link.url LIKE 'http%';
 
--- Calculate document statistics
+-- Validate internal links
 SELECT 
-    file_path,
-    md_stats(content) as stats
-FROM read_markdown('docs/*.md');
+  file_path,
+  link.text,
+  link.url
+FROM documents d,
+     UNNEST(md_extract_links(d.content)) as link
+WHERE link.url LIKE '#%'
+  AND link.url NOT IN (SELECT '#' || section_id FROM document_sections);
+```
+
+### Image Extraction
+
+#### `md_extract_images(markdown_text)`
+Extracts all images from Markdown text.
+
+**Returns:** `LIST<STRUCT(alt_text VARCHAR, url VARCHAR, title VARCHAR, line_number BIGINT)>`
+
+```sql
+-- Extract all images
+SELECT img.alt_text, img.url, img.title
+FROM (
+  SELECT UNNEST(md_extract_images('![Logo](logo.png "Company Logo")')) as img
+);
+-- Returns: Logo | logo.png | Company Logo
+
+-- Find images without alt text
+SELECT img.url
+FROM documents d,
+     UNNEST(md_extract_images(d.content)) as img
+WHERE img.alt_text = '' OR img.alt_text IS NULL;
+```
+
+### Table Extraction
+
+#### `md_extract_table_rows(markdown_text)`
+Extracts table data as individual cells.
+
+**Returns:** `LIST<STRUCT(table_index BIGINT, row_type VARCHAR, row_index BIGINT, column_index BIGINT, cell_value VARCHAR, line_number BIGINT, num_columns BIGINT, num_rows BIGINT)>`
+
+```sql
+-- Extract table data
+SELECT tr.table_index, tr.row_type, tr.cell_value
+FROM (
+  SELECT UNNEST(md_extract_table_rows(E'| Name | Age |\n|------|-----|\n| John | 25  |')) as tr
+);
+
+-- Get table headers
+SELECT tr.cell_value as header
+FROM (
+  SELECT UNNEST(md_extract_table_rows(table_content)) as tr
+)
+WHERE tr.row_type = 'header'
+ORDER BY tr.column_index;
+
+-- Count tables in documents
+SELECT 
+  count(DISTINCT tr.table_index) as table_count
+FROM documents d,
+     UNNEST(md_extract_table_rows(d.content)) as tr;
+```
+
+#### `md_extract_tables_json(markdown_text)`
+Extracts tables as structured JSON with enhanced metadata.
+
+**Returns:** `LIST<STRUCT(table_index BIGINT, num_columns BIGINT, num_rows BIGINT, headers VARCHAR[], table_json VARCHAR, json_structure VARCHAR, line_number BIGINT)>`
+
+```sql
+-- Extract tables as JSON
+SELECT tj.table_json, tj.json_structure
+FROM (
+  SELECT UNNEST(md_extract_tables_json(table_content)) as tj
+);
 ```
 
 ## Advanced Use Cases
 
-### Documentation Search System
+### Documentation Analysis
 
 ```sql
--- Build searchable documentation database
-CREATE TABLE docs_search AS
+-- Analyze code examples across documentation
+CREATE TABLE code_analysis AS
 SELECT 
-    file_path,
-    section_id,
-    level,
-    title,
-    md_to_text(content) as body,
-    md_section_breadcrumb(file_path, section_id) as breadcrumb
-FROM read_markdown_sections('docs/**/*.md', max_level=3);
+  doc_id,
+  cb.language,
+  count(*) as example_count,
+  sum(length(cb.code)) as total_code_length
+FROM documents d,
+     UNNEST(md_extract_code_blocks(d.content)) as cb
+GROUP BY doc_id, cb.language;
 
--- Create FTS index (requires fts extension)
-PRAGMA create_fts_index('docs_search', 'title', 'body');
-
--- Search documentation
-SELECT 
-    breadcrumb,
-    snippet(docs_search, 'body') as match
-FROM docs_search
-WHERE body MATCH 'connection pooling'
-ORDER BY rank
-LIMIT 10;
+-- Find documents with broken links
+SELECT DISTINCT doc_id
+FROM documents d,
+     UNNEST(md_extract_links(d.content)) as link
+WHERE link.url LIKE 'http%'
+  AND link.url NOT IN (SELECT url FROM verified_urls);
 ```
 
-### Code Example Database
+### Content Quality Metrics
 
 ```sql
--- Extract all code examples with context
-CREATE TABLE code_examples AS
+-- Calculate content richness scores
 SELECT 
-    s.file_path,
-    md_section_breadcrumb(s.file_path, s.section_id) as location,
-    c.language,
-    c.code,
-    c.line_number
-FROM read_markdown_sections('**/*.md') s
-CROSS JOIN LATERAL md_extract_code_blocks(s.content) c
-WHERE c.language IN ('sql', 'python', 'javascript');
+  doc_id,
+  len(md_extract_code_blocks(content)) * 3 +
+  len(md_extract_links(content)) * 1 +
+  len(md_extract_images(content)) * 2 +
+  len(md_extract_table_rows(content)) * 0.5 as richness_score
+FROM documents
+ORDER BY richness_score DESC;
 
--- Find SQL examples
+-- Find documents by content type
 SELECT 
-    location,
-    code
-FROM code_examples
-WHERE language = 'sql'
-  AND code ILIKE '%CREATE TABLE%';
+  'code-heavy' as type,
+  count(*) as count
+FROM documents
+WHERE len(md_extract_code_blocks(content)) > 5
+UNION ALL
+SELECT 
+  'link-rich' as type,
+  count(*) as count  
+FROM documents
+WHERE len(md_extract_links(content)) > 10;
 ```
 
-### Documentation Quality Analysis
+### Table Data Analysis
 
 ```sql
--- Analyze documentation quality
-CREATE VIEW doc_quality AS
-SELECT 
-    file_path,
-    stats.word_count,
-    stats.heading_count,
-    stats.reading_time_minutes,
-    COUNT(DISTINCT c.language) as code_languages,
-    COUNT(l.url) as total_links,
-    SUM(CASE WHEN l.url LIKE 'http:%' THEN 1 ELSE 0 END) as insecure_links
-FROM read_markdown('docs/*.md') d
-LEFT JOIN LATERAL md_stats(d.content) stats ON true
-LEFT JOIN LATERAL md_extract_code_blocks(d.content) c ON true  
-LEFT JOIN LATERAL md_extract_links(d.content) l ON true
-GROUP BY file_path, stats.word_count, stats.heading_count, stats.reading_time_minutes;
-```
-
-### Link Validation
-
-```sql
--- Find broken internal links
-WITH docs AS (
-    SELECT file_path, content FROM read_markdown('docs/*.md')
-),
-links AS (
-    SELECT 
-        d.file_path,
-        l.text,
-        l.url
-    FROM docs d
-    CROSS JOIN LATERAL md_extract_links(d.content) l
-    WHERE l.url LIKE '#%'
-),
-headings AS (
-    SELECT 
-        file_path,
-        section_id
-    FROM read_markdown_sections('docs/*.md')
+-- Extract and analyze table structures
+WITH table_stats AS (
+  SELECT 
+    d.doc_id,
+    tr.table_index,
+    tr.num_columns,
+    tr.num_rows
+  FROM documents d,
+       UNNEST(md_extract_table_rows(d.content)) as tr
+  WHERE tr.row_type = 'header'
 )
-SELECT DISTINCT
-    l.file_path,
-    l.text as link_text,
-    l.url as broken_link
-FROM links l
-LEFT JOIN headings h ON h.file_path = l.file_path 
-                   AND h.section_id = SUBSTR(l.url, 2)
-WHERE h.section_id IS NULL;
+SELECT 
+  avg(num_columns) as avg_columns,
+  max(num_rows) as max_rows,
+  count(DISTINCT table_index) as total_tables
+FROM table_stats;
+```
+
+### File Integration
+
+```sql
+-- Read files and extract content (requires file reading functions)
+-- This would work with hypothetical read_file or similar functions
+
+-- Process multiple files
+SELECT 
+  filename,
+  len(md_extract_code_blocks(content)) as code_blocks,
+  len(md_extract_links(content)) as links
+FROM (
+  VALUES 
+    ('README.md', read_file('README.md')),
+    ('CONTRIBUTING.md', read_file('CONTRIBUTING.md'))
+) as files(filename, content);
+```
+
+## Testing Multiline Content
+
+When testing extraction results that contain newlines, use string replacement:
+
+```sql
+-- Test code content with newlines
+SELECT replace(cb.code, chr(10), '\\n') as code_escaped
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\nprint("world")\n```')) as cb
+);
+-- Returns: print("hello")\\nprint("world")\\n
+
+-- Alternative: replace with separators
+SELECT replace(cb.code, chr(10), ' | ') as code_with_separators
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(multiline_code)) as cb
+);
 ```
 
 ## Function Reference
 
-### Reading Functions
-- `read_markdown(path, [options])` - Read whole documents
-- `read_markdown_sections(path, [options])` - Parse into sections
-
-### Conversion Functions  
-- `md_to_html(markdown)` - Convert to HTML
-- `md_to_text(markdown)` - Convert to plain text
-- `value_to_md(value)` - Convert value to Markdown
-- `md_valid(text)` - Validate Markdown syntax
-
 ### Extraction Functions
-- `md_extract_metadata(markdown)` - Extract frontmatter as JSON
-- `md_extract_code_blocks(markdown, [language])` - Extract code blocks
-- `md_extract_links(markdown)` - Extract links
-- `md_extract_images(markdown)` - Extract images  
-- `md_extract_headings(markdown, [max_level])` - Extract headings for TOC
-- `md_stats(markdown)` - Calculate document statistics
+- `md_extract_code_blocks(markdown)` - Extract code blocks with language and metadata
+- `md_extract_links(markdown)` - Extract links with text, URL, and title
+- `md_extract_images(markdown)` - Extract images with alt text and metadata  
+- `md_extract_table_rows(markdown)` - Extract table data as individual cells
+- `md_extract_tables_json(markdown)` - Extract tables as structured JSON
 
-### Section Functions
-- `md_extract_section(markdown, section_id)` - Extract specific section
-- `md_section_breadcrumb(file_path, section_id)` - Generate breadcrumb path
+### Return Types
+All functions return `LIST<STRUCT(...)>` types that can be:
+- Used with `UNNEST()` to flatten into rows
+- Accessed directly with `len()` to count elements
+- Composed with other SQL operations like `WHERE`, `JOIN`, `GROUP BY`
 
-## Parameters
+### Input Requirements
+- Functions accept `VARCHAR` or `MARKDOWN` type inputs
+- Use `E'...'` syntax for strings with newlines: `E'```python\ncode\n```'`
+- Functions handle malformed Markdown gracefully
+- NULL inputs return NULL, empty strings return empty arrays
 
-### Reading Options
-- `extract_metadata` (bool): Extract frontmatter metadata (default: true)
-- `include_stats` (bool): Calculate document statistics (default: false)
-- `flavor` (string): Markdown flavor - 'gfm', 'commonmark' (default: 'gfm')
-- `maximum_file_size` (int): Maximum file size in bytes (default: 16MB)
+## Performance Notes
 
-### Section Options  
-- `include_content` (bool): Include section content (default: true)
-- `min_level` (int): Minimum heading level (default: 1)
-- `max_level` (int): Maximum heading level (default: 6)
-- `include_empty_sections` (bool): Include sections without content (default: false)
-
-## File Support
-
-- **Extensions**: `.md`, `.markdown`
-- **Local files**: `docs/file.md`, `docs/*.md`, `docs/`
-- **Remote files**: `https://raw.githubusercontent.com/org/repo/main/README.md`
-- **Cloud storage**: `s3://bucket/docs/*.md` (with appropriate extensions)
-
-## Integration
-
-### Full-Text Search
-Works seamlessly with DuckDB's FTS extension:
-
-```sql
--- Prepare documents for search
-CREATE TABLE searchable AS
-SELECT md_to_text(content) as text FROM read_markdown('docs/*.md');
-
-PRAGMA create_fts_index('searchable', 'text');
-```
-
-### Vector Search
-Combine with vector extensions for semantic search:
-
-```sql
--- Generate embeddings per section
-SELECT 
-    section_id,
-    embedding_function(md_to_text(content)) as vector
-FROM read_markdown_sections('docs/*.md');
-```
-
-## Performance
-
-- **Streaming**: Large documents are processed efficiently
-- **TOC Mode**: Use `include_content=false` for fast table-of-contents generation
-- **Lazy Loading**: Section content loaded on demand
-- **Batch Processing**: Optimized for processing many files
+- **Streaming**: Functions process text efficiently without loading entire documents
+- **Composable**: LIST<STRUCT> return types enable complex SQL compositions
+- **Memory Efficient**: Only extracts requested content types
+- **Parallel Safe**: Functions can be used in parallel query execution
 
 ## Building from Source
 
@@ -325,9 +319,6 @@ FROM read_markdown_sections('docs/*.md');
 # Clone with dependencies  
 git clone --recurse-submodules https://github.com/your-org/duckdb_markdown
 cd duckdb_markdown
-
-# Install dependencies (Ubuntu/Debian)
-sudo apt-get install libcmark-gfm-dev libcmark-gfm-extensions-dev
 
 # Build
 make
@@ -339,15 +330,18 @@ make test
 ## Dependencies
 
 - **cmark-gfm**: GitHub Flavored Markdown parsing
-- **DuckDB**: Version 0.9.0 or later
+- **DuckDB**: Version 1.0.0 or later
 
-## Roadmap
+## Testing
 
-- [ ] Advanced path expressions (like JSONPath for sections)
-- [ ] Markdown modification functions  
-- [ ] Schema validation for structured documents
-- [ ] Performance optimizations for very large files
-- [ ] Extended Markdown flavor support
+The extension includes comprehensive tests covering:
+- Basic functionality for all extraction functions
+- Error handling and edge cases
+- Performance with large inputs
+- Integration scenarios and complex queries
+- Multiline content handling techniques
+
+Run tests with: `make test`
 
 ## License
 
@@ -355,4 +349,4 @@ MIT License - see LICENSE file for details.
 
 ## Contributing
 
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
+Contributions welcome! The extension provides a solid foundation for Markdown content analysis with room for additional features like file reading functions, metadata extraction, and conversion utilities.
