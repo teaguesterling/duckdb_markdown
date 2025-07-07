@@ -1,0 +1,588 @@
+# name: test/sql/markdown_extraction_comprehensive.test
+# description: Comprehensive test suite for markdown extraction functions
+# group: [markdown]
+
+require markdown
+
+#===================================================================
+# Test 1: Basic Function Existence and Signatures
+#===================================================================
+
+# Test all extraction functions exist
+statement ok
+SELECT md_extract_code_blocks('');
+
+statement ok  
+SELECT md_extract_links('');
+
+statement ok
+SELECT md_extract_images('');
+
+statement ok
+SELECT md_extract_table_rows('');
+
+statement ok
+SELECT md_extract_tables_json('');
+
+#===================================================================
+# Test 2: Parameter Validation and Error Handling
+#===================================================================
+
+# Test NULL input handling
+query I
+SELECT md_extract_code_blocks(NULL);
+----
+NULL
+
+query I
+SELECT md_extract_links(NULL);
+----
+NULL
+
+query I
+SELECT md_extract_images(NULL);
+----
+NULL
+
+query I
+SELECT md_extract_table_rows(NULL);
+----
+NULL
+
+query I
+SELECT md_extract_tables_json(NULL);
+----
+NULL
+
+# Test empty string input
+query I
+SELECT len(md_extract_code_blocks(''));
+----
+0
+
+query I
+SELECT len(md_extract_links(''));
+----
+0
+
+query I
+SELECT len(md_extract_images(''));
+----
+0
+
+query I
+SELECT len(md_extract_table_rows(''));
+----
+0
+
+query I
+SELECT len(md_extract_tables_json(''));
+----
+0
+
+# Test invalid markdown type - should fail
+statement error
+SELECT md_extract_code_blocks(123);
+----
+Binder Error
+
+statement error
+SELECT md_extract_links(123);
+----
+Binder Error
+
+statement error
+SELECT md_extract_images(123);
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows(123);
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json(123);
+----
+Binder Error
+
+# Test too many parameters - should fail
+statement error
+SELECT md_extract_code_blocks('test', 'extra');
+----
+Binder Error
+
+statement error
+SELECT md_extract_links('test', 'extra');
+----
+Binder Error
+
+statement error
+SELECT md_extract_images('test', 'extra');
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows('test', 'extra');
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json('test', 'extra');
+----
+Binder Error
+
+# Test too few parameters - should fail
+statement error
+SELECT md_extract_code_blocks();
+----
+Binder Error
+
+statement error
+SELECT md_extract_links();
+----
+Binder Error
+
+statement error
+SELECT md_extract_images();
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows();
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json();
+----
+Binder Error
+
+#===================================================================
+# Test 3: Code Block Extraction - Comprehensive
+#===================================================================
+
+# Test single code block
+query I
+SELECT len(md_extract_code_blocks(E'```python\nprint("hello")\n```'));
+----
+1
+
+# Test multiple code blocks with different languages
+query I
+SELECT len(md_extract_code_blocks(E'```python\nprint("hello")\n```\n\n```sql\nSELECT 1;\n```\n\n```javascript\nconsole.log("test");\n```'));
+----
+3
+
+# Test code block structure
+query I
+SELECT 
+  cb.language,
+  cb.code,
+  cb.line_number,
+  cb.info_string
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\n```')) as cb
+);
+----
+python	print("hello")
+	1	python
+
+# Test code block with no language
+query I
+SELECT cb.language
+FROM unnest(md_extract_code_blocks(E'```\nplain code\n```')) as cb;
+----
+(empty)
+
+# Test code block with extra info
+query I
+SELECT cb.info_string
+FROM unnest(md_extract_code_blocks('```python title="example.py" 
+print("hello")
+```')) as cb;
+----
+python title="example.py" 
+
+# Test inline code (should not be extracted)
+query I
+SELECT len(md_extract_code_blocks('This is `inline code` not a block'));
+----
+0
+
+# Test malformed code blocks
+query I
+SELECT len(md_extract_code_blocks('```python
+missing closing fence'));
+----
+0
+
+#===================================================================
+# Test 4: Link Extraction - Comprehensive  
+#===================================================================
+
+# Test simple link
+query I
+SELECT 
+  link.text,
+  link.url,
+  link.title,
+  link.is_reference
+FROM unnest(md_extract_links('[GitHub](https://github.com)')) as link;
+----
+GitHub	https://github.com	NULL	false
+
+# Test link with title
+query I
+SELECT 
+  link.text,
+  link.url,
+  link.title
+FROM unnest(md_extract_links('[GitHub](https://github.com "Git Repository")')) as link;
+----
+GitHub	https://github.com	Git Repository
+
+# Test multiple links
+query I
+SELECT len(md_extract_links('[Link1](http://example.com) and [Link2](http://test.com)'));
+----
+2
+
+# Test autolinks
+query I
+SELECT len(md_extract_links('<https://example.com>'));
+----
+1
+
+# Test reference links (basic)
+query I
+SELECT len(md_extract_links('[Link][ref]
+
+[ref]: http://example.com'));
+----
+1
+
+# Test malformed links
+query I
+SELECT len(md_extract_links('[Broken link]('));
+----
+0
+
+# Test empty link text
+query I
+SELECT len(md_extract_links('[](http://example.com)'));
+----
+1
+
+# Test link in code block (should not be extracted)
+query I
+SELECT len(md_extract_links('```
+[Link](http://example.com)
+```'));
+----
+0
+
+#===================================================================
+# Test 5: Image Extraction - Comprehensive
+#===================================================================
+
+# Test simple image
+query I
+SELECT 
+  img.alt_text,
+  img.url,
+  img.title
+FROM unnest(md_extract_images('![Alt text](image.jpg)')) as img;
+----
+Alt text	image.jpg	NULL
+
+# Test image with title
+query I
+SELECT 
+  img.alt_text,
+  img.url,
+  img.title
+FROM unnest(md_extract_images('![Photo](photo.jpg "My Photo")')) as img;
+----
+Photo	photo.jpg	My Photo
+
+# Test multiple images
+query I
+SELECT len(md_extract_images('![Image1](img1.jpg) and ![Image2](img2.png)'));
+----
+2
+
+# Test image with empty alt text
+query I
+SELECT len(md_extract_images('![](image.jpg)'));
+----
+1
+
+# Test malformed images
+query I
+SELECT len(md_extract_images('![Broken image]('));
+----
+0
+
+# Test image in code block (should not be extracted)
+query I
+SELECT len(md_extract_images('```
+![Image](image.jpg)
+```'));
+----
+0
+
+#===================================================================
+# Test 6: Table Extraction - Comprehensive
+#===================================================================
+
+# Test simple table
+query I
+SELECT len(md_extract_table_rows('| Name | Age |
+|------|-----|
+| John | 25  |'));
+----
+6
+
+# Test table structure - headers
+query I
+SELECT count(*) 
+FROM unnest(md_extract_table_rows('| Name | Age |
+|------|-----|
+| John | 25  |')) as row
+WHERE row.row_type = 'header';
+----
+2
+
+# Test table structure - data
+query I
+SELECT count(*) 
+FROM unnest(md_extract_table_rows('| Name | Age |
+|------|-----|
+| John | 25  |')) as row
+WHERE row.row_type = 'data';
+----
+2
+
+# Test multiple tables
+query I
+SELECT count(DISTINCT row.table_index)
+FROM unnest(md_extract_table_rows('| Table1 | Col1 |
+|--------|------|
+| Data   | Val  |
+
+| Table2 | Col2 |
+|--------|------|
+| More   | Data |')) as row;
+----
+2
+
+# Test table with varying column counts
+query I
+SELECT len(md_extract_table_rows('| A | B | C |
+|---|---|---|
+| 1 | 2 |
+| 4 | 5 | 6 |'));
+----
+9
+
+# Test malformed table (no separator)
+query I
+SELECT len(md_extract_table_rows('| Name | Age |
+| John | 25  |'));
+----
+0
+
+# Test table in code block (should not be extracted)
+query I
+SELECT len(md_extract_table_rows('```
+| Name | Age |
+|------|-----|
+| John | 25  |
+```'));
+----
+0
+
+#===================================================================
+# Test 7: JSON Table Extraction - Comprehensive
+#===================================================================
+
+# Test JSON table basic structure
+query I
+SELECT len(md_extract_tables_json('| Name | Age |
+|------|-----|
+| John | 25  |'));
+----
+1
+
+# Test JSON table fields exist
+query I
+SELECT 
+  table_info.table_index,
+  table_info.num_columns,
+  table_info.num_rows,
+  len(table_info.headers)
+FROM unnest(md_extract_tables_json('| Name | Age |
+|------|-----|
+| John | 25  |')) as table_info;
+----
+0	2	1	2
+
+# Test JSON structure has required fields
+query I
+SELECT 
+  table_info.table_json IS NOT NULL as has_json,
+  table_info.json_structure IS NOT NULL as has_structure
+FROM unnest(md_extract_tables_json('| Name | Age |
+|------|-----|
+| John | 25  |')) as table_info;
+----
+true	true
+
+#===================================================================
+# Test 8: Edge Cases and Stress Tests
+#===================================================================
+
+# Test very large input
+query I
+SELECT len(md_extract_code_blocks(repeat('```python
+print("test")
+```
+
+', 100)));
+----
+100
+
+# Test deeply nested structures
+query I
+SELECT len(md_extract_links('> [Link in quote](http://example.com)
+> 
+> > [Nested quote link](http://nested.com)'));
+----
+2
+
+# Test mixed content
+query I
+SELECT 
+  len(md_extract_code_blocks(content)) > 0 as has_code,
+  len(md_extract_links(content)) > 0 as has_links,
+  len(md_extract_images(content)) > 0 as has_images,
+  len(md_extract_table_rows(content)) > 0 as has_tables
+FROM (SELECT '# Mixed Content
+
+Here is some [link](http://example.com) and ![image](img.jpg).
+
+```python
+print("code")
+```
+
+| Table | Data |
+|-------|------|
+| Row   | Value|
+' as content);
+----
+true	true	true	true
+
+# Test unicode content
+query I
+SELECT len(md_extract_code_blocks('```python
+print("Hello 世界! 🌍")
+```'));
+----
+1
+
+# Test special characters in URLs
+query I
+SELECT len(md_extract_links('[Test](https://example.com/path?param=value&other=test#anchor)'));
+----
+1
+
+# Test very long table
+query I
+SELECT count(*)
+FROM unnest(md_extract_table_rows('| Col1 | Col2 | Col3 |
+|------|------|------|' || repeat('
+| Data | More | Info |', 50))) as row;
+----
+153
+
+#===================================================================
+# Test 9: Composition with File Functions
+#===================================================================
+
+# Test composition with markdown type
+query I
+SELECT len(md_extract_code_blocks('```python
+test
+```'::MARKDOWN));
+----
+1
+
+# Test with CAST
+query I
+SELECT len(md_extract_links(CAST('[Link](http://example.com)' AS MARKDOWN)));
+----
+1
+
+#===================================================================
+# Test 10: Aggregation and Analysis
+#===================================================================
+
+# Test aggregation across multiple pieces of content
+query I
+SELECT 
+  sum(len(md_extract_code_blocks(content))) as total_code_blocks,
+  sum(len(md_extract_links(content))) as total_links
+FROM (VALUES 
+  ('```python
+print("test")
+```'),
+  ('[Link](http://example.com)'),
+  ('```sql
+SELECT 1;
+```
+[Another link](http://test.com)')
+) as docs(content);
+----
+2	2
+
+# Test filtering based on extraction results
+query I
+SELECT count(*)
+FROM (VALUES 
+  ('```python
+print("test")
+```'),
+  ('No code here'),
+  ('```sql
+SELECT 1;
+```')
+) as docs(content)
+WHERE len(md_extract_code_blocks(content)) > 0;
+----
+2
+
+#===================================================================
+# Test 11: Performance and Memory
+#===================================================================
+
+# Test empty results don't cause issues
+query I
+SELECT 
+  md_extract_code_blocks('') IS NOT NULL as code_ok,
+  md_extract_links('') IS NOT NULL as links_ok,
+  md_extract_images('') IS NOT NULL as images_ok,
+  md_extract_table_rows('') IS NOT NULL as tables_ok,
+  md_extract_tables_json('') IS NOT NULL as json_ok;
+----
+true	true	true	true	true
+
+# Test repeated calls
+query I
+SELECT count(*)
+FROM generate_series(1, 10) as i
+CROSS JOIN md_extract_code_blocks('```python
+print("test")
+```') as blocks;
+----
+10

@@ -1,0 +1,431 @@
+# name: test/sql/markdown_extraction_errors.test
+# description: Test error handling and edge cases for markdown extraction functions
+# group: [markdown]
+
+require markdown
+
+#===================================================================
+# Test 1: Invalid Parameter Types
+#===================================================================
+
+# Test non-string types that should fail
+statement error
+SELECT md_extract_code_blocks(42);
+----
+Binder Error
+
+statement error
+SELECT md_extract_links(3.14);
+----
+Binder Error
+
+statement error
+SELECT md_extract_images(true);
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows([1, 2, 3]);
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json({'key': 'value'});
+----
+Binder Error
+
+# Test with DATE type
+statement error
+SELECT md_extract_code_blocks(DATE '2023-01-01');
+----
+Binder Error
+
+# Test with TIMESTAMP type
+statement error
+SELECT md_extract_links(TIMESTAMP '2023-01-01 12:00:00');
+----
+Binder Error
+
+#===================================================================
+# Test 2: Invalid Parameter Counts
+#===================================================================
+
+# Test no parameters
+statement error
+SELECT md_extract_code_blocks();
+----
+Binder Error
+
+statement error
+SELECT md_extract_links();
+----
+Binder Error
+
+statement error
+SELECT md_extract_images();
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows();
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json();
+----
+Binder Error
+
+# Test too many parameters
+statement error
+SELECT md_extract_code_blocks('markdown', 'extra');
+----
+Binder Error
+
+statement error
+SELECT md_extract_links('markdown', 'extra', 'another');
+----
+Binder Error
+
+statement error
+SELECT md_extract_images('markdown', 123);
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows('markdown', true);
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json('markdown', NULL);
+----
+Binder Error
+
+#===================================================================
+# Test 3: Invalid Named Parameters (should not exist)
+#===================================================================
+
+# Test that named parameters are not supported
+statement error
+SELECT md_extract_code_blocks('markdown', language => 'python');
+----
+Binder Error
+
+statement error
+SELECT md_extract_links('markdown', include_anchors => true);
+----
+Binder Error
+
+statement error
+SELECT md_extract_images('markdown', include_titles => false);
+----
+Binder Error
+
+statement error
+SELECT md_extract_table_rows('markdown', format => 'json');
+----
+Binder Error
+
+statement error
+SELECT md_extract_tables_json('markdown', pretty => true);
+----
+Binder Error
+
+#===================================================================
+# Test 4: Boundary Value Testing
+#===================================================================
+
+# Test extremely long input (should handle gracefully)
+query I
+SELECT len(md_extract_code_blocks(repeat('a', 100000))) >= 0;
+----
+true
+
+# Test input with only whitespace
+query I
+SELECT len(md_extract_code_blocks('   \n\t\r   '));
+----
+0
+
+# Test input with only special characters
+query I
+SELECT len(md_extract_links('!@#$%^&*()_+-={}[]|\\:";''<>?,./'));
+----
+0
+
+# Test input with control characters
+query I
+SELECT len(md_extract_images('\x00\x01\x02\x03\x04\x05'));
+----
+0
+
+# Test input with unicode surrogate pairs
+query I
+SELECT len(md_extract_table_rows('𝕳𝖊𝖑𝖑𝖔 𝖂𝖔𝖗𝖑𝖉'));
+----
+0
+
+#===================================================================
+# Test 5: Malformed Markdown Edge Cases
+#===================================================================
+
+# Test unclosed code blocks
+query I
+SELECT len(md_extract_code_blocks('```python
+print("hello")
+# No closing fence'));
+----
+0
+
+# Test nested code blocks (invalid)
+query I
+SELECT len(md_extract_code_blocks('```outer
+```inner
+code
+```
+```'));
+----
+1
+
+# Test code block with only opening fence
+query I
+SELECT len(md_extract_code_blocks('```'));
+----
+0
+
+# Test link with missing closing bracket
+query I
+SELECT len(md_extract_links('[Missing bracket(http://example.com)'));
+----
+0
+
+# Test link with missing opening bracket
+query I
+SELECT len(md_extract_links('Missing bracket](http://example.com)'));
+----
+0
+
+# Test image with malformed syntax
+query I
+SELECT len(md_extract_images('![Alt text(image.jpg)'));
+----
+0
+
+# Test table with mismatched columns
+query I
+SELECT len(md_extract_table_rows('| A | B | C |
+|---|---|
+| 1 | 2 | 3 |'));
+----
+0
+
+# Test table with no data rows
+query I
+SELECT len(md_extract_table_rows('| Header |
+|--------|'));
+----
+2
+
+#===================================================================
+# Test 6: Memory and Performance Edge Cases
+#===================================================================
+
+# Test deeply nested quotes
+query I
+SELECT len(md_extract_links(repeat('> ', 1000) || '[Deep link](http://example.com)'));
+----
+1
+
+# Test many small code blocks
+query I
+SELECT len(md_extract_code_blocks(repeat('```
+a
+```
+', 100)));
+----
+100
+
+# Test very wide table
+query I
+SELECT len(md_extract_table_rows('|' || repeat(' Col |', 100) || '
+|' || repeat('-----|', 100) || '
+|' || repeat(' Val |', 100)));
+----
+200
+
+# Test empty table cells
+query I
+SELECT len(md_extract_table_rows('| A |  | C |
+|---|---|---|
+|   | B |   |'));
+----
+6
+
+#===================================================================
+# Test 7: Character Encoding Edge Cases
+#===================================================================
+
+# Test binary data (should handle gracefully)
+query I
+SELECT len(md_extract_code_blocks('\xFF\xFE\x00\x00')) >= 0;
+----
+true
+
+# Test mixed encodings
+query I
+SELECT len(md_extract_links('ASCII and émojis 🚀 and [link](http://example.com)'));
+----
+1
+
+# Test RTL languages
+query I
+SELECT len(md_extract_images('![صورة](image.jpg "صورة جميلة")'));
+----
+1
+
+# Test combining characters
+query I
+SELECT len(md_extract_code_blocks('```
+café vs cafe\u0301
+```'));
+----
+1
+
+#===================================================================
+# Test 8: State and Isolation Testing
+#===================================================================
+
+# Test that functions don't interfere with each other
+query I
+SELECT 
+  len(md_extract_code_blocks('```python
+test
+```')) as code_count,
+  len(md_extract_links('[link](http://example.com)')) as link_count,
+  len(md_extract_images('![img](image.jpg)')) as image_count
+;
+----
+1	1	1
+
+# Test multiple calls with different inputs
+query I
+SELECT 
+  len(md_extract_code_blocks('')) +
+  len(md_extract_code_blocks('```test
+code
+```')) +
+  len(md_extract_code_blocks('```another
+more
+```'));
+----
+2
+
+# Test interleaved function calls
+query I
+SELECT 
+  t1.result + t2.result + t3.result
+FROM 
+  (SELECT len(md_extract_links('[a](http://a.com)')) as result) t1,
+  (SELECT len(md_extract_images('![b](b.jpg)')) as result) t2,
+  (SELECT len(md_extract_table_rows('|c|
+|-|
+|d|')) as result) t3;
+----
+4
+
+#===================================================================
+# Test 9: NULL and Missing Data Handling
+#===================================================================
+
+# Test NULL propagation
+query I
+SELECT md_extract_code_blocks(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_links(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_images(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_table_rows(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_tables_json(NULL) IS NULL;
+----
+true
+
+# Test NULL in UNION
+query I
+SELECT count(*)
+FROM (
+  SELECT md_extract_code_blocks('```test
+code
+```') as result
+  UNION ALL
+  SELECT md_extract_code_blocks(NULL) as result
+) t
+WHERE t.result IS NOT NULL;
+----
+1
+
+# Test COALESCE with NULLs
+query I
+SELECT len(COALESCE(md_extract_links(NULL), md_extract_links('[]'))) = 0;
+----
+true
+
+#===================================================================
+# Test 10: Transaction and Concurrency Edge Cases
+#===================================================================
+
+# Test in transaction context (basic)
+statement ok
+BEGIN TRANSACTION;
+
+query I
+SELECT len(md_extract_code_blocks('```test
+code
+```'));
+----
+1
+
+statement ok
+ROLLBACK;
+
+# Test with CTEs
+query I
+WITH test_data AS (
+  SELECT '```python
+print("test")
+```' as markdown_content
+)
+SELECT len(md_extract_code_blocks(markdown_content))
+FROM test_data;
+----
+1
+
+# Test with window functions
+query I
+SELECT 
+  content,
+  len(md_extract_links(content)) as link_count,
+  sum(len(md_extract_links(content))) OVER () as total_links
+FROM (VALUES 
+  ('[Link1](http://a.com)'),
+  ('[Link2](http://b.com)'),
+  ('No links here')
+) as docs(content);
+----
+[Link1](http://a.com)	1	2
+[Link2](http://b.com)	1	2
+No links here	0	2
