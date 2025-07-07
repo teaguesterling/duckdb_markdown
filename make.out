@@ -21,11 +21,11 @@ cmark-gfm provides pkg-config modules:
   # CommonMark parsing, rendering, and manipulation with GitHub Flavored Markdown extensions
   libcmark-gfm
 
-All requested installations completed successfully in: 62.7 us
+All requested installations completed successfully in: 64.7 us
 -- Running vcpkg install - done
 -- git hash 2063dda3e6, version v1.3.1, extension folder v1.3.1
 -- Extensions will be deployed to: /mnt/aux-data/teague/Projects/duckdb_markdown/build/release/repository
--- Load extension 'markdown' from '/mnt/aux-data/teague/Projects/duckdb_markdown' @ 17314a6
+-- Load extension 'markdown' from '/mnt/aux-data/teague/Projects/duckdb_markdown' @ 6c11ede
 -- Load extension 'core_functions' from '/mnt/aux-data/teague/Projects/duckdb_markdown/duckdb/extensions' @ v1.3.1
 -- Load extension 'parquet' from '/mnt/aux-data/teague/Projects/duckdb_markdown/duckdb/extensions' @ v1.3.1
 -- Load extension 'jemalloc' from '/mnt/aux-data/teague/Projects/duckdb_markdown/duckdb/extensions' @ v1.3.1
@@ -40,8 +40,8 @@ CMake Deprecation Warning at /mnt/aux-data/teague/Projects/duckdb_markdown/CMake
 
 -- Extensions linked into DuckDB: [markdown, core_functions, parquet, jemalloc]
 -- Tests loaded for extensions: [markdown]
--- Configuring done (2.4s)
--- Generating done (0.7s)
+-- Configuring done (2.0s)
+-- Generating done (0.6s)
 -- Build files have been written to: /mnt/aux-data/teague/Projects/duckdb_markdown/build/release
 cmake --build build/release --config Release
 gmake[1]: Entering directory '/mnt/aux-data/teague/Projects/duckdb_markdown/build/release'
@@ -216,16 +216,26 @@ gmake[1]: Entering directory '/mnt/aux-data/teague/Projects/duckdb_markdown/buil
 [ 67%] Built target jemalloc_extension
 [ 77%] Built target parquet_extension
 [ 77%] Built target core_functions_extension
-[ 77%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_extraction_functions.cpp.o
-[ 78%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_utils.cpp.o
-[ 78%] Linking CXX static library libmarkdown_extension.a
+[ 77%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_extension.cpp.o
+[ 78%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_reader_functions.cpp.o
+[ 78%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_reader_files.cpp.o
+[ 78%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_types.cpp.o
+[ 78%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_scalar_functions.cpp.o
+[ 78%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_extraction_functions.cpp.o
+[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_extension.dir/src/markdown_utils.cpp.o
+[ 79%] Linking CXX static library libmarkdown_extension.a
 [ 79%] Built target markdown_extension
 [ 79%] Built target duckdb_static
 [ 79%] Linking CXX shared library loadable_extension_optimizer_demo.duckdb_extension
 [ 79%] Built target loadable_extension_optimizer_demo_loadable_extension
-[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_extraction_functions.cpp.o
-[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_utils.cpp.o
-[ 79%] Linking CXX shared library markdown.duckdb_extension
+[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_extension.cpp.o
+[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_reader_functions.cpp.o
+[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_reader_files.cpp.o
+[ 79%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_types.cpp.o
+[ 80%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_scalar_functions.cpp.o
+[ 80%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_extraction_functions.cpp.o
+[ 80%] Building CXX object extension/markdown/CMakeFiles/markdown_loadable_extension.dir/src/markdown_utils.cpp.o
+[ 80%] Linking CXX shared library markdown.duckdb_extension
 [ 80%] Built target markdown_loadable_extension
 [ 80%] Linking CXX shared library core_functions.duckdb_extension
 [ 81%] Built target core_functions_loadable_extension
