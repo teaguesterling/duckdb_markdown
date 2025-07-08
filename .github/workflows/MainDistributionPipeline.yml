@@ -28,8 +28,8 @@ jobs:
       duckdb_version: v1.3.1
       ci_tools_version: v1.3.1
       extension_name: markdown
-      # Override vcpkg commit to support cmark-gfm
-      vcpkg_commit: 8eb57355a4ffb410a2e94c07b4dca2dffbee8e50
+      # Override vcpkg to use master branch for latest packages including cmark-gfm
+      vcpkg_commit: master
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
 #  code-quality-check:
