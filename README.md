@@ -100,7 +100,7 @@ Reads Markdown files and returns one row per file.
 - `extract_metadata := true` - Extract frontmatter metadata
 - `normalize_content := true` - Normalize Markdown content
 
-**Returns:** `(content MARKDOWN [, file_path VARCHAR])`
+**Returns:** `(content MARKDOWN, metadata VARCHAR)` or `(file_path VARCHAR, content MARKDOWN, metadata VARCHAR)` with `include_filepath := true`
 
 #### `read_markdown_sections(files, [parameters...])`
 Reads Markdown files and parses them into hierarchical sections.
@@ -114,7 +114,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - `include_filepath := false` - Include file_path column in output
 - Plus all `read_markdown` parameters
 
-**Returns:** `(title VARCHAR, level INTEGER, content MARKDOWN [, file_path VARCHAR])`
+**Returns:** `(section_id VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or `(file_path VARCHAR, section_id VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` with `include_filepath := true`
 
 ### Content Extraction Functions
 
@@ -125,6 +125,44 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_extract_images(markdown)`** - Extract images with alt text and metadata
 - **`md_extract_table_rows(markdown)`** - Extract table data as individual cells
 - **`md_extract_tables_json(markdown)`** - Extract tables as structured JSON with enhanced metadata
+
+### Document Processing Functions
+
+- **`md_to_html(markdown)`** - Convert markdown content to HTML
+- **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
+- **`md_valid(markdown)`** - Validate markdown content and return boolean
+- **`md_stats(markdown)`** - Get document statistics (word count, reading time, etc.)
+- **`md_extract_metadata(markdown)`** - Extract frontmatter metadata as JSON
+- **`md_extract_section(markdown, section_id)`** - Extract specific section by ID
+- **`md_section_breadcrumb(file_path, section_id)`** - Generate breadcrumb navigation for section
+- **`value_to_md(value)`** - Convert any value to markdown representation
+
+### Document Processing Examples
+
+```sql
+-- Convert markdown to HTML for web display
+SELECT md_to_html(content) as html_content
+FROM read_markdown('README.md');
+
+-- Get document statistics
+SELECT 
+  filename,
+  md_stats(content).word_count as words,
+  md_stats(content).reading_time_minutes as reading_time
+FROM read_markdown('docs/**/*.md');
+
+-- Extract and parse frontmatter metadata
+SELECT 
+  filename,
+  md_extract_metadata(content) as metadata_json
+FROM read_markdown('docs/**/*.md')
+WHERE md_extract_metadata(content) != '{}';
+
+-- Validate markdown content
+SELECT filename, md_valid(content) as is_valid
+FROM read_markdown('**/*.md')
+WHERE NOT md_valid(content);
+```
 
 ## Use Cases
 
@@ -175,13 +213,13 @@ SELECT
   row_number() OVER (ORDER BY title) as section_id
 FROM read_markdown_sections('**/*.md', include_content := true);
 
--- Create full-text search index
-PRAGMA create_fts_index('docs', 'section_id', 'content');
+-- Create full-text search index using plain text conversion
+PRAGMA create_fts_index('docs', 'section_id', 'md_to_text(content)');
 
 -- Search documentation
-SELECT title, substring(content, 1, 200) as preview
+SELECT title, substring(md_to_text(content), 1, 200) as preview
 FROM docs 
-WHERE content ILIKE '%memory optimization%'
+WHERE md_to_text(content) ILIKE '%memory optimization%'
 ORDER BY title;
 ```
 
@@ -229,6 +267,26 @@ LIST<STRUCT(table_index BIGINT, row_type VARCHAR, row_index BIGINT, column_index
 ```
 
 Use with `UNNEST()` to flatten into rows or `len()` to count elements.
+
+## Type System and Automatic Casting
+
+The extension defines a `MARKDOWN` type (alias: `md`) that automatically casts to/from `VARCHAR`:
+
+```sql
+-- Explicit casting
+SELECT '# Hello World'::markdown;
+SELECT '# Hello World'::md;
+
+-- Automatic casting - these all work seamlessly
+SELECT md_to_html('# Hello World');  -- VARCHAR automatically cast to MARKDOWN
+SELECT md_stats('# Test\nContent');  -- VARCHAR automatically cast to MARKDOWN
+SELECT content::varchar FROM read_markdown('README.md');  -- MARKDOWN to VARCHAR
+
+-- Type checking
+SELECT typeof('# Hello World'::markdown);  -- Returns 'md'
+```
+
+All markdown functions accept both `VARCHAR` and `MARKDOWN` types through automatic casting, making the API flexible and easy to use.
 
 ## Performance
 
