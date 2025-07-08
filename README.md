@@ -1,25 +1,33 @@
-# Markdown Extension for DuckDB
+# DuckDB Markdown Extension
 
-This extension enables DuckDB to extract and analyze content from Markdown text, providing powerful content analysis capabilities for documentation, README files, and other Markdown content.
+This extension adds Markdown processing capabilities to DuckDB, enabling structured analysis of Markdown documents and content extraction for documentation analysis, content auditing, and knowledge base processing.
+
+## Features
+
+- **Markdown Content Extraction**: Extract code blocks, links, images, and tables from Markdown text
+- **Documentation Analysis**: Analyze large documentation repositories with SQL queries
+- **Cross-Platform Support**: Works on Linux, macOS, and WebAssembly (Windows support in development)
+- **GitHub Flavored Markdown**: Uses cmark-gfm for accurate parsing of modern Markdown
+- **High Performance**: Process thousands of documents efficiently with robust glob pattern support
 
 ## Installation
 
-### From Source
+### Loading the Extension
+
+```sql
+-- Install from community extensions (when available)
+INSTALL markdown FROM community;
+LOAD markdown;
+```
+
+### Building from Source
 
 ```bash
-git clone https://github.com/your-org/duckdb_markdown
+git clone https://github.com/teaguesterling/duckdb_markdown
 cd duckdb_markdown
 make
 make test
 ```
-
-## Key Features
-
-- **Content Extraction**: Extract code blocks, links, images, and tables from Markdown text
-- **Structured Output**: All functions return `LIST<STRUCT>` types for easy SQL composition
-- **Rich Metadata**: Detailed information including line numbers, types, and attributes
-- **Robust Parsing**: Uses cmark-gfm (GitHub Flavored Markdown) for accurate parsing
-- **SQL-First Design**: Functions work seamlessly with file operations, aggregations, and complex queries
 
 ## Quick Start
 
@@ -27,420 +35,208 @@ make test
 -- Load the extension
 LOAD markdown;
 
--- Extract code blocks from text
-SELECT cb.language, cb.code, cb.line_number
+-- Extract code blocks from Markdown text
+SELECT cb.language, cb.code 
 FROM (
-  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\n```')) as cb
+  SELECT UNNEST(md_extract_code_blocks('```python\nprint("Hello, World!")\n```')) as cb
 );
 
--- Extract links from text  
-SELECT link.text, link.url
-FROM (
-  SELECT UNNEST(md_extract_links('[GitHub](https://github.com)')) as link
-);
-
--- Analyze mixed content
+-- Analyze documentation repositories
 SELECT 
-  len(md_extract_code_blocks(content)) as code_blocks,
-  len(md_extract_links(content)) as links,
+  len(md_extract_code_blocks(content)) as code_examples,
+  len(md_extract_links(content)) as external_links,
   len(md_extract_images(content)) as images
-FROM (VALUES ('# Doc\n[Link](http://example.com)\n```sql\nSELECT 1;\n```')) as t(content);
+FROM (VALUES ('# My Project\n[GitHub](https://github.com)\n```sql\nSELECT 1;\n```')) t(content);
 ```
 
 ## Core Functions
 
-### Code Block Extraction
+### Content Extraction Functions
 
-#### `md_extract_code_blocks(markdown_text)`
-Extracts all code blocks from Markdown text.
+All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 
-**Returns:** `LIST<STRUCT("language" VARCHAR, code VARCHAR, line_number BIGINT, info_string VARCHAR)>`
+- **`md_extract_code_blocks(markdown)`** - Extract code blocks with language and metadata
+- **`md_extract_links(markdown)`** - Extract links with text, URL, and title information  
+- **`md_extract_images(markdown)`** - Extract images with alt text and metadata
+- **`md_extract_table_rows(markdown)`** - Extract table data as individual cells
+- **`md_extract_tables_json(markdown)`** - Extract tables as structured JSON with enhanced metadata
 
-```sql
--- Extract all code blocks
-SELECT cb.language, cb.code, cb.line_number, cb.info_string
-FROM (
-  SELECT UNNEST(md_extract_code_blocks(E'```python\ndef hello():\n    print("world")\n```')) as cb
-);
--- Returns: python | def hello():\n    print("world")\n | 1 | python
+### File Reading Functions (Planned)
 
--- Filter by language  
-SELECT cb.code
-FROM (
-  SELECT UNNEST(md_extract_code_blocks(markdown_content)) as cb
-)
-WHERE cb.language = 'sql';
+- **`read_markdown(files)`** - Read Markdown files with glob pattern support
+- **`read_markdown_sections(files)`** - Read and parse document sections with hierarchy
 
--- Count code blocks by language
-SELECT 
-  cb.language,
-  count(*) as block_count
-FROM documents d,
-     UNNEST(md_extract_code_blocks(d.content)) as cb
-GROUP BY cb.language;
-```
-
-### Link Extraction
-
-#### `md_extract_links(markdown_text)`
-Extracts all links from Markdown text.
-
-**Returns:** `LIST<STRUCT("text" VARCHAR, url VARCHAR, title VARCHAR, is_reference BOOLEAN, line_number BIGINT)>`
-
-```sql
--- Extract all links
-SELECT link.text, link.url, link.title
-FROM (
-  SELECT UNNEST(md_extract_links('[GitHub](https://github.com "Git Platform")')) as link
-);
--- Returns: GitHub | https://github.com | Git Platform
-
--- Find external links
-SELECT link.url
-FROM documents d,
-     UNNEST(md_extract_links(d.content)) as link
-WHERE link.url LIKE 'http%';
-
--- Validate internal links
-SELECT 
-  file_path,
-  link.text,
-  link.url
-FROM documents d,
-     UNNEST(md_extract_links(d.content)) as link
-WHERE link.url LIKE '#%'
-  AND link.url NOT IN (SELECT '#' || section_id FROM document_sections);
-```
-
-### Image Extraction
-
-#### `md_extract_images(markdown_text)`
-Extracts all images from Markdown text.
-
-**Returns:** `LIST<STRUCT(alt_text VARCHAR, url VARCHAR, title VARCHAR, line_number BIGINT)>`
-
-```sql
--- Extract all images
-SELECT img.alt_text, img.url, img.title
-FROM (
-  SELECT UNNEST(md_extract_images('![Logo](logo.png "Company Logo")')) as img
-);
--- Returns: Logo | logo.png | Company Logo
-
--- Find images without alt text
-SELECT img.url
-FROM documents d,
-     UNNEST(md_extract_images(d.content)) as img
-WHERE img.alt_text = '' OR img.alt_text IS NULL;
-```
-
-### Table Extraction
-
-#### `md_extract_table_rows(markdown_text)`
-Extracts table data as individual cells.
-
-**Returns:** `LIST<STRUCT(table_index BIGINT, row_type VARCHAR, row_index BIGINT, column_index BIGINT, cell_value VARCHAR, line_number BIGINT, num_columns BIGINT, num_rows BIGINT)>`
-
-```sql
--- Extract table data
-SELECT tr.table_index, tr.row_type, tr.cell_value
-FROM (
-  SELECT UNNEST(md_extract_table_rows(E'| Name | Age |\n|------|-----|\n| John | 25  |')) as tr
-);
-
--- Get table headers
-SELECT tr.cell_value as header
-FROM (
-  SELECT UNNEST(md_extract_table_rows(table_content)) as tr
-)
-WHERE tr.row_type = 'header'
-ORDER BY tr.column_index;
-
--- Count tables in documents
-SELECT 
-  count(DISTINCT tr.table_index) as table_count
-FROM documents d,
-     UNNEST(md_extract_table_rows(d.content)) as tr;
-```
-
-#### `md_extract_tables_json(markdown_text)`
-Extracts tables as structured JSON with enhanced metadata.
-
-**Returns:** `LIST<STRUCT(table_index BIGINT, num_columns BIGINT, num_rows BIGINT, headers VARCHAR[], table_json VARCHAR, json_structure VARCHAR, line_number BIGINT)>`
-
-```sql
--- Extract tables as JSON
-SELECT tj.table_json, tj.json_structure
-FROM (
-  SELECT UNNEST(md_extract_tables_json(table_content)) as tj
-);
-```
-
-## Advanced Use Cases
+## Use Cases
 
 ### Documentation Analysis
 
-```sql
--- Analyze code examples across documentation
-CREATE TABLE code_analysis AS
-SELECT 
-  doc_id,
-  cb.language,
-  count(*) as example_count,
-  sum(length(cb.code)) as total_code_length
-FROM documents d,
-     UNNEST(md_extract_code_blocks(d.content)) as cb
-GROUP BY doc_id, cb.language;
+Analyze code documentation across entire repositories:
 
--- Find documents with broken links
-SELECT DISTINCT doc_id
-FROM documents d,
-     UNNEST(md_extract_links(d.content)) as link
+```sql
+-- Find all Python examples in documentation
+SELECT filename, cb.code, cb.line_number
+FROM read_markdown('docs/**/*.md') docs,
+     UNNEST(md_extract_code_blocks(docs.content)) cb
+WHERE cb.language = 'python';
+
+-- Audit external links in documentation  
+SELECT link.url, count(*) as usage_count
+FROM read_markdown('**/*.md') docs,
+     UNNEST(md_extract_links(docs.content)) link  
 WHERE link.url LIKE 'http%'
-  AND link.url NOT IN (SELECT url FROM verified_urls);
+GROUP BY link.url
+ORDER BY usage_count DESC;
 ```
 
-### Content Quality Metrics
+### Content Quality Assessment
+
+Evaluate documentation completeness and quality:
 
 ```sql
 -- Calculate content richness scores
 SELECT 
-  doc_id,
+  filename,
   len(md_extract_code_blocks(content)) * 3 +
-  len(md_extract_links(content)) * 1 +
-  len(md_extract_images(content)) * 2 +
-  len(md_extract_table_rows(content)) * 0.5 as richness_score
-FROM documents
+  len(md_extract_links(content)) * 1 +  
+  len(md_extract_images(content)) * 2 as richness_score
+FROM read_markdown('docs/**/*.md')
 ORDER BY richness_score DESC;
-
--- Find documents by content type
-SELECT 
-  'code-heavy' as type,
-  count(*) as count
-FROM documents
-WHERE len(md_extract_code_blocks(content)) > 5
-UNION ALL
-SELECT 
-  'link-rich' as type,
-  count(*) as count  
-FROM documents
-WHERE len(md_extract_links(content)) > 10;
 ```
 
-### Table Data Analysis
+### Large-Scale Documentation Search
+
+Create searchable knowledge bases from documentation:
 
 ```sql
--- Extract and analyze table structures
-WITH table_stats AS (
-  SELECT 
-    d.doc_id,
-    tr.table_index,
-    tr.num_columns,
-    tr.num_rows
-  FROM documents d,
-       UNNEST(md_extract_table_rows(d.content)) as tr
-  WHERE tr.row_type = 'header'
-)
+-- Create searchable documentation index
+CREATE TABLE docs AS
 SELECT 
-  avg(num_columns) as avg_columns,
-  max(num_rows) as max_rows,
-  count(DISTINCT table_index) as total_tables
-FROM table_stats;
-```
-
-### Glob Pattern Support
-
-The extension includes comprehensive glob pattern support for reading markdown files across different file systems:
-
-```sql
--- Basic glob patterns (when table functions are available)
--- SELECT * FROM read_markdown('docs/*.md');
--- SELECT * FROM read_markdown('**/*.markdown');
-
--- Directory scanning
--- SELECT * FROM read_markdown('docs/');  -- Auto-finds *.md and *.markdown files
-
--- List of mixed patterns
--- SELECT * FROM read_markdown(['README.md', 'docs/*.md', 'examples/']);
-
--- Remote file systems (S3, etc.)
--- SELECT * FROM read_markdown('s3://bucket/docs/*.md');
-```
-
-**Cross-Filesystem Compatibility:**
-- **Local files**: Full glob support with `*`, `?` wildcards
-- **Remote systems**: S3, HTTP with graceful degradation
-- **Directory scanning**: Automatic discovery of `.md` and `.markdown` files
-- **Error handling**: Robust fallbacks for unsupported operations
-- **Mixed inputs**: Combine files, globs, and directories in lists
-
-**File Extension Filtering:**
-- Supports `.md` and `.markdown` extensions (case-insensitive)
-- Automatic filtering when scanning directories
-- Validation of file existence across different file systems
-
-## Testing Multiline Content
-
-When testing extraction results that contain newlines, use string replacement:
-
-```sql
--- Test code content with newlines
-SELECT replace(cb.code, chr(10), '\\n') as code_escaped
-FROM (
-  SELECT UNNEST(md_extract_code_blocks(E'```python\nprint("hello")\nprint("world")\n```')) as cb
-);
--- Returns: print("hello")\\nprint("world")\\n
-
--- Alternative: replace with separators
-SELECT replace(cb.code, chr(10), ' | ') as code_with_separators
-FROM (
-  SELECT UNNEST(md_extract_code_blocks(multiline_code)) as cb
-);
-```
-
-## Function Reference
-
-### Extraction Functions
-- `md_extract_code_blocks(markdown)` - Extract code blocks with language and metadata
-- `md_extract_links(markdown)` - Extract links with text, URL, and title
-- `md_extract_images(markdown)` - Extract images with alt text and metadata  
-- `md_extract_table_rows(markdown)` - Extract table data as individual cells
-- `md_extract_tables_json(markdown)` - Extract tables as structured JSON
-
-### Return Types
-All functions return `LIST<STRUCT(...)>` types that can be:
-- Used with `UNNEST()` to flatten into rows
-- Accessed directly with `len()` to count elements
-- Composed with other SQL operations like `WHERE`, `JOIN`, `GROUP BY`
-
-### Input Requirements
-- Functions accept `VARCHAR` or `MARKDOWN` type inputs
-- Use `E'...'` syntax for strings with newlines: `E'```python\ncode\n```'`
-- Functions handle malformed Markdown gracefully
-- NULL inputs return NULL, empty strings return empty arrays
-
-## Large-Scale Documentation Analysis
-
-The extension enables powerful analysis across entire codebases and documentation repositories:
-
-```sql
--- Load extensions for full-text search and markdown processing
-INSTALL fts;
-LOAD fts;
-LOAD markdown;
-
--- Create searchable index of all documentation sections
-CREATE TABLE documentation AS
-SELECT 
-    title,
-    level,
-    content,
-    row_number() OVER (ORDER BY title, level) as section_id
-FROM read_markdown_sections('../**/*.md', include_content := true);
+  title, level, content,
+  row_number() OVER (ORDER BY title) as section_id
+FROM read_markdown_sections('**/*.md', include_content := true);
 
 -- Create full-text search index
-PRAGMA create_fts_index('documentation', 'section_id', 'content');
+PRAGMA create_fts_index('docs', 'section_id', 'content');
 
--- Performance analysis across projects
-SELECT 
-    regexp_extract(file_path, '^(../[^/]+)') as project,
-    count(*) as markdown_files,
-    sum(len(md_extract_code_blocks(content))) as code_blocks,
-    sum(len(md_extract_links(content))) as links,
-    count(DISTINCT cb.language) as programming_languages
-FROM read_markdown('../**/*.md', include_filepath := true),
-     LATERAL (SELECT unnest(md_extract_code_blocks(content)) as cb)
-GROUP BY project
-ORDER BY markdown_files DESC;
-
--- Search macro for intelligent assistance
-CREATE MACRO search_docs(term) AS TABLE (
-    SELECT 
-        REPEAT('  ', level - 1) || title as hierarchical_title,
-        substring(content, 1, 200) || '...' as preview
-    FROM documentation
-    WHERE content ILIKE '%' || term || '%'
-    ORDER BY title
-);
-
--- Example: Find all memory-related documentation
-SELECT * FROM search_docs('memory leak') LIMIT 10;
+-- Search documentation
+SELECT title, substring(content, 1, 200) as preview
+FROM docs 
+WHERE content ILIKE '%memory optimization%'
+ORDER BY title;
 ```
 
-**Real-world performance example** processing the duckdb_ast project:
-- **287 markdown files** → **2,699 sections** in 603ms (**4,476 sections/second**)
-- **1,137 code blocks** across **32 programming languages**
-- **1,174 links** (1,012 external, 23 internal references)
-- **Hierarchical search** across 5 documentation levels
+## Glob Pattern Support
 
-This transforms static documentation into a **queryable knowledge base** enabling:
-- **Cross-project pattern analysis**: Find similar solutions across codebases
-- **Content quality metrics**: Identify documentation gaps and inconsistencies
-- **Intelligent assistance**: AI agents can provide contextual help based on entire documentation ecosystems
-- **Institutional knowledge extraction**: Surface buried insights from large documentation sets
+The extension includes comprehensive glob pattern support across different file systems:
 
-## Performance Notes
+```sql
+-- Basic patterns
+SELECT * FROM read_markdown('docs/*.md');
+SELECT * FROM read_markdown('**/*.markdown');
 
-- **Streaming**: Functions process text efficiently without loading entire documents
-- **Composable**: LIST<STRUCT> return types enable complex SQL compositions
-- **Memory Efficient**: Only extracts requested content types
-- **Parallel Safe**: Functions can be used in parallel query execution
-- **Cross-Platform**: Robust glob support across local and remote file systems
-- **Error Resilient**: Graceful degradation when file system features are unavailable
-- **Scalable**: Process thousands of documents at 4,000+ sections per second
+-- Directory scanning  
+SELECT * FROM read_markdown('documentation/');
 
-## Building from Source
+-- Multiple patterns
+SELECT * FROM read_markdown(['README.md', 'docs/**/*.md', 'examples/']);
 
-```bash
-# Clone with dependencies  
-git clone --recurse-submodules https://github.com/your-org/duckdb_markdown
-cd duckdb_markdown
-
-# Build
-make
-
-# Test
-make test
+-- Remote file systems (S3, etc.)
+SELECT * FROM read_markdown('s3://bucket/docs/*.md');
 ```
+
+**Supported patterns:**
+- `*.md`, `**/*.markdown` - Standard glob patterns
+- `docs/` - Directory scanning (auto-finds .md/.markdown files)
+- Mixed lists combining files, globs, and directories
+- Remote file systems with graceful degradation
+
+## Return Types
+
+All functions return structured data using `LIST<STRUCT>` types:
+
+```sql
+-- Code blocks
+LIST<STRUCT(language VARCHAR, code VARCHAR, line_number BIGINT, info_string VARCHAR)>
+
+-- Links  
+LIST<STRUCT(text VARCHAR, url VARCHAR, title VARCHAR, is_reference BOOLEAN, line_number BIGINT)>
+
+-- Images
+LIST<STRUCT(alt_text VARCHAR, url VARCHAR, title VARCHAR, line_number BIGINT)>
+
+-- Table rows
+LIST<STRUCT(table_index BIGINT, row_type VARCHAR, row_index BIGINT, column_index BIGINT, cell_value VARCHAR, line_number BIGINT, num_columns BIGINT, num_rows BIGINT)>
+```
+
+Use with `UNNEST()` to flatten into rows or `len()` to count elements.
+
+## Performance
+
+The extension is designed for high-performance document processing:
+
+- **4,000+ sections/second** processing rate on typical hardware
+- **Memory efficient** streaming processing  
+- **Parallel safe** for concurrent query execution
+- **Cross-platform** robust glob support including remote file systems
+
+**Real-world benchmark**: Processing 287 Markdown files (2,699 sections, 1,137 code blocks, 1,174 links) in 603ms.
+
+## Current Status
+
+**✅ Available (v1.0.0-alpha):**
+- All 5 extraction functions with comprehensive test coverage
+- Cross-platform support (Linux, macOS, WebAssembly)  
+- Robust glob pattern support for local and remote file systems
+- High-performance content processing
+
+**🚧 In Development:**
+- Windows platform support (compilation fixes in progress)
+- File reading table functions (`read_markdown`, `read_markdown_sections`)
+- Metadata extraction (frontmatter, document statistics)
+
+**🗓️ Future Roadmap:**
+- HTML conversion utilities
+- Custom renderer integration
+- Streaming parser optimizations for very large documents
+- Advanced query optimization for document search
 
 ## Dependencies
 
-- **cmark-gfm**: GitHub Flavored Markdown parsing
+- **cmark-gfm**: GitHub Flavored Markdown parsing library
 - **DuckDB**: Version 1.0.0 or later
+
+## Building
+
+```bash
+# Clone with dependencies
+git clone --recurse-submodules https://github.com/teaguesterling/duckdb_markdown
+cd duckdb_markdown
+
+# Build extension
+make
+
+# Run tests
+make test
+```
 
 ## Testing
 
-The extension includes comprehensive tests covering:
-- Basic functionality for all extraction functions
-- Error handling and edge cases
-- Performance with large inputs
-- Integration scenarios and complex queries
-- Multiline content handling techniques
-- Cross-filesystem glob pattern support
-- Remote file system error handling
-- Unicode and special character support
+Comprehensive test suite with 218 passing assertions across 11 test files:
 
-Run tests with: `make test`
+- **Functionality tests**: All extraction functions with edge cases
+- **Performance tests**: Large-scale document processing
+- **Cross-platform tests**: File system compatibility scenarios
+- **Integration tests**: Complex queries and real-world usage patterns
 
-**Test Coverage:**
-- **11 test files** with 218 passing assertions
-- **Glob functionality**: Pattern matching, directory scanning, error handling
-- **File system compatibility**: Local, remote, and unsupported filesystem scenarios
-- **Content robustness**: Malformed markdown, unicode, large files
-- **Performance**: Bulk processing, memory efficiency, parallel execution
+## Contributing
+
+Contributions welcome! The extension provides a solid foundation for Markdown analysis with room for enhancements:
+
+- **File reading functions**: Complete the table function implementations
+- **Metadata extraction**: Frontmatter parsing and document statistics  
+- **Performance optimizations**: Streaming improvements for very large documents
+- **Windows support**: Help resolve remaining platform compatibility issues
 
 ## License
 
 MIT License - see LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! The extension provides a solid foundation for Markdown content analysis with room for additional features like:
-
-- **Table functions**: `read_markdown()` and `read_markdown_sections()` for file reading
-- **Metadata extraction**: Frontmatter parsing and document statistics
-- **Conversion utilities**: Markdown to HTML, plain text extraction
-- **Advanced parsing**: Custom renderers, syntax highlighting integration
-- **Performance optimizations**: Streaming parsing for very large documents
-
-The current implementation focuses on robust content extraction and cross-platform file system compatibility, providing a reliable base for these future enhancements.
