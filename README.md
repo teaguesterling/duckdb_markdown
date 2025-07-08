@@ -54,7 +54,34 @@ SELECT
   len(md_extract_links(content)) as external_links,
   len(md_extract_images(content)) as images
 FROM read_markdown('**/*.md');
+
+-- Use replacement scan syntax for convenience
+SELECT * FROM '*.md';
+SELECT * FROM 'docs/**/*.md';
 ```
+
+## Table-like Syntax Support
+
+The extension supports DuckDB's replacement scan feature, allowing you to query Markdown files using table-like syntax:
+
+```sql
+-- Query markdown files directly
+SELECT * FROM 'README.md';
+SELECT * FROM '*.md';  
+SELECT * FROM 'docs/**/*.md';
+
+-- Equivalent to calling read_markdown()
+SELECT * FROM read_markdown('README.md');
+SELECT * FROM read_markdown('*.md');
+SELECT * FROM read_markdown('docs/**/*.md');
+```
+
+**Supported patterns in replacement scan:**
+- `'file.md'` - Individual markdown files
+- `'*.md'`, `'**/*.markdown'` - Glob patterns
+- Recursive patterns like `'docs/**/*.md'`
+
+**Note**: Directory patterns like `'docs/'` are not supported. Use recursive globs like `'docs/**/*.md'` instead.
 
 ## Core Functions
 
@@ -167,11 +194,11 @@ The extension includes comprehensive glob pattern support across different file 
 SELECT * FROM read_markdown('docs/*.md');
 SELECT * FROM read_markdown('**/*.markdown');
 
--- Directory scanning  
-SELECT * FROM read_markdown('documentation/');
+-- Recursive directory scanning
+SELECT * FROM read_markdown('documentation/**/*.md');
 
 -- Multiple patterns
-SELECT * FROM read_markdown(['README.md', 'docs/**/*.md', 'examples/']);
+SELECT * FROM read_markdown(['README.md', 'docs/**/*.md', 'examples/**/*.md']);
 
 -- Remote file systems (S3, etc.)
 SELECT * FROM read_markdown('s3://bucket/docs/*.md');
@@ -179,8 +206,8 @@ SELECT * FROM read_markdown('s3://bucket/docs/*.md');
 
 **Supported patterns:**
 - `*.md`, `**/*.markdown` - Standard glob patterns
-- `docs/` - Directory scanning (auto-finds .md/.markdown files)
-- Mixed lists combining files, globs, and directories
+- `docs/**/*.md` - Recursive directory scanning
+- Mixed lists combining files and glob patterns
 - Remote file systems with graceful degradation
 
 ## Return Types
