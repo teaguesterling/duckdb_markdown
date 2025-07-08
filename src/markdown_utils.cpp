@@ -95,8 +95,8 @@ std::string MarkdownToText(const std::string& markdown_str) {
 MarkdownMetadata ExtractMetadata(const std::string& markdown_str) {
     MarkdownMetadata metadata;
     
-    // Check for YAML frontmatter
-    std::regex frontmatter_regex(R"(^---\n([\s\S]*?)\n---)", std::regex_constants::multiline);
+    // Check for YAML frontmatter (use default flags, multiline not supported on Windows)
+    std::regex frontmatter_regex(R"(^---\n([\s\S]*?)\n---)");
     std::smatch match;
     
     if (std::regex_search(markdown_str, match, frontmatter_regex)) {
@@ -151,14 +151,14 @@ MarkdownStats CalculateStats(const std::string& markdown_str) {
     stats.line_count = static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
     
     // Count headings
-    std::regex heading_regex(R"(^#{1,6}\s+)", std::regex_constants::multiline);
+    std::regex heading_regex(R"(^#{1,6}\s+)");
     stats.heading_count = static_cast<idx_t>(std::distance(
         std::sregex_iterator(markdown_str.begin(), markdown_str.end(), heading_regex),
         std::sregex_iterator()
     ));
     
     // Count code blocks
-    std::regex code_block_regex(R"(```)", std::regex_constants::multiline);
+    std::regex code_block_regex(R"(```)");  
     auto code_matches = std::distance(
         std::sregex_iterator(markdown_str.begin(), markdown_str.end(), code_block_regex),
         std::sregex_iterator()
@@ -216,7 +216,7 @@ std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
     std::unordered_map<std::string, int32_t> id_counts;
     
     // Parse headings and create sections
-    std::regex heading_regex(R"(^(#{1,6})\s+(.+)$)", std::regex_constants::multiline);
+    std::regex heading_regex(R"(^(#{1,6})\s+(.+)$)");
     std::sregex_iterator iter(markdown_str.begin(), markdown_str.end(), heading_regex);
     std::sregex_iterator end;
     
@@ -522,7 +522,7 @@ std::vector<MarkdownTable> ExtractTables(const std::string& markdown_str) {
     // extension node types are not easily accessible. We can revisit this later.
     
     // Parse tables using simple regex - this handles basic GFM tables
-    std::regex table_regex(R"((?:^|\n)((?:\|[^\n]*\|[ \t]*\n?)+))", std::regex_constants::multiline);
+    std::regex table_regex(R"((?:^|\n)((?:\|[^\n]*\|[ \t]*\n?)+))");
     std::sregex_iterator iter(markdown_str.begin(), markdown_str.end(), table_regex);
     std::sregex_iterator end;
     
