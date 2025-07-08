@@ -303,21 +303,24 @@ The extension is designed for high-performance document processing:
 
 **✅ Available (v1.0.0-alpha):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`) with full parameter support
-- All 5 extraction functions with comprehensive test coverage
+- All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
+- Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`)
+- Advanced section filtering and processing options (min/max level, content inclusion, etc.)
+- Frontmatter metadata parsing and document statistics
+- Replacement scan support for table-like syntax (`FROM '*.md'`)
+- MARKDOWN type with automatic VARCHAR casting
 - Cross-platform support (Linux, macOS, WebAssembly, Windows)  
 - Robust glob pattern support for local and remote file systems
-- High-performance content processing
+- High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-
-**🚧 In Development:**
-- Metadata extraction enhancement (frontmatter parsing, document statistics)
-- Advanced section filtering and processing options
+- Full test suite with 218+ passing assertions
 
 **🗓️ Future Roadmap:**
-- HTML conversion utilities
-- Custom renderer integration
-- Streaming parser optimizations for very large documents
-- Advanced query optimization for document search
+- Custom renderer integration for specialized markdown flavors
+- Streaming parser optimizations for very large documents (>100MB)
+- Advanced query optimization for document search workloads
+- Enhanced metadata extraction (custom frontmatter schemas)
+- Copy function support for COPY FROM/TO markdown files
 
 ## Dependencies
 
