@@ -30,8 +30,8 @@ jobs:
       extension_name: markdown
       # Temporarily exclude Windows until cmark-gfm Windows build is resolved
       exclude_archs: 'windows_amd64'
-      # Pin to specific vcpkg commit that includes cmark-gfm (tested 2025-01-08)
-      vcpkg_commit: ef7c0d541124bbdd334a03467e7edb6c3364d199
+      # Use master branch for latest vcpkg with cmark-gfm support
+      vcpkg_commit: master
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
 #  code-quality-check:
