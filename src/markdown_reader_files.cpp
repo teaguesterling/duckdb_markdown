@@ -221,11 +221,22 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
                                                             ReplacementScanInput &input,
                                                             optional_ptr<ReplacementScanData> data) {
     auto &table_name = input.table_name;
+    auto &fs = FileSystem::GetFileSystem(context);
     
-    // Check if this looks like a markdown file
-    if (StringUtil::EndsWith(StringUtil::Lower(table_name), ".md") || 
-        StringUtil::EndsWith(StringUtil::Lower(table_name), ".markdown")) {
-        
+    // Check if this looks like a markdown file or pattern
+    bool is_markdown_file = StringUtil::EndsWith(StringUtil::Lower(table_name), ".md") || 
+                           StringUtil::EndsWith(StringUtil::Lower(table_name), ".markdown");
+    
+    // Check if this is a glob pattern that might contain markdown files
+    bool is_glob_pattern = false;
+    try {
+        is_glob_pattern = fs.HasGlob(table_name);
+    } catch (const NotImplementedException &) {
+        // File system doesn't support glob detection
+        is_glob_pattern = false;
+    }
+    
+    if (is_markdown_file || is_glob_pattern) {
         // Create read_markdown function call
         vector<unique_ptr<ParsedExpression>> children;
         children.push_back(make_uniq<ConstantExpression>(Value(table_name)));
@@ -233,6 +244,11 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
         auto function_expr = make_uniq<FunctionExpression>("read_markdown", std::move(children));
         auto result = make_uniq<TableFunctionRef>();
         result->function = std::move(function_expr);
+        
+        // Set alias for non-glob patterns
+        if (!is_glob_pattern) {
+            result->alias = fs.ExtractBaseName(table_name);
+        }
         
         return std::move(result);
     }
