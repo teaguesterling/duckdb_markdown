@@ -158,10 +158,10 @@ SELECT
 FROM read_markdown('docs/**/*.md')
 WHERE md_extract_metadata(content) != '{}';
 
--- Validate markdown content
-SELECT filename, md_valid(content) as is_valid
+-- Validate markdown content  
+SELECT filename, md_valid(content::varchar) as is_valid
 FROM read_markdown('**/*.md')
-WHERE NOT md_valid(content);
+WHERE NOT md_valid(content::varchar);
 ```
 
 ## Use Cases
@@ -172,17 +172,17 @@ Analyze code documentation across entire repositories:
 
 ```sql
 -- Find all Python examples in documentation
-SELECT filename, cb.code, cb.line_number
+SELECT filename, unnest.code, unnest.line_number
 FROM read_markdown('docs/**/*.md') docs,
-     UNNEST(md_extract_code_blocks(docs.content)) cb
-WHERE cb.language = 'python';
+     UNNEST(md_extract_code_blocks(docs.content))
+WHERE unnest.language = 'python';
 
 -- Audit external links in documentation  
-SELECT link.url, count(*) as usage_count
+SELECT unnest.url, count(*) as usage_count
 FROM read_markdown('**/*.md') docs,
-     UNNEST(md_extract_links(docs.content)) link  
-WHERE link.url LIKE 'http%'
-GROUP BY link.url
+     UNNEST(md_extract_links(docs.content))
+WHERE unnest.url LIKE 'http%'
+GROUP BY unnest.url
 ORDER BY usage_count DESC;
 ```
 
