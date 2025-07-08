@@ -35,6 +35,13 @@ make test
 -- Load the extension
 LOAD markdown;
 
+-- Read Markdown files with glob patterns
+SELECT content FROM read_markdown('docs/**/*.md');
+
+-- Read documentation sections with hierarchy
+SELECT title, level, content 
+FROM read_markdown_sections('README.md', include_content := true);
+
 -- Extract code blocks from Markdown text
 SELECT cb.language, cb.code 
 FROM (
@@ -46,10 +53,41 @@ SELECT
   len(md_extract_code_blocks(content)) as code_examples,
   len(md_extract_links(content)) as external_links,
   len(md_extract_images(content)) as images
-FROM (VALUES ('# My Project\n[GitHub](https://github.com)\n```sql\nSELECT 1;\n```')) t(content);
+FROM read_markdown('**/*.md');
 ```
 
 ## Core Functions
+
+### File Reading Functions
+
+Read Markdown files directly with comprehensive parameter support:
+
+#### `read_markdown(files, [parameters...])`
+Reads Markdown files and returns one row per file.
+
+**Parameters:**
+- `files` (required) - File path, glob pattern, directory, or list of mixed patterns
+- `include_filepath := false` - Include file_path column in output
+- `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
+- `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
+- `extract_metadata := true` - Extract frontmatter metadata
+- `normalize_content := true` - Normalize Markdown content
+
+**Returns:** `(content MARKDOWN [, file_path VARCHAR])`
+
+#### `read_markdown_sections(files, [parameters...])`
+Reads Markdown files and parses them into hierarchical sections.
+
+**Parameters:**
+- `files` (required) - File path, glob pattern, directory, or list of mixed patterns  
+- `include_content := true` - Include section content in output
+- `min_level := 1` - Minimum heading level to include (1-6)
+- `max_level := 6` - Maximum heading level to include (1-6)
+- `include_empty_sections := false` - Include sections without content
+- `include_filepath := false` - Include file_path column in output
+- Plus all `read_markdown` parameters
+
+**Returns:** `(title VARCHAR, level INTEGER, content MARKDOWN [, file_path VARCHAR])`
 
 ### Content Extraction Functions
 
@@ -60,11 +98,6 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_extract_images(markdown)`** - Extract images with alt text and metadata
 - **`md_extract_table_rows(markdown)`** - Extract table data as individual cells
 - **`md_extract_tables_json(markdown)`** - Extract tables as structured JSON with enhanced metadata
-
-### File Reading Functions (Planned)
-
-- **`read_markdown(files)`** - Read Markdown files with glob pattern support
-- **`read_markdown_sections(files)`** - Read and parse document sections with hierarchy
 
 ## Use Cases
 
@@ -184,15 +217,16 @@ The extension is designed for high-performance document processing:
 ## Current Status
 
 **✅ Available (v1.0.0-alpha):**
+- Complete file reading functions (`read_markdown`, `read_markdown_sections`) with full parameter support
 - All 5 extraction functions with comprehensive test coverage
-- Cross-platform support (Linux, macOS, WebAssembly)  
+- Cross-platform support (Linux, macOS, WebAssembly, Windows)  
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing
+- Comprehensive parameter system for flexible file processing
 
 **🚧 In Development:**
-- Windows platform support (compilation fixes in progress)
-- File reading table functions (`read_markdown`, `read_markdown_sections`)
-- Metadata extraction (frontmatter, document statistics)
+- Metadata extraction enhancement (frontmatter parsing, document statistics)
+- Advanced section filtering and processing options
 
 **🗓️ Future Roadmap:**
 - HTML conversion utilities
