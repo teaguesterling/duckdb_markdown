@@ -28,8 +28,8 @@ jobs:
       duckdb_version: v1.3.1
       ci_tools_version: v1.3.1
       extension_name: markdown
-      # Temporarily exclude Windows until cmark-gfm Windows build is resolved
-      exclude_archs: 'windows_amd64'
+      # Temporarily exclude all Windows builds until cmark-gfm Windows build is resolved
+      exclude_archs: 'windows_amd64;windows_amd64_mingw'
       # Use master branch for latest vcpkg with cmark-gfm support
       vcpkg_commit: master
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
