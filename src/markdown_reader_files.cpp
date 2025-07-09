@@ -261,10 +261,23 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 //===--------------------------------------------------------------------===//
 
 void RegisterMarkdownCopyFunctions(DatabaseInstance& db) {
-    // TODO: Implement COPY FROM/TO markdown support
-    // This would allow:
-    // COPY table FROM 'file.md' (FORMAT MARKDOWN);
-    // COPY table TO 'file.md' (FORMAT MARKDOWN);
+    // TODO: Implement COPY TO markdown support
+    // This would allow: COPY table TO 'file.md' (FORMAT MARKDOWN);
+    // 
+    // Implementation approach based on DuckDB CLI markdown renderer:
+    // - Use ModeMarkdownRenderer pattern from tools/shell/shell_renderer.cpp
+    // - Column separators: " | ", row start: "| ", row end: " |\n"
+    // - PrintMarkdownSeparator for header separator with right-align for numerics
+    // - Consider options:
+    //   * Pure table format (current CLI approach)
+    //   * Enhanced format with frontmatter metadata (title, date, etc.)
+    //   * File-level markdown with optional intro text
+    // 
+    // For now, users can create markdown tables using CLI: .mode markdown
+    // Or manual construction:
+    // SELECT '| Column | Value |' || CHR(10) || '|--------|-------|' || CHR(10) || 
+    //        string_agg('| ' || column1 || ' | ' || column2 || ' |', CHR(10)) as markdown_table
+    // FROM table;
 }
 
 // CopyFunction GetMarkdownCopyFunction() {

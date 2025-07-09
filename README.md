@@ -320,7 +320,8 @@ The extension is designed for high-performance document processing:
 - Streaming parser optimizations for very large documents (>100MB)
 - Advanced query optimization for document search workloads
 - Enhanced metadata extraction (custom frontmatter schemas)
-- Copy function support for COPY FROM/TO markdown files
+
+**💡 Note:** DuckDB CLI already supports markdown table output via `.mode markdown`, eliminating the need for COPY TO markdown functionality.
 
 ## Dependencies
 
