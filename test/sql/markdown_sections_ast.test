@@ -1,0 +1,121 @@
+# name: test/sql/markdown_sections_ast.test
+# description: Test cmark-gfm AST-based section extraction functionality
+# group: [markdown]
+
+require markdown
+
+# Test basic md_extract_sections scalar function  
+query I
+SELECT count(*) as section_count
+FROM (SELECT UNNEST(md_extract_sections(E'# Test\nContent\n## Sub\nMore')) as section);
+----
+2
+
+# Test section details are extracted correctly
+query TITI
+SELECT section.section_id, section.level, section.title, section.start_line
+FROM (SELECT UNNEST(md_extract_sections(E'# Main Title\nSome content here.\n\n## Section 1\nContent for section 1.\n\n### Subsection 1.1\nNested content.\n\n## Section 2\nContent for section 2.')) as section)
+ORDER BY section.start_line;
+----
+main-title	1	Main Title	1
+section-1	2	Section 1	4
+subsection-1-1	3	Subsection 1.1	7
+section-2	2	Section 2	10
+
+# Test section filtering by level
+query TI
+SELECT section.title, section.level
+FROM (SELECT UNNEST(md_extract_sections(E'# Top\n## Mid\n### Deep\n#### Deeper\n##### Deepest', 2, 4)) as section)
+ORDER BY section.start_line;
+----
+Mid	2
+Deep	3
+Deeper	4
+
+# Test content extraction contains expected text
+query TT
+SELECT section.title, section.content LIKE '%Content for section 1%' as has_expected_content
+FROM (SELECT UNNEST(md_extract_sections(E'# Main Title\nSome content here.\n\n## Section 1\nContent for section 1.\n\n### Subsection 1.1\nNested content.\n\n## Section 2\nContent for section 2.')) as section)
+WHERE section.title = 'Section 1';
+----
+Section 1	true
+
+# Test empty markdown handling
+query I
+SELECT count(*) as section_count
+FROM (SELECT UNNEST(md_extract_sections('')) as section);
+----
+0
+
+# Test only content without headings
+query I
+SELECT count(*) as section_count
+FROM (SELECT UNNEST(md_extract_sections('Just plain text with no headings.')) as section);
+----
+0
+
+# Test parent-child relationships are correct
+query TTT
+SELECT s.title, s.level, s.parent_id
+FROM (SELECT UNNEST(md_extract_sections(E'# Document\nDoc content\n\n## Part A\nPart A content\n\n### Chapter 1\nChapter 1 content\n\n#### Section 1.1\nSection content\n\n### Chapter 2  \nChapter 2 content\n\n## Part B\nPart B content\n\n### Chapter 3\nChapter 3 content')) as s)
+ORDER BY s.start_line;
+----
+Document	1	NULL
+Part A	2	document
+Chapter 1	3	part-a
+Section 1.1	4	chapter-1
+Chapter 2	3	part-a
+Part B	2	document
+Chapter 3	3	part-b
+
+# Test sections with special characters and emojis
+query TT
+SELECT section.title, section.section_id
+FROM (SELECT UNNEST(md_extract_sections(E'# Test: Special & Chars! 🚀\n## More: Testing-123\n### Final.Test_Case')) as section)
+ORDER BY section.start_line;
+----
+Test: Special & Chars! 🚀	test-special-chars
+More: Testing-123	more-testing-123
+Final.Test_Case	final-test_case
+
+# Test duplicate heading titles get unique IDs
+query TT
+SELECT section.title, section.section_id
+FROM (SELECT UNNEST(md_extract_sections(E'# Duplicate\n## Test\n# Duplicate\n## Test')) as section)
+ORDER BY section.start_line;
+----
+Duplicate	duplicate
+Test	test
+Duplicate	duplicate-1
+Test	test-1
+
+# Test that content between sections is properly captured
+query TT
+SELECT section.title, section.content LIKE '%between sections%' as captures_between_content
+FROM (SELECT UNNEST(md_extract_sections(E'# First\nFirst content\n\nSome text between sections\n\n# Second\nSecond content')) as section)
+WHERE section.title = 'First';
+----
+First	true
+
+# Test line number accuracy
+query TII
+SELECT section.title, section.start_line, section.end_line  
+FROM (SELECT UNNEST(md_extract_sections(E'Line 1\n# Title on Line 2\nContent on line 3\nMore content\n\n## Sub on Line 6\nSub content')) as section)
+ORDER BY section.start_line;
+----
+Title on Line 2	2	2
+Sub on Line 6	6	6
+
+# Test interaction with other markdown elements (code blocks)
+query TT
+SELECT section.title, section.content LIKE '%```%' as has_code_block
+FROM (SELECT UNNEST(md_extract_sections(E'# Code Section\nHere is code:\n```python\nprint("test")\n```\nAfter code.')) as section)
+WHERE section.title = 'Code Section';
+----
+Code Section	true
+
+# Test that md_extract_sections function is available and registered
+query I
+SELECT typeof(md_extract_sections('# Test')) IS NOT NULL as function_registered;
+----
+true

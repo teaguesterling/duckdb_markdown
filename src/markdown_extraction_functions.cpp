@@ -187,7 +187,41 @@ static void SectionExtractionFunction(DataChunk &args, ExpressionState &state, V
             struct_children.push_back({"level", Value::INTEGER(section.level)});
             struct_children.push_back({"title", Value(section.title)});
             struct_children.push_back({"content", Value(section.content)});
-            struct_children.push_back({"parent_id", section.parent_id.empty() ? Value() : Value(section.parent_id)});
+            struct_children.push_back({"parent_id", section.parent_id.empty() ? Value(LogicalType::VARCHAR) : Value(section.parent_id)});
+            struct_children.push_back({"start_line", Value::BIGINT(static_cast<int64_t>(section.start_line))});
+            struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
+            struct_values.push_back(Value::STRUCT(struct_children));
+        }
+        
+        if (struct_values.empty()) {
+            // For empty lists, we need to specify the type - use a simple empty list
+            result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
+        } else {
+            result.SetValue(i, Value::LIST(struct_values));
+        }
+    }
+}
+
+static void SectionExtractionFunctionWithLevels(DataChunk &args, ExpressionState &state, Vector &result) {
+    auto &input_vector = args.data[0];
+    auto &min_level_vector = args.data[1];
+    auto &max_level_vector = args.data[2];
+    auto count = args.size();
+    
+    for (idx_t i = 0; i < count; i++) {
+        auto markdown_str = input_vector.GetValue(i).ToString();
+        auto min_level = static_cast<int32_t>(min_level_vector.GetValue(i).GetValue<int32_t>());
+        auto max_level = static_cast<int32_t>(max_level_vector.GetValue(i).GetValue<int32_t>());
+        auto sections = markdown_utils::ExtractSections(markdown_str, min_level, max_level, true);
+        
+        vector<Value> struct_values;
+        for (const auto &section : sections) {
+            child_list_t<Value> struct_children;
+            struct_children.push_back({"section_id", Value(section.id)});
+            struct_children.push_back({"level", Value::INTEGER(section.level)});
+            struct_children.push_back({"title", Value(section.title)});
+            struct_children.push_back({"content", Value(section.content)});
+            struct_children.push_back({"parent_id", section.parent_id.empty() ? Value(LogicalType::VARCHAR) : Value(section.parent_id)});
             struct_children.push_back({"start_line", Value::BIGINT(static_cast<int64_t>(section.start_line))});
             struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
             struct_values.push_back(Value::STRUCT(struct_children));
@@ -395,9 +429,20 @@ void MarkdownExtractionFunctions::Register(DatabaseInstance &db) {
         {"end_line", LogicalType::BIGINT}
     });
     
+    // Register main function with MARKDOWN type
     ScalarFunction sections_func("md_extract_sections", {MarkdownTypes::MarkdownType()}, 
                                 LogicalType::LIST(section_struct_type), SectionExtractionFunction);
     ExtensionUtil::RegisterFunction(db, sections_func);
+    
+    // Register overload for VARCHAR input
+    ScalarFunction sections_varchar_func("md_extract_sections", {LogicalType::VARCHAR}, 
+                                        LogicalType::LIST(section_struct_type), SectionExtractionFunction);
+    ExtensionUtil::RegisterFunction(db, sections_varchar_func);
+    
+    // Register overload for VARCHAR with level filtering
+    ScalarFunction sections_levels_func("md_extract_sections", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER}, 
+                                       LogicalType::LIST(section_struct_type), SectionExtractionFunctionWithLevels);
+    ExtensionUtil::RegisterFunction(db, sections_levels_func);
 }
 
 } // namespace duckdb
