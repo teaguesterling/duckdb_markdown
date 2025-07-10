@@ -169,6 +169,40 @@ static void TableRowExtractionFunction(DataChunk &args, ExpressionState &state, 
 }
 
 //===--------------------------------------------------------------------===//
+// Section Extraction - Scalar Function  
+//===--------------------------------------------------------------------===//
+
+static void SectionExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+    auto &input_vector = args.data[0];
+    auto count = args.size();
+    
+    for (idx_t i = 0; i < count; i++) {
+        auto markdown_str = input_vector.GetValue(i).ToString();
+        auto sections = markdown_utils::ExtractSections(markdown_str, 1, 6, true); // Extract all sections with content
+        
+        vector<Value> struct_values;
+        for (const auto &section : sections) {
+            child_list_t<Value> struct_children;
+            struct_children.push_back({"section_id", Value(section.id)});
+            struct_children.push_back({"level", Value::INTEGER(section.level)});
+            struct_children.push_back({"title", Value(section.title)});
+            struct_children.push_back({"content", Value(section.content)});
+            struct_children.push_back({"parent_id", section.parent_id.empty() ? Value() : Value(section.parent_id)});
+            struct_children.push_back({"start_line", Value::BIGINT(static_cast<int64_t>(section.start_line))});
+            struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
+            struct_values.push_back(Value::STRUCT(struct_children));
+        }
+        
+        if (struct_values.empty()) {
+            // For empty lists, we need to specify the type - use a simple empty list
+            result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
+        } else {
+            result.SetValue(i, Value::LIST(struct_values));
+        }
+    }
+}
+
+//===--------------------------------------------------------------------===//
 // Table JSON Extraction - Scalar Function  
 //===--------------------------------------------------------------------===//
 
@@ -349,6 +383,21 @@ void MarkdownExtractionFunctions::Register(DatabaseInstance &db) {
     ScalarFunction tables_json_func("md_extract_tables_json", {MarkdownTypes::MarkdownType()}, 
                                     LogicalType::LIST(table_json_struct_type), TableJSONExtractionFunction);
     ExtensionUtil::RegisterFunction(db, tables_json_func);
+    
+    // Register md_extract_sections scalar function
+    LogicalType section_struct_type = LogicalType::STRUCT({
+        {"section_id", LogicalType::VARCHAR},
+        {"level", LogicalType::INTEGER}, 
+        {"title", LogicalType::VARCHAR},
+        {"content", MarkdownTypes::MarkdownType()},
+        {"parent_id", LogicalType::VARCHAR},
+        {"start_line", LogicalType::BIGINT},
+        {"end_line", LogicalType::BIGINT}
+    });
+    
+    ScalarFunction sections_func("md_extract_sections", {MarkdownTypes::MarkdownType()}, 
+                                LogicalType::LIST(section_struct_type), SectionExtractionFunction);
+    ExtensionUtil::RegisterFunction(db, sections_func);
 }
 
 } // namespace duckdb

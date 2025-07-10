@@ -123,6 +123,12 @@ struct MarkdownTable {
 std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str, 
                                         const std::string& language_filter = "");
 
+// Extract sections using cmark-gfm AST (replacement for regex-based ParseSections)
+std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str, 
+                                            int32_t min_level = 1, 
+                                            int32_t max_level = 6,
+                                            bool include_content = true);
+
 // Extract links
 std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str);
 
