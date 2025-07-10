@@ -301,7 +301,7 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.0.0-alpha):**
+**✅ Available (v1.0.1):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`) with full parameter support
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`)
