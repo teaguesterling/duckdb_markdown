@@ -35,7 +35,7 @@ jobs:
 #    name: Code Quality Check
 #    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
 #    with:
-#      duckdb_version: v1.3.1
+#      duckdb_version: v1.4.1
 #      ci_tools_version: main
 #      extension_name: markdown
 #      format_checks: 'format;tidy'
