@@ -15,11 +15,12 @@ jobs:
   duckdb-next-build:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
-    if: false
     with:
       duckdb_version: main
       ci_tools_version: main
       extension_name: markdown
+      vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
+      vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
   duckdb-stable-build:
     name: Build extension binaries
