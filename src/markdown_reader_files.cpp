@@ -260,7 +260,7 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 // Copy Support
 //===--------------------------------------------------------------------===//
 
-void RegisterMarkdownCopyFunctions(DatabaseInstance& db) {
+void RegisterMarkdownCopyFunctions(ExtensionLoader &loader) {
     // TODO: Implement COPY TO markdown support
     // This would allow: COPY table TO 'file.md' (FORMAT MARKDOWN);
     // 

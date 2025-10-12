@@ -9,7 +9,7 @@ const vector<string> markdown_extensions = {"md", "markdown"};
 
 class MarkdownExtension : public Extension {
 public:
-	void Load(DuckDB &db) override;
+	void Load(ExtensionLoader &loader) override;
 	std::string Name() override;
     std::string Version() const override;
 };
@@ -18,6 +18,6 @@ public:
 CopyFunction GetMarkdownCopyFunction();
 
 // Register Markdown copy functions
-void RegisterMarkdownCopyFunctions(DatabaseInstance& db);
+void RegisterMarkdownCopyFunctions(ExtensionLoader &loader);
 
 } // namespace duckdb

@@ -1,7 +1,6 @@
 #include "markdown_extraction_functions.hpp"
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/common/exception.hpp"
@@ -347,7 +346,7 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
 // Registration
 //===--------------------------------------------------------------------===//
 
-void MarkdownExtractionFunctions::Register(DatabaseInstance &db) {
+void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
     // Define return types for scalar functions
     auto code_block_struct_type = LogicalType::STRUCT({
         {"language", LogicalType(LogicalTypeId::VARCHAR)},
@@ -393,56 +392,56 @@ void MarkdownExtractionFunctions::Register(DatabaseInstance &db) {
         {"json_structure", LogicalType::STRUCT({})} // Complex nested struct
     });
     
-    // Register md_extract_code_blocks scalar function  
-    ScalarFunction code_blocks_func("md_extract_code_blocks", {MarkdownTypes::MarkdownType()}, 
+    // Register md_extract_code_blocks scalar function
+    ScalarFunction code_blocks_func("md_extract_code_blocks", {MarkdownTypes::MarkdownType()},
                                     LogicalType::LIST(code_block_struct_type), CodeBlockExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, code_blocks_func);
-    
+    loader.RegisterFunction(code_blocks_func);
+
     // Register md_extract_links scalar function
-    ScalarFunction links_func("md_extract_links", {MarkdownTypes::MarkdownType()}, 
+    ScalarFunction links_func("md_extract_links", {MarkdownTypes::MarkdownType()},
                               LogicalType::LIST(link_struct_type), LinkExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, links_func);
-    
+    loader.RegisterFunction(links_func);
+
     // Register md_extract_images scalar function
-    ScalarFunction images_func("md_extract_images", {MarkdownTypes::MarkdownType()}, 
+    ScalarFunction images_func("md_extract_images", {MarkdownTypes::MarkdownType()},
                                LogicalType::LIST(image_struct_type), ImageExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, images_func);
-    
+    loader.RegisterFunction(images_func);
+
     // Register md_extract_table_rows scalar function (renamed from md_extract_tables)
-    ScalarFunction table_rows_func("md_extract_table_rows", {MarkdownTypes::MarkdownType()}, 
+    ScalarFunction table_rows_func("md_extract_table_rows", {MarkdownTypes::MarkdownType()},
                                    LogicalType::LIST(table_row_struct_type), TableRowExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, table_rows_func);
-    
+    loader.RegisterFunction(table_rows_func);
+
     // Register md_extract_tables_json scalar function
-    ScalarFunction tables_json_func("md_extract_tables_json", {MarkdownTypes::MarkdownType()}, 
+    ScalarFunction tables_json_func("md_extract_tables_json", {MarkdownTypes::MarkdownType()},
                                     LogicalType::LIST(table_json_struct_type), TableJSONExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, tables_json_func);
-    
+    loader.RegisterFunction(tables_json_func);
+
     // Register md_extract_sections scalar function
     LogicalType section_struct_type = LogicalType::STRUCT({
         {"section_id", LogicalType::VARCHAR},
-        {"level", LogicalType::INTEGER}, 
+        {"level", LogicalType::INTEGER},
         {"title", LogicalType::VARCHAR},
         {"content", MarkdownTypes::MarkdownType()},
         {"parent_id", LogicalType::VARCHAR},
         {"start_line", LogicalType::BIGINT},
         {"end_line", LogicalType::BIGINT}
     });
-    
+
     // Register main function with MARKDOWN type
-    ScalarFunction sections_func("md_extract_sections", {MarkdownTypes::MarkdownType()}, 
+    ScalarFunction sections_func("md_extract_sections", {MarkdownTypes::MarkdownType()},
                                 LogicalType::LIST(section_struct_type), SectionExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, sections_func);
-    
+    loader.RegisterFunction(sections_func);
+
     // Register overload for VARCHAR input
-    ScalarFunction sections_varchar_func("md_extract_sections", {LogicalType::VARCHAR}, 
+    ScalarFunction sections_varchar_func("md_extract_sections", {LogicalType::VARCHAR},
                                         LogicalType::LIST(section_struct_type), SectionExtractionFunction);
-    ExtensionUtil::RegisterFunction(db, sections_varchar_func);
-    
+    loader.RegisterFunction(sections_varchar_func);
+
     // Register overload for VARCHAR with level filtering
-    ScalarFunction sections_levels_func("md_extract_sections", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER}, 
+    ScalarFunction sections_levels_func("md_extract_sections", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER},
                                        LogicalType::LIST(section_struct_type), SectionExtractionFunctionWithLevels);
-    ExtensionUtil::RegisterFunction(db, sections_levels_func);
+    loader.RegisterFunction(sections_levels_func);
 }
 
 } // namespace duckdb

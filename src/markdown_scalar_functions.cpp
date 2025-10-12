@@ -1,6 +1,5 @@
 #include "markdown_scalar_functions.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -8,15 +7,15 @@
 
 namespace duckdb {
 
-void MarkdownFunctions::Register(DatabaseInstance &db) {
-    RegisterValidationFunction(db);
-    RegisterConversionFunctions(db);
-    RegisterMarkdownTypeFunctions(db);
-    RegisterStatsFunctions(db);
-    RegisterMetadataFunctions(db);
+void MarkdownFunctions::Register(ExtensionLoader &loader) {
+    RegisterValidationFunction(loader);
+    RegisterConversionFunctions(loader);
+    RegisterMarkdownTypeFunctions(loader);
+    RegisterStatsFunctions(loader);
+    RegisterMetadataFunctions(loader);
 }
 
-void MarkdownFunctions::RegisterValidationFunction(DatabaseInstance &db) {
+void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
     auto markdown_type = MarkdownTypes::MarkdownType();
     
     // Basic Markdown validity check for VARCHAR
@@ -51,11 +50,11 @@ void MarkdownFunctions::RegisterValidationFunction(DatabaseInstance &db) {
                 });
         });
     
-    ExtensionUtil::RegisterFunction(db, md_valid_varchar);
-    ExtensionUtil::RegisterFunction(db, md_valid_md);
+    loader.RegisterFunction(md_valid_varchar);
+    loader.RegisterFunction(md_valid_md);
 }
 
-void MarkdownFunctions::RegisterConversionFunctions(DatabaseInstance &db) {
+void MarkdownFunctions::RegisterConversionFunctions(ExtensionLoader &loader) {
     const auto markdown_type = MarkdownTypes::MarkdownType();
     
     // md_to_html function
@@ -96,11 +95,11 @@ void MarkdownFunctions::RegisterConversionFunctions(DatabaseInstance &db) {
                 });
         });
     
-    ExtensionUtil::RegisterFunction(db, md_to_html_fun);
-    ExtensionUtil::RegisterFunction(db, md_to_text_fun);
+    loader.RegisterFunction(md_to_html_fun);
+    loader.RegisterFunction(md_to_text_fun);
 }
 
-void MarkdownFunctions::RegisterMarkdownTypeFunctions(DatabaseInstance &db) {
+void MarkdownFunctions::RegisterMarkdownTypeFunctions(ExtensionLoader &loader) {
     auto markdown_type = MarkdownTypes::MarkdownType();
     
     // value_to_md function (convert any value to Markdown)
@@ -130,10 +129,10 @@ void MarkdownFunctions::RegisterMarkdownTypeFunctions(DatabaseInstance &db) {
             }
         });
     
-    ExtensionUtil::RegisterFunction(db, value_to_md_fun);
+    loader.RegisterFunction(value_to_md_fun);
 }
 
-void MarkdownFunctions::RegisterStatsFunctions(DatabaseInstance &db) {
+void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
     auto markdown_type = MarkdownTypes::MarkdownType();
     
     // md_stats function - returns a struct with document statistics
@@ -208,8 +207,8 @@ void MarkdownFunctions::RegisterStatsFunctions(DatabaseInstance &db) {
             }
         });
     
-    ExtensionUtil::RegisterFunction(db, md_stats_fun);
-    
+    loader.RegisterFunction(md_stats_fun);
+
     // Register md_extract_section function
     ScalarFunction md_extract_section("md_extract_section", {markdown_type, LogicalType::VARCHAR}, markdown_type,
         [](DataChunk &args, ExpressionState &state, Vector &result) {
@@ -233,8 +232,8 @@ void MarkdownFunctions::RegisterStatsFunctions(DatabaseInstance &db) {
                 });
         });
     
-    ExtensionUtil::RegisterFunction(db, md_extract_section);
-    
+    loader.RegisterFunction(md_extract_section);
+
     // Register md_section_breadcrumb function
     ScalarFunction md_section_breadcrumb("md_section_breadcrumb", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,
         [](DataChunk &args, ExpressionState &state, Vector &result) {
@@ -254,10 +253,10 @@ void MarkdownFunctions::RegisterStatsFunctions(DatabaseInstance &db) {
                 });
         });
     
-    ExtensionUtil::RegisterFunction(db, md_section_breadcrumb);
+    loader.RegisterFunction(md_section_breadcrumb);
 }
 
-void MarkdownFunctions::RegisterMetadataFunctions(DatabaseInstance &db) {
+void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
     auto markdown_type = MarkdownTypes::MarkdownType();
     
     // md_extract_metadata function - extract frontmatter as JSON
@@ -302,7 +301,7 @@ void MarkdownFunctions::RegisterMetadataFunctions(DatabaseInstance &db) {
                 });
         });
     
-    ExtensionUtil::RegisterFunction(db, md_extract_metadata_fun);
+    loader.RegisterFunction(md_extract_metadata_fun);
 }
 
 } // namespace duckdb
