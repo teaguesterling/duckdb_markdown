@@ -5,7 +5,6 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -343,10 +342,10 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context,
 // Registration
 //===--------------------------------------------------------------------===//
 
-void MarkdownReader::RegisterFunction(DatabaseInstance &db) {
+void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
     // Register read_markdown function
     TableFunction read_markdown_func("read_markdown", {LogicalType(LogicalTypeId::VARCHAR)}, MarkdownReadDocumentsFunction, MarkdownReadDocumentsBind);
-    
+
     // Add named parameters
     read_markdown_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_markdown_func.named_parameters["include_stats"] = LogicalType(LogicalTypeId::BOOLEAN);
@@ -355,12 +354,12 @@ void MarkdownReader::RegisterFunction(DatabaseInstance &db) {
     read_markdown_func.named_parameters["flavor"] = LogicalType(LogicalTypeId::VARCHAR);
     read_markdown_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_markdown_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
-    
-    ExtensionUtil::RegisterFunction(db, read_markdown_func);
-    
+
+    loader.RegisterFunction(read_markdown_func);
+
     // Register read_markdown_sections function
     TableFunction read_sections_func("read_markdown_sections", {LogicalType(LogicalTypeId::VARCHAR)}, MarkdownReadSectionsFunction, MarkdownReadSectionsBind);
-    
+
     // Add named parameters for sections
     read_sections_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_sections_func.named_parameters["include_stats"] = LogicalType(LogicalTypeId::BOOLEAN);
@@ -373,8 +372,8 @@ void MarkdownReader::RegisterFunction(DatabaseInstance &db) {
     read_sections_func.named_parameters["include_empty_sections"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_sections_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_sections_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
-    
-    ExtensionUtil::RegisterFunction(db, read_sections_func);
+
+    loader.RegisterFunction(read_sections_func);
 }
 
 } // namespace duckdb

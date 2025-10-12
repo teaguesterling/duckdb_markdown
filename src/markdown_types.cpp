@@ -1,6 +1,5 @@
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
-#include "duckdb/main/extension_util.hpp"
 
 namespace duckdb {
 
@@ -84,17 +83,17 @@ static bool MarkdownToVarcharCast(Vector& source, Vector& result, idx_t count, C
 // Registration
 //===--------------------------------------------------------------------===//
 
-void MarkdownTypes::Register(DatabaseInstance& db) {
+void MarkdownTypes::Register(ExtensionLoader &loader) {
     // Get the Markdown type
     const auto markdown_type = MarkdownType();
-    
+
     // Register the Markdown type alias in the catalog
-    ExtensionUtil::RegisterType(db, "markdown", markdown_type);
-    ExtensionUtil::RegisterType(db, "md", markdown_type);
-    
+    loader.RegisterType("markdown", markdown_type);
+    loader.RegisterType("md", markdown_type);
+
     // Register Markdown<->VARCHAR cast functions (isomorphic - raw markdown)
-    ExtensionUtil::RegisterCastFunction(db, LogicalType(LogicalTypeId::VARCHAR), markdown_type, VarcharToMarkdownCast, 0); // Implicit cast cost 0
-    ExtensionUtil::RegisterCastFunction(db, markdown_type, LogicalType(LogicalTypeId::VARCHAR), MarkdownToVarcharCast, 0); // Implicit cast cost 0
+    loader.RegisterCastFunction(LogicalType(LogicalTypeId::VARCHAR), markdown_type, VarcharToMarkdownCast, 0); // Implicit cast cost 0
+    loader.RegisterCastFunction(markdown_type, LogicalType(LogicalTypeId::VARCHAR), MarkdownToVarcharCast, 0); // Implicit cast cost 0
 }
 
 } // namespace duckdb

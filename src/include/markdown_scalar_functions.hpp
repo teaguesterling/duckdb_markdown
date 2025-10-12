@@ -20,17 +20,17 @@ class MarkdownFunctions {
 public:
     /**
      * @brief Register all Markdown scalar functions with DuckDB
-     * 
-     * @param db The database instance to register the functions with
+     *
+     * @param loader The extension loader to register the functions with
      */
-    static void Register(DatabaseInstance &db);
+    static void Register(ExtensionLoader &loader);
 
 private:
-    static void RegisterValidationFunction(DatabaseInstance &db);
-    static void RegisterConversionFunctions(DatabaseInstance &db);
-    static void RegisterMarkdownTypeFunctions(DatabaseInstance &db);
-    static void RegisterStatsFunctions(DatabaseInstance &db);
-    static void RegisterMetadataFunctions(DatabaseInstance &db);
+    static void RegisterValidationFunction(ExtensionLoader &loader);
+    static void RegisterConversionFunctions(ExtensionLoader &loader);
+    static void RegisterMarkdownTypeFunctions(ExtensionLoader &loader);
+    static void RegisterStatsFunctions(ExtensionLoader &loader);
+    static void RegisterMetadataFunctions(ExtensionLoader &loader);
 };
 
 } // namespace duckdb
