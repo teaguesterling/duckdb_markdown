@@ -2,6 +2,9 @@
   "dependencies": [
     {
       "name": "cmark-gfm"
+    },
+    {
+      "name": "gumbo"
     }
   ]
 }

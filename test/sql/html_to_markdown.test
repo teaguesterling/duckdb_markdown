@@ -1,0 +1,96 @@
+# name: test/sql/html_to_markdown.test
+# description: HTML to Markdown conversion functionality tests
+# group: [markdown]
+
+# Require statement will ensure this test is run with this extension loaded
+require markdown
+
+# Test basic HTML to Markdown conversion
+query I
+SELECT html_to_md('<h1>Hello World</h1>');
+----
+# Hello World
+
+# Test paragraph conversion
+query I
+SELECT html_to_md('<p>This is a paragraph.</p>');
+----
+This is a paragraph.
+
+# Test bold text conversion
+query I
+SELECT html_to_md('<strong>Bold text</strong>');
+----
+**Bold text**
+
+# Test italic text conversion
+query I
+SELECT html_to_md('<em>Italic text</em>');
+----
+*Italic text*
+
+# Test link conversion
+query I
+SELECT html_to_md('<a href="https://example.com">Example Link</a>');
+----
+[Example Link](https://example.com)
+
+# Test image conversion
+query I
+SELECT html_to_md('<img src="image.jpg" alt="Test Image">');
+----
+![Test Image](image.jpg)
+
+# Test code span conversion
+query I
+SELECT html_to_md('<code>print("hello")</code>');
+----
+`print("hello")`
+
+# Test unordered list conversion
+query I
+SELECT replace(html_to_md('<ul><li>Item 1</li><li>Item 2</li></ul>'), E'\n', '\\n');
+----
+- Item 1\\n- Item 2
+
+# Test ordered list conversion
+query I
+SELECT replace(html_to_md('<ol><li>First item</li><li>Second item</li></ol>'), E'\n', '\\n');
+----
+1. First item\\n2. Second item
+
+# Test blockquote conversion
+query I
+SELECT html_to_md('<blockquote>This is a quote</blockquote>');
+----
+> This is a quote
+
+# Test horizontal rule conversion
+query I
+SELECT html_to_md('<hr>');
+----
+---
+
+# Test empty input
+query I
+SELECT html_to_md('');
+----
+(empty)
+
+# Test NULL input
+query I
+SELECT html_to_md(NULL) IS NULL;
+----
+true
+
+# Test complex nested HTML
+query I
+SELECT replace(html_to_md('<div><h2>Title</h2><p>This is <strong>bold</strong> and <em>italic</em> text.</p></div>'), E'\n', '\\n');
+----
+## Title\\nThis is **bold** and *italic* text.
+
+# Test HTML entities
+query I
+SELECT html_to_md('&lt;script&gt;alert(&quot;test&quot;);&lt;/script&gt;');
+----
+<script>alert("test");</script>

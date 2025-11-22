@@ -5,6 +5,7 @@ set(TARGET_NAME markdown)
 
 find_package(cmark-gfm CONFIG REQUIRED)
 find_package(cmark-gfm-extensions CONFIG REQUIRED)
+find_package(unofficial-gumbo CONFIG REQUIRED)
 
 set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
@@ -25,10 +26,10 @@ set(EXTENSION_SOURCES
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# Link cmark-gfm in both the static library and the loadable extension
+# Link cmark-gfm and gumbo in both the static library and the loadable extension
 # Note: Order matters - extensions depends on core, so core must come after extensions
-target_link_libraries(${EXTENSION_NAME} libcmark-gfm-extensions_static libcmark-gfm_static)
-target_link_libraries(${LOADABLE_EXTENSION_NAME} libcmark-gfm-extensions_static libcmark-gfm_static)
+target_link_libraries(${EXTENSION_NAME} libcmark-gfm-extensions_static libcmark-gfm_static unofficial::gumbo::gumbo)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} libcmark-gfm-extensions_static libcmark-gfm_static unofficial::gumbo::gumbo)
 
 # DuckDB extension requires C++17
 set_property(TARGET ${EXTENSION_NAME} PROPERTY CXX_STANDARD 17)

@@ -12,6 +12,9 @@
 #include <cmark-gfm-extension_api.h>
 #include <cmark-gfm-core-extensions.h>
 
+// Include HTML parser
+#include <gumbo.h>
+
 namespace duckdb {
 
 namespace markdown_utils {
@@ -73,23 +76,239 @@ std::string MarkdownToText(const std::string& markdown_str) {
     if (markdown_str.empty()) {
         return "";
     }
-    
+
     // Parse the markdown document
     cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
     cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
     cmark_node *doc = cmark_parser_finish(parser);
-    
+
     // Render as plain text
     char *text = cmark_render_plaintext(doc, CMARK_OPT_DEFAULT, 0);
-    
+
     std::string result(text);
-    
+
     // Clean up
     free(text);
     cmark_node_free(doc);
     cmark_parser_free(parser);
-    
+
     return result;
+}
+
+// Helper function to extract text content from a Gumbo node
+static std::string ExtractText(const GumboNode* node) {
+    if (node->type == GUMBO_NODE_TEXT || node->type == GUMBO_NODE_WHITESPACE) {
+        return std::string(node->v.text.text);
+    }
+
+    if (node->type == GUMBO_NODE_ELEMENT) {
+        std::string text;
+        const GumboVector* children = &node->v.element.children;
+        for (unsigned int i = 0; i < children->length; ++i) {
+            text += ExtractText(static_cast<GumboNode*>(children->data[i]));
+        }
+        return text;
+    }
+
+    return "";
+}
+
+// Helper function to convert HTML entity to actual character
+static std::string DecodeHTMLEntities(const std::string& str) {
+    std::string result = str;
+
+    // Common HTML entities
+    StringUtil::Replace(result, "&lt;", "<");
+    StringUtil::Replace(result, "&gt;", ">");
+    StringUtil::Replace(result, "&amp;", "&");
+    StringUtil::Replace(result, "&quot;", "\"");
+    StringUtil::Replace(result, "&apos;", "'");
+    StringUtil::Replace(result, "&#39;", "'");
+
+    return result;
+}
+
+// Forward declaration for recursive conversion
+static std::string ConvertNodeToMarkdown(const GumboNode* node, int list_depth = 0, int list_item_num = 0);
+
+// Convert children nodes to markdown
+static std::string ConvertChildrenToMarkdown(const GumboNode* node, int list_depth = 0) {
+    std::string result;
+    const GumboVector* children = &node->v.element.children;
+
+    for (unsigned int i = 0; i < children->length; ++i) {
+        result += ConvertNodeToMarkdown(static_cast<GumboNode*>(children->data[i]), list_depth);
+    }
+
+    return result;
+}
+
+// Main conversion function for a single node
+static std::string ConvertNodeToMarkdown(const GumboNode* node, int list_depth, int list_item_num) {
+    if (node->type == GUMBO_NODE_TEXT) {
+        return std::string(node->v.text.text);
+    }
+
+    if (node->type == GUMBO_NODE_WHITESPACE) {
+        return std::string(node->v.text.text);
+    }
+
+    if (node->type != GUMBO_NODE_ELEMENT) {
+        return "";
+    }
+
+    const GumboElement& element = node->v.element;
+    std::string result;
+
+    switch (element.tag) {
+        case GUMBO_TAG_H1:
+            return "# " + ConvertChildrenToMarkdown(node) + "\n";
+        case GUMBO_TAG_H2:
+            return "## " + ConvertChildrenToMarkdown(node) + "\n";
+        case GUMBO_TAG_H3:
+            return "### " + ConvertChildrenToMarkdown(node) + "\n";
+        case GUMBO_TAG_H4:
+            return "#### " + ConvertChildrenToMarkdown(node) + "\n";
+        case GUMBO_TAG_H5:
+            return "##### " + ConvertChildrenToMarkdown(node) + "\n";
+        case GUMBO_TAG_H6:
+            return "###### " + ConvertChildrenToMarkdown(node) + "\n";
+
+        case GUMBO_TAG_P:
+            result = ConvertChildrenToMarkdown(node);
+            // Trim whitespace
+            StringUtil::Trim(result);
+            if (!result.empty()) {
+                return result + "\n";
+            }
+            return "";
+
+        case GUMBO_TAG_STRONG:
+        case GUMBO_TAG_B:
+            return "**" + ConvertChildrenToMarkdown(node) + "**";
+
+        case GUMBO_TAG_EM:
+        case GUMBO_TAG_I:
+            return "*" + ConvertChildrenToMarkdown(node) + "*";
+
+        case GUMBO_TAG_CODE: {
+            std::string code = ExtractText(node);
+            return "`" + code + "`";
+        }
+
+        case GUMBO_TAG_A: {
+            // Find href attribute
+            std::string href;
+            for (unsigned int i = 0; i < element.attributes.length; ++i) {
+                GumboAttribute* attr = static_cast<GumboAttribute*>(element.attributes.data[i]);
+                if (std::string(attr->name) == "href") {
+                    href = attr->value;
+                    break;
+                }
+            }
+            std::string text = ConvertChildrenToMarkdown(node);
+            return "[" + text + "](" + href + ")";
+        }
+
+        case GUMBO_TAG_IMG: {
+            // Find src and alt attributes
+            std::string src, alt;
+            for (unsigned int i = 0; i < element.attributes.length; ++i) {
+                GumboAttribute* attr = static_cast<GumboAttribute*>(element.attributes.data[i]);
+                std::string attr_name(attr->name);
+                if (attr_name == "src") {
+                    src = attr->value;
+                } else if (attr_name == "alt") {
+                    alt = attr->value;
+                }
+            }
+            return "![" + alt + "](" + src + ")";
+        }
+
+        case GUMBO_TAG_UL: {
+            std::string list_result;
+            const GumboVector* children = &node->v.element.children;
+            for (unsigned int i = 0; i < children->length; ++i) {
+                GumboNode* child = static_cast<GumboNode*>(children->data[i]);
+                if (child->type == GUMBO_NODE_ELEMENT && child->v.element.tag == GUMBO_TAG_LI) {
+                    std::string item = ConvertChildrenToMarkdown(child, list_depth + 1);
+                    StringUtil::Trim(item);
+                    list_result += "- " + item + "\n";
+                }
+            }
+            return list_result;
+        }
+
+        case GUMBO_TAG_OL: {
+            std::string list_result;
+            const GumboVector* children = &node->v.element.children;
+            int item_num = 1;
+            for (unsigned int i = 0; i < children->length; ++i) {
+                GumboNode* child = static_cast<GumboNode*>(children->data[i]);
+                if (child->type == GUMBO_NODE_ELEMENT && child->v.element.tag == GUMBO_TAG_LI) {
+                    std::string item = ConvertChildrenToMarkdown(child, list_depth + 1);
+                    StringUtil::Trim(item);
+                    list_result += std::to_string(item_num++) + ". " + item + "\n";
+                }
+            }
+            return list_result;
+        }
+
+        case GUMBO_TAG_LI:
+            // LI elements are handled by their parent UL/OL
+            return ConvertChildrenToMarkdown(node, list_depth);
+
+        case GUMBO_TAG_BLOCKQUOTE: {
+            std::string quote = ConvertChildrenToMarkdown(node);
+            StringUtil::Trim(quote);
+            return "> " + quote + "\n";
+        }
+
+        case GUMBO_TAG_HR:
+            return "---\n";
+
+        case GUMBO_TAG_BR:
+            return "\n";
+
+        case GUMBO_TAG_DIV:
+        case GUMBO_TAG_SPAN:
+        case GUMBO_TAG_HTML:
+        case GUMBO_TAG_BODY:
+        case GUMBO_TAG_HEAD:
+            // Pass through container elements
+            return ConvertChildrenToMarkdown(node, list_depth);
+
+        default:
+            // For unsupported tags, just extract text content
+            return ConvertChildrenToMarkdown(node, list_depth);
+    }
+}
+
+std::string HTMLToMarkdown(const std::string& html_str) {
+    if (html_str.empty()) {
+        return "";
+    }
+
+    // Decode HTML entities first
+    std::string decoded_html = DecodeHTMLEntities(html_str);
+
+    // Parse HTML with gumbo
+    GumboOutput* output = gumbo_parse(decoded_html.c_str());
+
+    // Convert to markdown
+    std::string markdown = ConvertNodeToMarkdown(output->root);
+
+    // Clean up
+    gumbo_destroy_output(&kGumboDefaultOptions, output);
+
+    // Post-process: remove excessive newlines
+    std::regex multiple_newlines(R"(\n{3,})");
+    markdown = std::regex_replace(markdown, multiple_newlines, "\n\n");
+
+    // Trim leading and trailing whitespace
+    StringUtil::Trim(markdown);
+
+    return markdown;
 }
 
 MarkdownMetadata ExtractMetadata(const std::string& markdown_str) {

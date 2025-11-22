@@ -95,8 +95,28 @@ void MarkdownFunctions::RegisterConversionFunctions(ExtensionLoader &loader) {
                 });
         });
     
+    // html_to_md function
+    ScalarFunction html_to_md_fun("html_to_md", {LogicalType::VARCHAR}, LogicalType::VARCHAR,
+        [](DataChunk &args, ExpressionState &state, Vector &result) {
+            UnaryExecutor::Execute<string_t, string_t>(
+                args.data[0], result, args.size(),
+                [&](string_t html_str) -> string_t {
+                    if (html_str.GetSize() == 0) {
+                        return string_t();
+                    }
+
+                    try {
+                        const std::string md_str = markdown_utils::HTMLToMarkdown(html_str.GetString());
+                        return StringVector::AddString(result, md_str.c_str(), md_str.length());
+                    } catch (const std::exception& e) {
+                        throw InvalidInputException("Error converting HTML to Markdown: %s", e.what());
+                    }
+                });
+        });
+
     loader.RegisterFunction(md_to_html_fun);
     loader.RegisterFunction(md_to_text_fun);
+    loader.RegisterFunction(html_to_md_fun);
 }
 
 void MarkdownFunctions::RegisterMarkdownTypeFunctions(ExtensionLoader &loader) {

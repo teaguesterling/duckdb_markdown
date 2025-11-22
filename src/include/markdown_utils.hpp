@@ -58,6 +58,9 @@ struct MarkdownStats {
 // Convert Markdown to HTML
 std::string MarkdownToHTML(const std::string& markdown_str, MarkdownFlavor flavor = MarkdownFlavor::GFM);
 
+// Convert HTML to Markdown
+std::string HTMLToMarkdown(const std::string& html_str);
+
 // Convert Markdown to plain text (for FTS)
 std::string MarkdownToText(const std::string& markdown_str);
 
