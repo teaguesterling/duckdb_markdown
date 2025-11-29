@@ -100,21 +100,24 @@ Reads Markdown files and returns one row per file.
 - `extract_metadata := true` - Extract frontmatter metadata
 - `normalize_content := true` - Normalize Markdown content
 
-**Returns:** `(content MARKDOWN, metadata VARCHAR)` or `(file_path VARCHAR, content MARKDOWN, metadata VARCHAR)` with `include_filepath := true`
+**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(file_path VARCHAR, content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` with `include_filepath := true`
 
 #### `read_markdown_sections(files, [parameters...])`
 Reads Markdown files and parses them into hierarchical sections.
 
 **Parameters:**
-- `files` (required) - File path, glob pattern, directory, or list of mixed patterns  
+- `files` (required) - File path, glob pattern, directory, or list of mixed patterns
 - `include_content := true` - Include section content in output
 - `min_level := 1` - Minimum heading level to include (1-6)
 - `max_level := 6` - Maximum heading level to include (1-6)
 - `include_empty_sections := false` - Include sections without content
 - `include_filepath := false` - Include file_path column in output
+- `extract_metadata := true` - Include frontmatter as a special section (level=0)
 - Plus all `read_markdown` parameters
 
 **Returns:** `(section_id VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or `(file_path VARCHAR, section_id VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` with `include_filepath := true`
+
+**Note:** When `extract_metadata := true`, YAML frontmatter is included as a special section with `level=0`, `section_id='frontmatter'`, and the raw YAML content (without `---` delimiters) as the content.
 
 ### Content Extraction Functions
 
@@ -132,7 +135,7 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
 - **`md_valid(markdown)`** - Validate markdown content and return boolean
 - **`md_stats(markdown)`** - Get document statistics (word count, reading time, etc.)
-- **`md_extract_metadata(markdown)`** - Extract frontmatter metadata as JSON
+- **`md_extract_metadata(markdown)`** - Extract frontmatter metadata as `MAP(VARCHAR, VARCHAR)`
 - **`md_extract_section(markdown, section_id)`** - Extract specific section by ID
 - **`md_section_breadcrumb(file_path, section_id)`** - Generate breadcrumb navigation for section
 - **`value_to_md(value)`** - Convert any value to markdown representation
@@ -151,12 +154,14 @@ SELECT
   md_stats(content).reading_time_minutes as reading_time
 FROM read_markdown('docs/**/*.md');
 
--- Extract and parse frontmatter metadata
-SELECT 
+-- Extract and access frontmatter metadata fields
+SELECT
   filename,
-  md_extract_metadata(content) as metadata_json
+  md_extract_metadata(content)['title'] as title,
+  md_extract_metadata(content)['author'] as author,
+  md_extract_metadata(content) as all_metadata
 FROM read_markdown('docs/**/*.md')
-WHERE md_extract_metadata(content) != '{}';
+WHERE cardinality(md_extract_metadata(content)) > 0;
 
 -- Validate markdown content  
 SELECT filename, md_valid(content::varchar) as is_valid
@@ -306,7 +311,7 @@ The extension is designed for high-performance document processing:
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`)
 - Advanced section filtering and processing options (min/max level, content inclusion, etc.)
-- Frontmatter metadata parsing and document statistics
+- Frontmatter metadata as `MAP(VARCHAR, VARCHAR)` for easy field access
 - Replacement scan support for table-like syntax (`FROM '*.md'`)
 - MARKDOWN type with automatic VARCHAR casting
 - Cross-platform support (Linux, macOS, WebAssembly, Windows)  
@@ -319,7 +324,7 @@ The extension is designed for high-performance document processing:
 - Custom renderer integration for specialized markdown flavors
 - Streaming parser optimizations for very large documents (>100MB)
 - Advanced query optimization for document search workloads
-- Enhanced metadata extraction (custom frontmatter schemas)
+- Optional YAML extension integration for advanced frontmatter parsing
 
 **💡 Note:** DuckDB CLI already supports markdown table output via `.mode markdown`, eliminating the need for COPY TO markdown functionality.
 
