@@ -108,7 +108,7 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
     
     if (result->options.extract_metadata) {
         names.emplace_back("metadata");
-        return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+        return_types.emplace_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
     }
     
     if (result->options.include_stats) {
@@ -164,26 +164,7 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context,
             // Set metadata if requested
             if (bind_data.options.extract_metadata) {
                 auto metadata = markdown_utils::ExtractMetadata(content);
-                
-                // Convert to JSON string
-                string json_str = "{";
-                bool first = true;
-                if (!metadata.title.empty()) {
-                    json_str += "\"title\":\"" + metadata.title + "\"";
-                    first = false;
-                }
-                if (!metadata.description.empty()) {
-                    if (!first) json_str += ",";
-                    json_str += "\"description\":\"" + metadata.description + "\"";
-                    first = false;
-                }
-                if (!metadata.date.empty()) {
-                    if (!first) json_str += ",";
-                    json_str += "\"date\":\"" + metadata.date + "\"";
-                }
-                json_str += "}";
-                
-                output.data[column_idx].SetValue(output_idx, Value(json_str));
+                output.data[column_idx].SetValue(output_idx, markdown_utils::MetadataToMap(metadata));
                 column_idx++;
             }
             
@@ -242,8 +223,28 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
     for (const auto &file_path : result->files) {
         try {
             string content = ReadMarkdownFile(context, file_path, result->options);
+
+            // Add frontmatter as a special section if extract_metadata is enabled
+            if (result->options.extract_metadata) {
+                string frontmatter = markdown_utils::ExtractRawFrontmatter(content);
+                if (!frontmatter.empty()) {
+                    markdown_utils::MarkdownSection fm_section;
+                    fm_section.id = "frontmatter";
+                    fm_section.level = 0;  // Special level for frontmatter
+                    fm_section.title = file_path + "|frontmatter";
+                    fm_section.content = frontmatter;
+                    fm_section.parent_id = "";
+                    fm_section.position = 0;
+                    fm_section.start_line = 1;
+                    // Calculate end line from frontmatter content
+                    fm_section.end_line = static_cast<idx_t>(
+                        std::count(frontmatter.begin(), frontmatter.end(), '\n') + 2);  // +2 for --- delimiters
+                    result->all_sections.push_back(fm_section);
+                }
+            }
+
             auto sections = ProcessSections(content, result->options);
-            
+
             // Add file path to each section for later retrieval
             for (auto &section : sections) {
                 section.title = file_path + "|" + section.title; // Store file path temporarily

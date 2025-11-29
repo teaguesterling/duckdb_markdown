@@ -118,23 +118,39 @@ MarkdownMetadata ExtractMetadata(const std::string& markdown_str) {
                     value = value.substr(1, value.length() - 2);
                 }
                 
-                if (key == "title") {
-                    metadata.title = value;
-                } else if (key == "description") {
-                    metadata.description = value;
-                } else if (key == "date") {
-                    metadata.date = value;
-                } else if (key == "tags") {
-                    // Basic tag parsing (should handle arrays properly)
-                    metadata.tags.push_back(value);
-                } else {
-                    metadata.custom_fields[key] = value;
-                }
+                // Store all fields in custom_fields map
+                // No special handling - let users access any field uniformly
+                metadata.custom_fields[key] = value;
             }
         }
     }
     
     return metadata;
+}
+
+std::string ExtractRawFrontmatter(const std::string& markdown_str) {
+    // Check for YAML frontmatter
+    std::regex frontmatter_regex(R"(^---\n([\s\S]*?)\n---)");
+    std::smatch match;
+
+    if (std::regex_search(markdown_str, match, frontmatter_regex)) {
+        return match[1].str();
+    }
+
+    return "";
+}
+
+Value MetadataToMap(const MarkdownMetadata& metadata) {
+    // Build lists of keys and values for MAP construction
+    vector<Value> keys;
+    vector<Value> values;
+
+    for (const auto& field : metadata.custom_fields) {
+        keys.push_back(Value(field.first));
+        values.push_back(Value(field.second));
+    }
+
+    return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(keys), std::move(values));
 }
 
 MarkdownStats CalculateStats(const std::string& markdown_str) {

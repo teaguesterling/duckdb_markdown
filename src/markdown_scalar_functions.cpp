@@ -258,49 +258,39 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 
 void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
     auto markdown_type = MarkdownTypes::MarkdownType();
-    
-    // md_extract_metadata function - extract frontmatter as JSON
-    ScalarFunction md_extract_metadata_fun("md_extract_metadata", {markdown_type}, LogicalType::VARCHAR,
+
+    // md_extract_metadata function - extract frontmatter as MAP(VARCHAR, VARCHAR)
+    auto map_type = LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR);
+    ScalarFunction md_extract_metadata_fun("md_extract_metadata", {markdown_type}, map_type,
         [](DataChunk &args, ExpressionState &state, Vector &result) {
-            UnaryExecutor::Execute<string_t, string_t>(
-                args.data[0], result, args.size(),
-                [&](string_t md_str) -> string_t {
-                    if (md_str.GetSize() == 0) {
-                        return StringVector::AddString(result, "{}", 2);
-                    }
-                    
-                    try {
-                        auto metadata = markdown_utils::ExtractMetadata(md_str.GetString());
-                        
-                        // Convert metadata to JSON string
-                        std::string json_str = "{";
-                        bool first = true;
-                        
-                        if (!metadata.title.empty()) {
-                            json_str += "\"title\":\"" + metadata.title + "\"";
-                            first = false;
-                        }
-                        
-                        if (!metadata.description.empty()) {
-                            if (!first) json_str += ",";
-                            json_str += "\"description\":\"" + metadata.description + "\"";
-                            first = false;
-                        }
-                        
-                        if (!metadata.date.empty()) {
-                            if (!first) json_str += ",";
-                            json_str += "\"date\":\"" + metadata.date + "\"";
-                        }
-                        
-                        json_str += "}";
-                        
-                        return StringVector::AddString(result, json_str.c_str(), json_str.length());
-                    } catch (const std::exception& e) {
-                        return StringVector::AddString(result, "{}", 2);
-                    }
-                });
+            auto &input = args.data[0];
+            auto count = args.size();
+
+            auto empty_map = Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR,
+                                         vector<Value>(), vector<Value>());
+
+            for (idx_t i = 0; i < count; i++) {
+                auto md_value = input.GetValue(i);
+                if (md_value.IsNull()) {
+                    result.SetValue(i, empty_map);
+                    continue;
+                }
+
+                auto md_str = md_value.ToString();
+                if (md_str.empty()) {
+                    result.SetValue(i, empty_map);
+                    continue;
+                }
+
+                try {
+                    auto metadata = markdown_utils::ExtractMetadata(md_str);
+                    result.SetValue(i, markdown_utils::MetadataToMap(metadata));
+                } catch (const std::exception& e) {
+                    result.SetValue(i, empty_map);
+                }
+            }
         });
-    
+
     loader.RegisterFunction(md_extract_metadata_fun);
 }
 

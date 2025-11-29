@@ -64,6 +64,13 @@ std::string MarkdownToText(const std::string& markdown_str);
 // Extract frontmatter metadata
 MarkdownMetadata ExtractMetadata(const std::string& markdown_str);
 
+// Extract raw frontmatter YAML content (without --- delimiters)
+// Returns empty string if no frontmatter found
+std::string ExtractRawFrontmatter(const std::string& markdown_str);
+
+// Convert metadata to DuckDB MAP value
+Value MetadataToMap(const MarkdownMetadata& metadata);
+
 // Calculate document statistics
 MarkdownStats CalculateStats(const std::string& markdown_str);
 
