@@ -6,11 +6,17 @@
 #include <sstream>
 #include <unordered_map>
 #include <map>
+#include <iostream>
+#include <iomanip>
 
 // Include actual Markdown parser headers
 #include <cmark-gfm.h>
 #include <cmark-gfm-extension_api.h>
 #include <cmark-gfm-core-extensions.h>
+
+// Include HTML parser
+#include <lexbor/html/html.h>
+#include <lexbor/dom/dom.h>
 
 namespace duckdb {
 
@@ -73,23 +79,296 @@ std::string MarkdownToText(const std::string& markdown_str) {
     if (markdown_str.empty()) {
         return "";
     }
-    
+
     // Parse the markdown document
     cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
     cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
     cmark_node *doc = cmark_parser_finish(parser);
-    
+
     // Render as plain text
     char *text = cmark_render_plaintext(doc, CMARK_OPT_DEFAULT, 0);
-    
+
     std::string result(text);
-    
+
     // Clean up
     free(text);
     cmark_node_free(doc);
     cmark_parser_free(parser);
-    
+
     return result;
+}
+
+// Helper function to extract text content from a lexbor node
+static std::string ExtractText(lxb_dom_node_t* node) {
+    if (node == nullptr) {
+        return "";
+    }
+
+    // Use lexbor's built-in text content function
+    size_t text_len = 0;
+    lxb_char_t* text = lxb_dom_node_text_content(node, &text_len);
+
+    if (text == nullptr || text_len == 0) {
+        return "";
+    }
+
+    std::string result(reinterpret_cast<const char*>(text), text_len);
+
+    // Free the allocated text (lexbor allocates memory that we need to free)
+    lxb_dom_document_destroy_text(lxb_dom_interface_document(node->owner_document), text);
+
+    return result;
+}
+
+// UTF-8 safe trim function (StringUtil::Trim is NOT UTF-8 aware)
+static void TrimUTF8(std::string& str) {
+    // Trim leading ASCII whitespace
+    while (!str.empty() && (str.front() == ' ' || str.front() == '\t' || str.front() == '\n' || str.front() == '\r')) {
+        str.erase(0, 1);
+    }
+    // Trim trailing ASCII whitespace
+    while (!str.empty() && (str.back() == ' ' || str.back() == '\t' || str.back() == '\n' || str.back() == '\r')) {
+        str.pop_back();
+    }
+}
+
+// Helper function to convert HTML entity to actual character
+static std::string DecodeHTMLEntities(const std::string& str) {
+    std::string result = str;
+
+    // Common HTML entities
+    StringUtil::Replace(result, "&lt;", "<");
+    StringUtil::Replace(result, "&gt;", ">");
+    StringUtil::Replace(result, "&amp;", "&");
+    StringUtil::Replace(result, "&quot;", "\"");
+    StringUtil::Replace(result, "&apos;", "'");
+    StringUtil::Replace(result, "&#39;", "'");
+
+    return result;
+}
+
+// Forward declaration for recursive conversion
+static std::string ConvertNodeToMarkdown(lxb_dom_node_t* node, int list_depth = 0, int list_item_num = 0);
+
+// Convert children nodes to markdown
+static std::string ConvertChildrenToMarkdown(lxb_dom_node_t* node, int list_depth = 0) {
+    std::string result;
+
+    if (node == nullptr) {
+        return result;
+    }
+
+    // Iterate through child nodes
+    lxb_dom_node_t* child = node->first_child;
+    while (child != nullptr) {
+        result += ConvertNodeToMarkdown(child, list_depth);
+        child = child->next;
+    }
+
+    return result;
+}
+
+// Helper to get attribute value from lexbor element
+static std::string GetAttribute(lxb_dom_element_t* element, const char* attr_name) {
+    lxb_dom_attr_t* attr = lxb_dom_element_attr_by_name(element,
+        reinterpret_cast<const lxb_char_t*>(attr_name), strlen(attr_name));
+
+    if (attr == nullptr || attr->value == nullptr) {
+        return "";
+    }
+
+    size_t value_len = 0;
+    const lxb_char_t* value = lxb_dom_attr_value(attr, &value_len);
+
+    if (value == nullptr || value_len == 0) {
+        return "";
+    }
+
+    return std::string(reinterpret_cast<const char*>(value), value_len);
+}
+
+// Main conversion function for a single node
+static std::string ConvertNodeToMarkdown(lxb_dom_node_t* node, int list_depth, int list_item_num) {
+    if (node == nullptr) {
+        return "";
+    }
+
+    // Handle text nodes
+    if (node->type == LXB_DOM_NODE_TYPE_TEXT) {
+        lxb_dom_character_data_t* char_data = lxb_dom_interface_character_data(node);
+        if (char_data != nullptr && char_data->data.data != nullptr && char_data->data.length > 0) {
+            // Create string from raw UTF-8 bytes
+            return std::string(reinterpret_cast<const char*>(char_data->data.data), char_data->data.length);
+        }
+        return "";
+    }
+
+    // Only process element nodes
+    if (node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
+        return "";
+    }
+
+    lxb_dom_element_t* element = lxb_dom_interface_element(node);
+    lxb_tag_id_t tag_id = element->node.local_name;
+    std::string result;
+
+    switch (tag_id) {
+        case LXB_TAG_H1:
+            return "# " + ConvertChildrenToMarkdown(node) + "\n";
+        case LXB_TAG_H2:
+            return "## " + ConvertChildrenToMarkdown(node) + "\n";
+        case LXB_TAG_H3:
+            return "### " + ConvertChildrenToMarkdown(node) + "\n";
+        case LXB_TAG_H4:
+            return "#### " + ConvertChildrenToMarkdown(node) + "\n";
+        case LXB_TAG_H5:
+            return "##### " + ConvertChildrenToMarkdown(node) + "\n";
+        case LXB_TAG_H6:
+            return "###### " + ConvertChildrenToMarkdown(node) + "\n";
+
+        case LXB_TAG_P:
+            result = ConvertChildrenToMarkdown(node);
+            // Trim whitespace (UTF-8 safe)
+            TrimUTF8(result);
+            if (!result.empty()) {
+                return result + "\n";
+            }
+            return "";
+
+        case LXB_TAG_STRONG:
+        case LXB_TAG_B:
+            return "**" + ConvertChildrenToMarkdown(node) + "**";
+
+        case LXB_TAG_EM:
+        case LXB_TAG_I:
+            return "*" + ConvertChildrenToMarkdown(node) + "*";
+
+        case LXB_TAG_CODE: {
+            std::string code = ExtractText(node);
+            return "`" + code + "`";
+        }
+
+        case LXB_TAG_A: {
+            std::string href = GetAttribute(element, "href");
+            std::string text = ConvertChildrenToMarkdown(node);
+            return "[" + text + "](" + href + ")";
+        }
+
+        case LXB_TAG_IMG: {
+            std::string src = GetAttribute(element, "src");
+            std::string alt = GetAttribute(element, "alt");
+            return "![" + alt + "](" + src + ")";
+        }
+
+        case LXB_TAG_UL: {
+            std::string list_result;
+            lxb_dom_node_t* child = node->first_child;
+            while (child != nullptr) {
+                if (child->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+                    lxb_dom_element_t* child_elem = lxb_dom_interface_element(child);
+                    if (child_elem->node.local_name == LXB_TAG_LI) {
+                        std::string item = ConvertChildrenToMarkdown(child, list_depth + 1);
+                        TrimUTF8(item);
+                        list_result += "- " + item + "\n";
+                    }
+                }
+                child = child->next;
+            }
+            return list_result;
+        }
+
+        case LXB_TAG_OL: {
+            std::string list_result;
+            int item_num = 1;
+            lxb_dom_node_t* child = node->first_child;
+            while (child != nullptr) {
+                if (child->type == LXB_DOM_NODE_TYPE_ELEMENT) {
+                    lxb_dom_element_t* child_elem = lxb_dom_interface_element(child);
+                    if (child_elem->node.local_name == LXB_TAG_LI) {
+                        std::string item = ConvertChildrenToMarkdown(child, list_depth + 1);
+                        TrimUTF8(item);
+                        list_result += std::to_string(item_num++) + ". " + item + "\n";
+                    }
+                }
+                child = child->next;
+            }
+            return list_result;
+        }
+
+        case LXB_TAG_LI:
+            // LI elements are handled by their parent UL/OL
+            return ConvertChildrenToMarkdown(node, list_depth);
+
+        case LXB_TAG_BLOCKQUOTE: {
+            std::string quote = ConvertChildrenToMarkdown(node);
+            TrimUTF8(quote);
+            return "> " + quote + "\n";
+        }
+
+        case LXB_TAG_HR:
+            return "---\n";
+
+        case LXB_TAG_BR:
+            return "\n";
+
+        case LXB_TAG_DIV:
+        case LXB_TAG_SPAN:
+        case LXB_TAG_HTML:
+        case LXB_TAG_BODY:
+        case LXB_TAG_HEAD:
+            // Pass through container elements
+            return ConvertChildrenToMarkdown(node, list_depth);
+
+        default:
+            // For unsupported tags, just extract text content
+            return ConvertChildrenToMarkdown(node, list_depth);
+    }
+}
+
+std::string HTMLToMarkdown(const std::string& html_str) {
+    if (html_str.empty()) {
+        return "";
+    }
+
+    // Decode HTML entities first
+    std::string decoded_html = DecodeHTMLEntities(html_str);
+
+    // Create and initialize lexbor HTML document
+    lxb_html_document_t* document = lxb_html_document_create();
+    if (document == nullptr) {
+        throw InternalException("Failed to create HTML document");
+    }
+
+    // Parse HTML
+    lxb_status_t status = lxb_html_document_parse(document,
+        reinterpret_cast<const lxb_char_t*>(decoded_html.c_str()),
+        decoded_html.length());
+
+    if (status != LXB_STATUS_OK) {
+        lxb_html_document_destroy(document);
+        throw InternalException("Failed to parse HTML");
+    }
+
+    // Get the root node and convert to markdown
+    lxb_dom_node_t* root = lxb_dom_interface_node(lxb_html_document_body_element(document));
+    if (root == nullptr) {
+        // If no body, try the document element
+        root = lxb_dom_interface_node(document);
+    }
+
+    std::string markdown = ConvertNodeToMarkdown(root);
+
+    // Clean up
+    lxb_html_document_destroy(document);
+
+    // Post-process: remove excessive newlines
+    std::regex multiple_newlines(R"(\n{3,})");
+    markdown = std::regex_replace(markdown, multiple_newlines, "\n\n");
+
+    // Trim leading and trailing whitespace (UTF-8 safe)
+    TrimUTF8(markdown);
+
+    return markdown;
 }
 
 MarkdownMetadata ExtractMetadata(const std::string& markdown_str) {
