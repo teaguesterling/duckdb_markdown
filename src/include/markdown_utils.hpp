@@ -68,6 +68,10 @@ MarkdownMetadata ExtractMetadata(const std::string& markdown_str);
 // Returns empty string if no frontmatter found
 std::string ExtractRawFrontmatter(const std::string& markdown_str);
 
+// Strip frontmatter from markdown content, returning only the body
+// This is needed because cmark-gfm doesn't understand YAML frontmatter
+std::string StripFrontmatter(const std::string& markdown_str);
+
 // Convert metadata to DuckDB MAP value
 Value MetadataToMap(const MarkdownMetadata& metadata);
 

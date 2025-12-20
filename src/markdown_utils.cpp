@@ -140,6 +140,14 @@ std::string ExtractRawFrontmatter(const std::string& markdown_str) {
     return "";
 }
 
+std::string StripFrontmatter(const std::string& markdown_str) {
+    // Match frontmatter block including trailing newlines
+    std::regex frontmatter_regex(R"(^---\n[\s\S]*?\n---\n*)");
+
+    // Remove frontmatter and return the rest
+    return std::regex_replace(markdown_str, frontmatter_regex, "");
+}
+
 Value MetadataToMap(const MarkdownMetadata& metadata) {
     // Build lists of keys and values for MAP construction
     vector<Value> keys;

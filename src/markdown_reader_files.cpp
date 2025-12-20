@@ -205,11 +205,15 @@ string MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &fi
 // Section Processing
 //===--------------------------------------------------------------------===//
 
-vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const string &content, 
+vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const string &content,
                                                                        const MarkdownReadOptions &options) {
-    return markdown_utils::ParseSections(content, 
-                                       options.min_level, 
-                                       options.max_level, 
+    // Strip frontmatter before parsing - cmark-gfm doesn't understand YAML frontmatter
+    // and will incorrectly interpret --- as setext heading underlines
+    string body = markdown_utils::StripFrontmatter(content);
+
+    return markdown_utils::ParseSections(body,
+                                       options.min_level,
+                                       options.max_level,
                                        options.include_content);
 }
 
