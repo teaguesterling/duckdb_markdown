@@ -397,36 +397,19 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
         section.start_line = cmark_node_get_start_line(heading);
         section.end_line = cmark_node_get_end_line(heading);
         
-        // Extract heading text using RAII iterator
-        struct TextIterRAII {
-            cmark_iter *iter = nullptr;
-            
-            TextIterRAII(cmark_node *node) {
-                iter = cmark_iter_new(node);
-                if (!iter) throw std::runtime_error("Failed to create text iterator");
-            }
-            
-            ~TextIterRAII() {
-                if (iter) cmark_iter_free(iter);
-            }
-            
-            TextIterRAII(const TextIterRAII&) = delete;
-            TextIterRAII& operator=(const TextIterRAII&) = delete;
-        };
-        
-        TextIterRAII text_iter(heading);
+        // Extract heading text by rendering to plain text
+        // This handles all inline elements: code, emphasis, strong, links, etc.
+        char *rendered_title = cmark_render_plaintext(heading, CMARK_OPT_DEFAULT, 0);
         std::string title_text;
-        
-        while ((ev_type = cmark_iter_next(text_iter.iter)) != CMARK_EVENT_DONE) {
-            cmark_node *text_node = cmark_iter_get_node(text_iter.iter);
-            if (cmark_node_get_type(text_node) == CMARK_NODE_TEXT) {
-                const char *text = cmark_node_get_literal(text_node);
-                if (text) {
-                    title_text += text;
-                }
+        if (rendered_title) {
+            title_text = rendered_title;
+            free(rendered_title);
+            // Remove trailing newline that cmark adds
+            while (!title_text.empty() && (title_text.back() == '\n' || title_text.back() == '\r')) {
+                title_text.pop_back();
             }
         }
-        
+
         section.title = title_text;
         
         // Generate stable ID
@@ -435,11 +418,13 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
         section.id = id_counts[base_id] > 1 ? 
             base_id + "-" + std::to_string(id_counts[base_id] - 1) : base_id;
         
-        // Find parent section
+        // Find parent section and build section path
         section.parent_id = "";
+        section.section_path = section.id;
         for (int j = static_cast<int>(sections.size()) - 1; j >= 0; --j) {
             if (sections[j].level < section.level) {
                 section.parent_id = sections[j].id;
+                section.section_path = sections[j].section_path + "/" + section.id;
                 break;
             }
         }

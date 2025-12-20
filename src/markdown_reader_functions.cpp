@@ -230,6 +230,7 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
                 if (!frontmatter.empty()) {
                     markdown_utils::MarkdownSection fm_section;
                     fm_section.id = "frontmatter";
+                    fm_section.section_path = "frontmatter";
                     fm_section.level = 0;  // Special level for frontmatter
                     fm_section.title = file_path + "|frontmatter";
                     fm_section.content = frontmatter;
@@ -264,7 +265,10 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
     
     names.emplace_back("section_id");
     return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
-    
+
+    names.emplace_back("section_path");
+    return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+
     names.emplace_back("level");
     return_types.emplace_back(LogicalType(LogicalTypeId::INTEGER));
     
@@ -319,6 +323,8 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context,
         }
         
         output.data[column_idx].SetValue(output_idx, Value(section.id));
+        column_idx++;
+        output.data[column_idx].SetValue(output_idx, Value(section.section_path));
         column_idx++;
         output.data[column_idx].SetValue(output_idx, Value(section.level));
         column_idx++;

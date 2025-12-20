@@ -24,13 +24,14 @@ enum class MarkdownFlavor {
 
 struct MarkdownSection {
     std::string id;              // Stable section identifier
+    std::string section_path;    // Full hierarchical path (e.g., "parent/child/grandchild")
     int level;                   // Heading level (1-6)
     std::string title;           // Heading text
     std::string content;         // Section content (including subsections)
     std::string parent_id;       // Parent section ID (empty for top-level)
-    idx_t position;                // Position within parent
-    idx_t start_line;           // Starting line number
-    idx_t end_line;             // Ending line number
+    idx_t position;              // Position within parent
+    idx_t start_line;            // Starting line number
+    idx_t end_line;              // Ending line number
 };
 
 struct MarkdownMetadata {
