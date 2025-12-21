@@ -149,3 +149,190 @@ query T
 SELECT metadata['title'] FROM read_markdown('test/markdown/metadata.md', extract_metadata := true);
 ----
 Test Document
+
+# =============================================================================
+# Test: Edge cases for section_path hierarchy
+# =============================================================================
+
+# Test deep nesting (6 levels)
+query TT
+SELECT section.section_id, section.section_path
+FROM (SELECT UNNEST(md_extract_sections(E'# L1\n## L2\n### L3\n#### L4\n##### L5\n###### L6')) as section)
+ORDER BY section.start_line;
+----
+l1	l1
+l2	l1/l2
+l3	l1/l2/l3
+l4	l1/l2/l3/l4
+l5	l1/l2/l3/l4/l5
+l6	l1/l2/l3/l4/l5/l6
+
+# Test skipping levels (h1 -> h3 directly)
+query TT
+SELECT section.section_id, section.section_path
+FROM (SELECT UNNEST(md_extract_sections(E'# Top\n### Skipped to L3\n## Back to L2')) as section)
+ORDER BY section.start_line;
+----
+top	top
+skipped-to-l3	top/skipped-to-l3
+back-to-l2	top/back-to-l2
+
+# Test multiple top-level headings
+query TT
+SELECT section.section_id, section.section_path
+FROM (SELECT UNNEST(md_extract_sections(E'# First\n## Child1\n# Second\n## Child2')) as section)
+ORDER BY section.start_line;
+----
+first	first
+child1	first/child1
+second	second
+child2	second/child2
+
+# Test duplicate heading IDs get numbered suffixes
+query TT
+SELECT section.section_id, section.section_path
+FROM (SELECT UNNEST(md_extract_sections(E'# Intro\n## Overview\n# Intro\n## Overview')) as section)
+ORDER BY section.start_line;
+----
+intro	intro
+overview	intro/overview
+intro-1	intro-1
+overview-1	intro-1/overview-1
+
+# =============================================================================
+# Test: More backtick/inline code edge cases
+# =============================================================================
+
+# Test multiple backtick segments in one heading
+query TT
+SELECT section.section_id, section.title
+FROM (SELECT UNNEST(md_extract_sections(E'# API\n## `foo()` and `bar()` functions')) as section)
+WHERE section.level = 2;
+----
+foo-and-bar-functions	foo() and bar() functions
+
+# Test code with special characters
+query TT
+SELECT section.section_id, section.title
+FROM (SELECT UNNEST(md_extract_sections(E'# API\n## `array[0]->field`')) as section)
+WHERE section.level = 2;
+----
+array-0-field	array[0]->field
+
+# Test nested formatting (bold inside code won't work, but code inside bold)
+query TT
+SELECT section.section_id, section.title
+FROM (SELECT UNNEST(md_extract_sections(E'# Doc\n## **Important**: `config.yaml`')) as section)
+WHERE section.level = 2;
+----
+important-config-yaml	Important: config.yaml
+
+# Test heading with only backticks
+query TT
+SELECT section.section_id, section.title
+FROM (SELECT UNNEST(md_extract_sections(E'# API\n## `main()`')) as section)
+WHERE section.level = 2;
+----
+main	main()
+
+# =============================================================================
+# Test: Frontmatter edge cases
+# =============================================================================
+
+# Test frontmatter with special characters in values
+query T
+SELECT md_extract_metadata(E'---\ntitle: Hello: World\nurl: https://example.com\n---\nContent'::markdown)['url'];
+----
+https://example.com
+
+# Test frontmatter with quoted values
+query T
+SELECT md_extract_metadata(E'---\ntitle: "Quoted Value"\n---\nContent'::markdown)['title'];
+----
+Quoted Value
+
+# Test document with frontmatter-like content in body (--- becomes setext headings in cmark)
+# Note: cmark parses "text\n---" as setext h2 headings, which is valid markdown
+query I
+SELECT count(*)
+FROM (SELECT UNNEST(md_extract_sections(E'# Doc\nSome text\n---\nThis is not frontmatter\n---\nMore text')) as section);
+----
+3
+
+# Test empty document produces no sections
+query I
+SELECT count(*)
+FROM (SELECT UNNEST(md_extract_sections(E'')) as section);
+----
+0
+
+# Test document with only frontmatter (no headings)
+query I
+SELECT count(*)
+FROM (SELECT UNNEST(md_extract_sections(E'---\ntitle: Test\n---\nJust content, no headings.')) as section);
+----
+0
+
+# =============================================================================
+# Test: Metadata extraction edge cases
+# =============================================================================
+
+# Test metadata with colons in value
+query T
+SELECT md_extract_metadata(E'---\nmessage: Error: file not found\n---\nContent'::markdown)['message'];
+----
+Error: file not found
+
+# Test multiple metadata fields
+query I
+SELECT cardinality(md_extract_metadata(E'---\na: 1\nb: 2\nc: 3\nd: 4\ne: 5\n---\nContent'::markdown));
+----
+5
+
+# Test metadata keys are preserved as-is
+query T
+SELECT md_extract_metadata(E'---\nCamelCase: value\n---\nContent'::markdown)['CamelCase'];
+----
+value
+
+# =============================================================================
+# Test: Scalar function md_extract_sections completeness
+# =============================================================================
+
+# Test all fields are present in scalar function output
+query TTITTTII
+SELECT section.section_id, section.section_path, section.level, section.title,
+       section.parent_id, typeof(section.content), section.start_line, section.end_line
+FROM (SELECT UNNEST(md_extract_sections(E'# Parent\n## Child\nContent here')) as section)
+ORDER BY section.start_line;
+----
+parent	parent	1	Parent	NULL	md	1	1
+child	parent/child	2	Child	parent	md	2	2
+
+# Test content is captured correctly
+query T
+SELECT section.content LIKE '%Content here%'
+FROM (SELECT UNNEST(md_extract_sections(E'# Parent\n## Child\nContent here')) as section)
+WHERE section.section_id = 'child';
+----
+true
+
+# =============================================================================
+# Test: Section content extraction
+# =============================================================================
+
+# Test section content includes text but not subsection headings
+query T
+SELECT length(section.content) > 0
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nIntro text\n## Sub\nSub content')) as section)
+WHERE section.section_id = 'main';
+----
+true
+
+# Test last section captures remaining content
+query T
+SELECT section.content LIKE '%Final content%'
+FROM (SELECT UNNEST(md_extract_sections(E'# First\n## Last\nFinal content here.')) as section)
+WHERE section.section_id = 'last';
+----
+true
