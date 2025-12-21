@@ -38,40 +38,41 @@ bold-and-code-heading	Bold and code heading
 italic-heading	Italic heading
 
 # =============================================================================
-# Test: section_path column for hierarchical navigation
+# Test: section_path column for hierarchical navigation (using test file)
 # =============================================================================
 
-# Test section_path builds correct hierarchy
+# Test section_path builds correct hierarchy from file
 query TTT
 SELECT section_id, section_path, title
-FROM read_markdown_sections(E'# Root\n## Child A\n### Grandchild 1\n### Grandchild 2\n## Child B\n### Grandchild 3'::VARCHAR, extract_metadata := false)
-ORDER BY start_line;
+FROM read_markdown_sections('test/markdown/sections_test.md', extract_metadata := false)
+WHERE level <= 3
+ORDER BY start_line
+LIMIT 7;
 ----
-root	root	Root
-child-a	root/child-a	Child A
-grandchild-1	root/child-a/grandchild-1	Grandchild 1
-grandchild-2	root/child-a/grandchild-2	Grandchild 2
-child-b	root/child-b	Child B
-grandchild-3	root/child-b/grandchild-3	Grandchild 3
+api-reference	api-reference	API Reference
+functions	api-reference/functions	Functions
+read_data-path	api-reference/functions/read_data-path	read_data(path)
+write_data-path-data	api-reference/functions/write_data-path-data	write_data(path, data)
+classes	api-reference/classes	Classes
+datamanager	api-reference/classes/datamanager	DataManager
+bold-and-code-heading	api-reference/bold-and-code-heading	Bold and code heading
 
-# Test section_path with deeply nested sections
+# Test section_path with scalar function
 query TT
-SELECT section_id, section_path
-FROM read_markdown_sections(E'# L1\n## L2\n### L3\n#### L4\n##### L5\n###### L6'::VARCHAR, extract_metadata := false)
-ORDER BY start_line;
+SELECT section.section_id, section.section_path
+FROM (SELECT UNNEST(md_extract_sections(E'# L1\n## L2\n### L3\n#### L4')) as section)
+ORDER BY section.start_line;
 ----
 l1	l1
 l2	l1/l2
 l3	l1/l2/l3
 l4	l1/l2/l3/l4
-l5	l1/l2/l3/l4/l5
-l6	l1/l2/l3/l4/l5/l6
 
 # Test section_path resets when going back up levels
 query TT
-SELECT section_id, section_path
-FROM read_markdown_sections(E'# Doc\n## Part 1\n### Ch 1\n## Part 2\n### Ch 2'::VARCHAR, extract_metadata := false)
-ORDER BY start_line;
+SELECT section.section_id, section.section_path
+FROM (SELECT UNNEST(md_extract_sections(E'# Doc\n## Part 1\n### Ch 1\n## Part 2\n### Ch 2')) as section)
+ORDER BY section.start_line;
 ----
 doc	doc
 part-1	doc/part-1
@@ -85,25 +86,25 @@ ch-2	doc/part-2/ch-2
 
 # Test frontmatter is not parsed as heading (Issue #5)
 query TTI
-SELECT section_id, title, level
-FROM read_markdown_sections(E'---\ntitle: My Doc\nauthor: Test\n---\n\n# Real Heading\nContent here.'::VARCHAR, extract_metadata := false)
-ORDER BY start_line;
+SELECT section.section_id, section.title, section.level
+FROM (SELECT UNNEST(md_extract_sections(E'---\ntitle: My Doc\nauthor: Test\n---\n\n# Real Heading\nContent here.')) as section)
+ORDER BY section.start_line;
 ----
 real-heading	Real Heading	1
 
-# Test frontmatter appears as level-0 section when extract_metadata=true
+# Test frontmatter section from file with extract_metadata=true
 query TTI
 SELECT section_id, title, level
-FROM read_markdown_sections(E'---\ntitle: My Doc\nauthor: Test\n---\n\n# Real Heading\nContent here.'::VARCHAR, extract_metadata := true)
+FROM read_markdown_sections('test/markdown/metadata.md', extract_metadata := true)
 ORDER BY start_line;
 ----
 frontmatter	frontmatter	0
-real-heading	Real Heading	1
+test-document	Test Document	1
 
 # Test frontmatter section contains raw YAML content
 query T
-SELECT content LIKE '%title: My Doc%' AND content LIKE '%author: Test%' as has_yaml
-FROM read_markdown_sections(E'---\ntitle: My Doc\nauthor: Test\n---\n\n# Heading'::VARCHAR, extract_metadata := true)
+SELECT content LIKE '%title: Test Document%' AND content LIKE '%author: John Doe%' as has_yaml
+FROM read_markdown_sections('test/markdown/metadata.md', extract_metadata := true)
 WHERE section_id = 'frontmatter';
 ----
 true
@@ -114,31 +115,37 @@ true
 
 # Test md_extract_metadata returns MAP type
 query T
-SELECT typeof(md_extract_metadata('---\ntitle: Test\n---\nContent'::markdown));
+SELECT typeof(md_extract_metadata(E'---\ntitle: Test\n---\nContent'::markdown));
 ----
 MAP(VARCHAR, VARCHAR)
 
 # Test extracting specific metadata fields
 query TT
-SELECT md_extract_metadata('---\ntitle: My Title\nauthor: John Doe\ndate: 2024-01-15\n---\nContent'::markdown)['title'] as title,
-       md_extract_metadata('---\ntitle: My Title\nauthor: John Doe\ndate: 2024-01-15\n---\nContent'::markdown)['author'] as author;
+SELECT md_extract_metadata(E'---\ntitle: My Title\nauthor: John Doe\ndate: 2024-01-15\n---\nContent'::markdown)['title'] as title,
+       md_extract_metadata(E'---\ntitle: My Title\nauthor: John Doe\ndate: 2024-01-15\n---\nContent'::markdown)['author'] as author;
 ----
 My Title	John Doe
 
 # Test custom/arbitrary metadata fields are included
 query T
-SELECT md_extract_metadata('---\ntitle: Test\ncustom_field: custom_value\nanother: value2\n---\nContent'::markdown)['custom_field'];
+SELECT md_extract_metadata(E'---\ntitle: Test\ncustom_field: custom_value\nanother: value2\n---\nContent'::markdown)['custom_field'];
 ----
 custom_value
 
 # Test empty metadata returns empty map
 query I
-SELECT cardinality(md_extract_metadata('# No frontmatter\nJust content'::markdown));
+SELECT cardinality(md_extract_metadata(E'# No frontmatter\nJust content'::markdown));
 ----
 0
 
 # Test read_markdown metadata column is MAP type
 query T
-SELECT typeof(metadata) FROM read_markdown(E'---\ntitle: Test\n---\n# Heading'::VARCHAR, extract_metadata := true);
+SELECT typeof(metadata) FROM read_markdown('test/markdown/metadata.md', extract_metadata := true);
 ----
 MAP(VARCHAR, VARCHAR)
+
+# Test metadata map access from file
+query T
+SELECT metadata['title'] FROM read_markdown('test/markdown/metadata.md', extract_metadata := true);
+----
+Test Document

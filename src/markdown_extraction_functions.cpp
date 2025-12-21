@@ -183,6 +183,7 @@ static void SectionExtractionFunction(DataChunk &args, ExpressionState &state, V
         for (const auto &section : sections) {
             child_list_t<Value> struct_children;
             struct_children.push_back({"section_id", Value(section.id)});
+            struct_children.push_back({"section_path", Value(section.section_path)});
             struct_children.push_back({"level", Value::INTEGER(section.level)});
             struct_children.push_back({"title", Value(section.title)});
             struct_children.push_back({"content", Value(section.content)});
@@ -191,7 +192,7 @@ static void SectionExtractionFunction(DataChunk &args, ExpressionState &state, V
             struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
             struct_values.push_back(Value::STRUCT(struct_children));
         }
-        
+
         if (struct_values.empty()) {
             // For empty lists, we need to specify the type - use a simple empty list
             result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
@@ -217,6 +218,7 @@ static void SectionExtractionFunctionWithLevels(DataChunk &args, ExpressionState
         for (const auto &section : sections) {
             child_list_t<Value> struct_children;
             struct_children.push_back({"section_id", Value(section.id)});
+            struct_children.push_back({"section_path", Value(section.section_path)});
             struct_children.push_back({"level", Value::INTEGER(section.level)});
             struct_children.push_back({"title", Value(section.title)});
             struct_children.push_back({"content", Value(section.content)});
@@ -225,7 +227,7 @@ static void SectionExtractionFunctionWithLevels(DataChunk &args, ExpressionState
             struct_children.push_back({"end_line", Value::BIGINT(static_cast<int64_t>(section.end_line))});
             struct_values.push_back(Value::STRUCT(struct_children));
         }
-        
+
         if (struct_values.empty()) {
             // For empty lists, we need to specify the type - use a simple empty list
             result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
@@ -420,6 +422,7 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
     // Register md_extract_sections scalar function
     LogicalType section_struct_type = LogicalType::STRUCT({
         {"section_id", LogicalType::VARCHAR},
+        {"section_path", LogicalType::VARCHAR},
         {"level", LogicalType::INTEGER},
         {"title", LogicalType::VARCHAR},
         {"content", MarkdownTypes::MarkdownType()},

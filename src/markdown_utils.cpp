@@ -323,17 +323,20 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str,
     return code_blocks;
 }
 
-std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str, 
-                                            int32_t min_level, 
+std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
+                                            int32_t min_level,
                                             int32_t max_level,
                                             bool include_content) {
     std::vector<MarkdownSection> sections;
     std::unordered_map<std::string, int32_t> id_counts;
-    
+
     if (markdown_str.empty()) {
         return sections;
     }
-    
+
+    // Strip frontmatter before parsing - cmark-gfm interprets --- as setext heading
+    std::string content = StripFrontmatter(markdown_str);
+
     // RAII wrapper for cmark resources
     struct CMarkRAII {
         cmark_parser *parser = nullptr;
@@ -357,9 +360,9 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
     };
     
     CMarkRAII cmark;
-    
-    // Parse with cmark-gfm
-    cmark_parser_feed(cmark.parser, markdown_str.c_str(), markdown_str.length());
+
+    // Parse with cmark-gfm (using content with frontmatter stripped)
+    cmark_parser_feed(cmark.parser, content.c_str(), content.length());
     cmark.doc = cmark_parser_finish(cmark.parser);
     if (!cmark.doc) {
         throw std::runtime_error("Failed to parse markdown document");
