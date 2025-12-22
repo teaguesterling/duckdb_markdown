@@ -209,30 +209,71 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
     
     loader.RegisterFunction(md_stats_fun);
 
-    // Register md_extract_section function
+    // Register md_extract_section function (2-arg version: uses minimal mode)
     ScalarFunction md_extract_section("md_extract_section", {markdown_type, LogicalType::VARCHAR}, markdown_type,
         [](DataChunk &args, ExpressionState &state, Vector &result) {
             auto &markdown_vector = args.data[0];
             auto &section_id_vector = args.data[1];
-            
+
             BinaryExecutor::Execute<string_t, string_t, string_t>(
                 markdown_vector, section_id_vector, result, args.size(),
                 [&](string_t markdown_str, string_t section_id_str) -> string_t {
                     if (markdown_str.GetSize() == 0 || section_id_str.GetSize() == 0) {
                         return string_t();
                     }
-                    
+
                     try {
                         const std::string section_content = markdown_utils::ExtractSection(
-                            markdown_str.GetString(), section_id_str.GetString());
+                            markdown_str.GetString(), section_id_str.GetString(), false);
                         return StringVector::AddString(result, section_content);
                     } catch (const std::exception &e) {
                         return string_t();
                     }
                 });
         });
-    
+
     loader.RegisterFunction(md_extract_section);
+
+    // Register md_extract_section overload with include_subsections parameter
+    // include_subsections=true uses 'full' mode, false uses 'minimal' mode
+    ScalarFunction md_extract_section_with_subsections("md_extract_section",
+        {markdown_type, LogicalType::VARCHAR, LogicalType::BOOLEAN}, markdown_type,
+        [](DataChunk &args, ExpressionState &state, Vector &result) {
+            auto &markdown_vector = args.data[0];
+            auto &section_id_vector = args.data[1];
+            auto &include_subsections_vector = args.data[2];
+
+            for (idx_t i = 0; i < args.size(); i++) {
+                auto md_value = markdown_vector.GetValue(i);
+                auto section_id_value = section_id_vector.GetValue(i);
+                auto include_subsections_value = include_subsections_vector.GetValue(i);
+
+                if (md_value.IsNull() || section_id_value.IsNull()) {
+                    result.SetValue(i, Value());
+                    continue;
+                }
+
+                std::string markdown_str = md_value.ToString();
+                std::string section_id_str = section_id_value.ToString();
+                bool include_subsections = include_subsections_value.IsNull() ? false :
+                                           include_subsections_value.GetValue<bool>();
+
+                if (markdown_str.empty() || section_id_str.empty()) {
+                    result.SetValue(i, Value(""));
+                    continue;
+                }
+
+                try {
+                    const std::string section_content = markdown_utils::ExtractSection(
+                        markdown_str, section_id_str, include_subsections);
+                    result.SetValue(i, Value(section_content));
+                } catch (const std::exception &e) {
+                    result.SetValue(i, Value(""));
+                }
+            }
+        });
+
+    loader.RegisterFunction(md_extract_section_with_subsections);
 
     // Register md_section_breadcrumb function
     ScalarFunction md_section_breadcrumb("md_section_breadcrumb", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::VARCHAR,

@@ -232,28 +232,33 @@ std::string GenerateSectionId(const std::string& heading_text,
     return id;
 }
 
-std::vector<MarkdownSection> ParseSections(const std::string& markdown_str, 
-                                          int32_t min_level, 
+std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
+                                          int32_t min_level,
                                           int32_t max_level,
-                                          bool include_content) {
+                                          bool include_content,
+                                          const std::string& content_mode,
+                                          idx_t max_content_length) {
     // Use the new cmark-based ExtractSections function instead of regex parsing
-    return ExtractSections(markdown_str, min_level, max_level, include_content);
+    return ExtractSections(markdown_str, min_level, max_level, include_content, content_mode, max_content_length);
 }
 
 std::vector<MarkdownSection> ExtractHeadings(const std::string& markdown_str, int32_t max_level) {
-    return ParseSections(markdown_str, 1, max_level, false);
+    return ParseSections(markdown_str, 1, max_level, false, "minimal", 0);
 }
 
-std::string ExtractSection(const std::string& markdown_str, const std::string& section_id) {
-    // Parse sections with content
-    auto sections = ParseSections(markdown_str, 1, 6, true);
-    
+std::string ExtractSection(const std::string& markdown_str,
+                          const std::string& section_id,
+                          bool include_subsections) {
+    // Parse sections with content using appropriate mode
+    const std::string mode = include_subsections ? "full" : "minimal";
+    auto sections = ParseSections(markdown_str, 1, 6, true, mode, 0);
+
     for (const auto& section : sections) {
         if (section.id == section_id) {
             return section.content;
         }
     }
-    
+
     return ""; // Section not found
 }
 
@@ -326,7 +331,9 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str,
 std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
                                             int32_t min_level,
                                             int32_t max_level,
-                                            bool include_content) {
+                                            bool include_content,
+                                            const std::string& content_mode,
+                                            idx_t max_content_length) {
     std::vector<MarkdownSection> sections;
     std::unordered_map<std::string, int32_t> id_counts;
 
@@ -337,28 +344,31 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
     // Strip frontmatter before parsing - cmark-gfm interprets --- as setext heading
     std::string content = StripFrontmatter(markdown_str);
 
+    // Default max_content_length for smart mode
+    idx_t effective_max_length = max_content_length > 0 ? max_content_length : 2000;
+
     // RAII wrapper for cmark resources
     struct CMarkRAII {
         cmark_parser *parser = nullptr;
         cmark_node *doc = nullptr;
         cmark_iter *iter = nullptr;
-        
+
         CMarkRAII() {
             parser = cmark_parser_new(CMARK_OPT_DEFAULT);
             if (!parser) throw std::runtime_error("Failed to create cmark parser");
         }
-        
+
         ~CMarkRAII() {
             if (iter) cmark_iter_free(iter);
             if (doc) cmark_node_free(doc);
             if (parser) cmark_parser_free(parser);
         }
-        
+
         // Delete copy constructor and assignment
         CMarkRAII(const CMarkRAII&) = delete;
         CMarkRAII& operator=(const CMarkRAII&) = delete;
     };
-    
+
     CMarkRAII cmark;
 
     // Parse with cmark-gfm (using content with frontmatter stripped)
@@ -367,39 +377,45 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
     if (!cmark.doc) {
         throw std::runtime_error("Failed to parse markdown document");
     }
-    
+
     // Walk the AST looking for heading nodes
     cmark.iter = cmark_iter_new(cmark.doc);
     if (!cmark.iter) {
         throw std::runtime_error("Failed to create cmark iterator");
     }
-    
+
     cmark_event_type ev_type;
     std::vector<cmark_node*> heading_nodes;
-    
-    // First pass: collect all heading nodes
+    std::vector<int32_t> heading_levels;  // Track levels for all headings
+
+    // First pass: collect all heading nodes (including those outside min/max range for reference)
     while ((ev_type = cmark_iter_next(cmark.iter)) != CMARK_EVENT_DONE) {
         cmark_node *cur = cmark_iter_get_node(cmark.iter);
-        
+
         if (ev_type == CMARK_EVENT_ENTER && cmark_node_get_type(cur) == CMARK_NODE_HEADING) {
             int32_t level = cmark_node_get_heading_level(cur);
-            
-            if (level >= min_level && level <= max_level) {
-                heading_nodes.push_back(cur);
-            }
+            heading_nodes.push_back(cur);
+            heading_levels.push_back(level);
         }
     }
-    
+
     // Second pass: process headings and extract content
     for (size_t i = 0; i < heading_nodes.size(); ++i) {
         cmark_node *heading = heading_nodes[i];
+        int32_t level = heading_levels[i];
+
+        // Skip headings outside the requested range
+        if (level < min_level || level > max_level) {
+            continue;
+        }
+
         MarkdownSection section;
-        
+
         // Get heading properties
-        section.level = cmark_node_get_heading_level(heading);
+        section.level = level;
         section.start_line = cmark_node_get_start_line(heading);
         section.end_line = cmark_node_get_end_line(heading);
-        
+
         // Extract heading text by rendering to plain text
         // This handles all inline elements: code, emphasis, strong, links, etc.
         char *rendered_title = cmark_render_plaintext(heading, CMARK_OPT_DEFAULT, 0);
@@ -414,13 +430,13 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
         }
 
         section.title = title_text;
-        
+
         // Generate stable ID
         std::string base_id = GenerateSectionId(section.title, id_counts);
         id_counts[base_id]++;
-        section.id = id_counts[base_id] > 1 ? 
+        section.id = id_counts[base_id] > 1 ?
             base_id + "-" + std::to_string(id_counts[base_id] - 1) : base_id;
-        
+
         // Find parent section and build section path
         section.parent_id = "";
         section.section_path = section.id;
@@ -431,48 +447,124 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
                 break;
             }
         }
-        
+
         // Extract content if requested
         if (include_content) {
-            // Find the end position for content extraction
-            cmark_node *next_heading = nullptr;
-            if (i + 1 < heading_nodes.size()) {
-                next_heading = heading_nodes[i + 1];
-                // Only use it if it's at the same or higher level
-                if (cmark_node_get_heading_level(next_heading) <= section.level) {
-                    section.end_line = cmark_node_get_start_line(next_heading) - 1;
+            // Find the stopping point based on content_mode
+            cmark_node *stop_node = nullptr;
+            idx_t stop_line = 0;
+
+            for (size_t j = i + 1; j < heading_nodes.size(); ++j) {
+                int32_t next_level = heading_levels[j];
+
+                if (content_mode == "minimal") {
+                    // Stop at ANY next heading
+                    stop_node = heading_nodes[j];
+                    stop_line = cmark_node_get_start_line(stop_node) - 1;
+                    break;
+                } else {
+                    // "full" or "smart": stop at same-or-higher level heading
+                    if (next_level <= section.level) {
+                        stop_node = heading_nodes[j];
+                        stop_line = cmark_node_get_start_line(stop_node) - 1;
+                        break;
+                    }
                 }
             }
-            
-            // Extract content by walking through all nodes between this heading and the next
+
+            // Update end_line based on stop point
+            if (stop_line > 0) {
+                section.end_line = stop_line;
+            }
+
+            // Extract content by walking through nodes
             std::string content_text;
+            std::string immediate_content;  // Content before first subsection (for smart mode)
+            std::vector<std::pair<std::string, idx_t>> subsection_refs;  // (id, line_count) for smart mode
+            bool found_subsection = false;
             cmark_node *current = cmark_node_next(heading);
-            
-            while (current && current != next_heading) {
+
+            while (current) {
                 cmark_node_type node_type = cmark_node_get_type(current);
-                
-                // Skip headings at same or higher level
-                if (node_type == CMARK_NODE_HEADING && 
-                    cmark_node_get_heading_level(current) <= section.level) {
+
+                // Check stopping conditions based on mode
+                if (node_type == CMARK_NODE_HEADING) {
+                    int32_t current_level = cmark_node_get_heading_level(current);
+
+                    if (content_mode == "minimal") {
+                        // Stop at any heading
+                        break;
+                    } else if (current_level <= section.level) {
+                        // Stop at same-or-higher level for full/smart
+                        break;
+                    } else if (content_mode == "smart" && !found_subsection) {
+                        // First subsection in smart mode - save immediate content
+                        immediate_content = content_text;
+                        found_subsection = true;
+                    }
+                }
+
+                if (current == stop_node) {
                     break;
                 }
-                
+
                 // Convert this node back to markdown text
                 char *rendered = cmark_render_commonmark(current, CMARK_OPT_DEFAULT, 0);
                 if (rendered) {
                     content_text += rendered;
                     free(rendered);
                 }
-                
+
                 current = cmark_node_next(current);
             }
-            
-            section.content = content_text;
+
+            // Apply smart mode truncation if needed
+            if (content_mode == "smart" && content_text.length() > effective_max_length) {
+                // Build smart content with subsection references
+                std::string smart_content;
+
+                if (!immediate_content.empty()) {
+                    smart_content = immediate_content;
+                } else {
+                    // Truncate at max_length with indicator
+                    smart_content = content_text.substr(0, effective_max_length);
+                    // Find last complete word/line
+                    size_t last_newline = smart_content.rfind('\n');
+                    if (last_newline != std::string::npos && last_newline > effective_max_length / 2) {
+                        smart_content = smart_content.substr(0, last_newline);
+                    }
+                }
+
+                // Add subsection references
+                for (size_t j = i + 1; j < heading_nodes.size(); ++j) {
+                    int32_t sub_level = heading_levels[j];
+                    if (sub_level <= section.level) {
+                        break;  // Reached end of subsections
+                    }
+                    if (sub_level == section.level + 1) {
+                        // Direct child subsection
+                        char *sub_title = cmark_render_plaintext(heading_nodes[j], CMARK_OPT_DEFAULT, 0);
+                        if (sub_title) {
+                            std::string sub_title_str = sub_title;
+                            free(sub_title);
+                            while (!sub_title_str.empty() && (sub_title_str.back() == '\n' || sub_title_str.back() == '\r')) {
+                                sub_title_str.pop_back();
+                            }
+                            std::string sub_id = GenerateSectionId(sub_title_str, id_counts);
+                            smart_content += "\n... (see #" + sub_id + ")\n";
+                        }
+                    }
+                }
+
+                section.content = smart_content;
+            } else {
+                section.content = content_text;
+            }
         }
-        
+
         sections.push_back(section);
     }
-    
+
     return sections;
 }
 

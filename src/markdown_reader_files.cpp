@@ -211,10 +211,19 @@ vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const st
     // and will incorrectly interpret --- as setext heading underlines
     string body = markdown_utils::StripFrontmatter(content);
 
+    // Calculate effective max_level based on max_depth
+    // max_depth is relative to min_level (depth 1 = only min_level headings)
+    int32_t effective_max_level = std::min(
+        options.max_level,
+        options.min_level + options.max_depth - 1
+    );
+
     return markdown_utils::ParseSections(body,
-                                       options.min_level,
-                                       options.max_level,
-                                       options.include_content);
+                                        options.min_level,
+                                        effective_max_level,
+                                        options.include_content,
+                                        options.content_mode,
+                                        options.max_content_length);
 }
 
 //===--------------------------------------------------------------------===//

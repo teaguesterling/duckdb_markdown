@@ -83,18 +83,28 @@ MarkdownStats CalculateStats(const std::string& markdown_str);
 // Section Parsing
 //===--------------------------------------------------------------------===//
 
+// Content mode for section extraction
+// - "minimal": Content between heading and NEXT heading (any level)
+// - "full": Content until next same-or-higher level heading (includes subsections)
+// - "smart": Adaptive - include small subsections, summarize large ones
+
 // Parse document into sections
-std::vector<MarkdownSection> ParseSections(const std::string& markdown_str, 
-                                          int32_t min_level = 1, 
+std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
+                                          int32_t min_level = 1,
                                           int32_t max_level = 6,
-                                          bool include_content = true);
+                                          bool include_content = true,
+                                          const std::string& content_mode = "minimal",
+                                          idx_t max_content_length = 0);
 
 // Generate stable section IDs
-std::string GenerateSectionId(const std::string& heading_text, 
+std::string GenerateSectionId(const std::string& heading_text,
                              const std::unordered_map<std::string, int32_t>& id_counts);
 
 // Extract specific section by ID
-std::string ExtractSection(const std::string& markdown_str, const std::string& section_id);
+// include_subsections: true = 'full' mode, false = 'minimal' mode
+std::string ExtractSection(const std::string& markdown_str,
+                          const std::string& section_id,
+                          bool include_subsections = false);
 
 //===--------------------------------------------------------------------===//
 // Content Extraction
@@ -136,10 +146,12 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str,
                                         const std::string& language_filter = "");
 
 // Extract sections using cmark-gfm AST (replacement for regex-based ParseSections)
-std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str, 
-                                            int32_t min_level = 1, 
+std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
+                                            int32_t min_level = 1,
                                             int32_t max_level = 6,
-                                            bool include_content = true);
+                                            bool include_content = true,
+                                            const std::string& content_mode = "minimal",
+                                            idx_t max_content_length = 0);
 
 // Extract links
 std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str);

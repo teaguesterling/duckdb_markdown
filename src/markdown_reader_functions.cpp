@@ -66,6 +66,19 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
             options.include_filepath = BooleanValue::Get(kv.second);
         } else if (kv.first == "content_as_varchar") {
             options.content_as_varchar = BooleanValue::Get(kv.second);
+        } else if (kv.first == "content_mode") {
+            auto mode = StringValue::Get(kv.second);
+            if (mode != "minimal" && mode != "full" && mode != "smart") {
+                throw InvalidInputException("content_mode must be 'minimal', 'full', or 'smart', got: %s", mode);
+            }
+            options.content_mode = mode;
+        } else if (kv.first == "max_depth") {
+            options.max_depth = IntegerValue::Get(kv.second);
+            if (options.max_depth < 1 || options.max_depth > 6) {
+                throw InvalidInputException("max_depth must be between 1 and 6");
+            }
+        } else if (kv.first == "max_content_length") {
+            options.max_content_length = UBigIntValue::Get(kv.second);
         } else {
             throw InvalidInputException("Unknown parameter for read_markdown: %s", kv.first);
         }
@@ -202,23 +215,86 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context,
 // Section Reader Implementation
 //===--------------------------------------------------------------------===//
 
+// Helper to parse section fragment from path (e.g., "doc.md#section-id" -> {"doc.md", "section-id"})
+static std::pair<string, string> ParseFragmentFromPath(const string &path) {
+    auto hash_pos = path.find('#');
+    if (hash_pos != string::npos && hash_pos > 0) {
+        return {path.substr(0, hash_pos), path.substr(hash_pos + 1)};
+    }
+    return {path, ""};
+}
+
+// Helper to check if a section matches the filter (exact match or is a child of the filter)
+static bool SectionMatchesFilter(const string &section_id, const string &section_path, const string &filter) {
+    if (filter.empty()) {
+        return true;
+    }
+    // Exact match on section_id
+    if (section_id == filter) {
+        return true;
+    }
+    // Check if section_path starts with filter (is a child of the filtered section)
+    if (StringUtil::StartsWith(section_path, filter + "/")) {
+        return true;
+    }
+    // Check if section_path contains the filter as a component
+    if (section_path.find("/" + filter + "/") != string::npos ||
+        section_path.find("/" + filter) == section_path.length() - filter.length() - 1) {
+        return true;
+    }
+    return false;
+}
+
 unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext &context,
                                                                   TableFunctionBindInput &input,
                                                                   vector<LogicalType> &return_types,
                                                                   vector<string> &names) {
     auto result = make_uniq<MarkdownReadSectionBindData>();
-    
+
     // Parse the file path parameter
     if (input.inputs.empty()) {
         throw InvalidInputException("read_markdown_sections requires at least one argument");
     }
-    
-    auto &path_param = input.inputs[0];
-    result->files = GetFiles(context, path_param, false);
-    
-    // Parse options
+
+    // Parse options first to get any section_filter from parameters
     ParseMarkdownOptions(input, result->options);
-    
+
+    // Handle fragment syntax in file paths
+    auto &path_param = input.inputs[0];
+    string global_fragment;
+
+    if (path_param.type().id() == LogicalTypeId::VARCHAR) {
+        // Single path - check for fragment
+        auto [clean_path, fragment] = ParseFragmentFromPath(path_param.ToString());
+        if (!fragment.empty()) {
+            global_fragment = fragment;
+            result->files = GetFiles(context, Value(clean_path), false);
+        } else {
+            result->files = GetFiles(context, path_param, false);
+        }
+    } else if (path_param.type().id() == LogicalTypeId::LIST) {
+        // List of paths - check each for fragments
+        auto &file_list = ListValue::GetChildren(path_param);
+        vector<Value> clean_paths;
+        for (auto &file_value : file_list) {
+            if (file_value.type().id() == LogicalTypeId::VARCHAR) {
+                auto [clean_path, fragment] = ParseFragmentFromPath(file_value.ToString());
+                clean_paths.push_back(Value(clean_path));
+                if (!fragment.empty() && global_fragment.empty()) {
+                    global_fragment = fragment;  // Use first fragment found
+                }
+            }
+        }
+        result->files = GetFiles(context, Value::LIST(LogicalType::VARCHAR, clean_paths), false);
+    } else {
+        result->files = GetFiles(context, path_param, false);
+    }
+
+    // Use fragment as section_filter if not already set via parameter
+    if (result->options.section_filter.empty() && !global_fragment.empty()) {
+        result->options.section_filter = global_fragment;
+    }
+
     // Pre-process all files to extract sections
     for (const auto &file_path : result->files) {
         try {
@@ -247,7 +323,12 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
             auto sections = ProcessSections(content, result->options);
 
             // Add file path to each section for later retrieval
+            // Apply section_filter if specified
             for (auto &section : sections) {
+                // Check if section matches filter
+                if (!SectionMatchesFilter(section.id, section.section_path, result->options.section_filter)) {
+                    continue;
+                }
                 section.title = file_path + "|" + section.title; // Store file path temporarily
                 result->all_sections.push_back(section);
             }
@@ -379,6 +460,11 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
     read_sections_func.named_parameters["include_empty_sections"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_sections_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
     read_sections_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
+
+    // Content mode options (Issue #8)
+    read_sections_func.named_parameters["content_mode"] = LogicalType(LogicalTypeId::VARCHAR);
+    read_sections_func.named_parameters["max_depth"] = LogicalType(LogicalTypeId::INTEGER);
+    read_sections_func.named_parameters["max_content_length"] = LogicalType(LogicalTypeId::UBIGINT);
 
     loader.RegisterFunction(read_sections_func);
 }

@@ -49,8 +49,14 @@ public:
         bool include_content = true;            // Whether to include section content
         int32_t min_level = 1;                  // Minimum heading level
         int32_t max_level = 6;                  // Maximum heading level
-        bool include_empty_sections = false;   // Whether to include sections without content
-        
+        bool include_empty_sections = false;    // Whether to include sections without content
+
+        // Content mode options (Issue #8)
+        std::string content_mode = "minimal";   // "minimal", "full", or "smart"
+        int32_t max_depth = 6;                  // Maximum depth to include (relative to min_level)
+        idx_t max_content_length = 0;           // For smart mode (0 = auto, uses 2000 chars)
+        std::string section_filter = "";        // Fragment filter (#section-id)
+
         // User-specified column types
         vector<string> column_names;            // User-provided column names
         vector<LogicalType> column_types;       // User-provided column types

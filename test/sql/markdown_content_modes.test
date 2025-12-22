@@ -1,0 +1,267 @@
+# name: test/sql/markdown_content_modes.test
+# description: Test content_mode parameter for section extraction (Issue #8)
+# group: [markdown]
+
+require markdown
+
+# =============================================================================
+# Test: Default content_mode is 'minimal'
+# =============================================================================
+
+# Test default mode (minimal) - content stops at any next heading
+query TT
+SELECT section.section_id, section.content LIKE '%Intro content%' AND section.content NOT LIKE '%Sub1 content%' as minimal_works
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nIntro content\n## Sub1\nSub1 content\n### Deep\nDeep content\n## Sub2\nSub2 content')) as section)
+WHERE section.section_id = 'main';
+----
+main	true
+
+# Test minimal mode - each section only has its immediate content
+query TT
+SELECT section.section_id, length(section.content) > 0 as has_content
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nIntro\n## Sub1\nContent1\n## Sub2\nContent2')) as section)
+ORDER BY section.start_line;
+----
+main	true
+sub1	true
+sub2	true
+
+# =============================================================================
+# Test: content_mode='minimal' explicitly
+# =============================================================================
+
+# Test read_markdown_sections with minimal mode
+query TT
+SELECT section_id, content LIKE '%Documentation for the API%' AND content NOT LIKE '%Available functions%' as minimal_content
+FROM read_markdown_sections('test/markdown/sections_test.md', content_mode := 'minimal')
+WHERE section_id = 'api-reference'
+LIMIT 1;
+----
+api-reference	true
+
+# Test scalar function with minimal mode (4-arg version)
+query TT
+SELECT section.section_id, section.content NOT LIKE '%Sub content%' as minimal
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nMain content\n## Sub\nSub content', 1, 6, 'minimal')) as section)
+WHERE section.section_id = 'main';
+----
+main	true
+
+# =============================================================================
+# Test: content_mode='full'
+# =============================================================================
+
+# Test full mode includes all subsection content
+query TT
+SELECT section.section_id, section.content LIKE '%Sub content%' as includes_sub
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nMain content\n## Sub\nSub content', 1, 6, 'full')) as section)
+WHERE section.section_id = 'main';
+----
+main	true
+
+# Test full mode includes deeply nested content
+query TT
+SELECT section.section_id, section.content LIKE '%Deep content%' as includes_deep
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nIntro\n## Sub\nSub text\n### Deep\nDeep content', 1, 6, 'full')) as section)
+WHERE section.section_id = 'main';
+----
+main	true
+
+# Test full mode via read_markdown_sections
+query TT
+SELECT section_id, content LIKE '%Functions%' as includes_subsections
+FROM read_markdown_sections('test/markdown/sections_test.md', content_mode := 'full')
+WHERE section_id = 'api-reference'
+LIMIT 1;
+----
+api-reference	true
+
+# =============================================================================
+# Test: content_mode='smart'
+# =============================================================================
+
+# Test smart mode with small content includes everything (like full)
+query TT
+SELECT section.section_id, section.content LIKE '%Sub content%' as includes_sub
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nMain content\n## Sub\nSub content', 1, 6, 'smart')) as section)
+WHERE section.section_id = 'main';
+----
+main	true
+
+# Test smart mode via table function
+query TT
+SELECT section_id, length(content) > 0 as has_content
+FROM read_markdown_sections('test/markdown/sections_test.md', content_mode := 'smart')
+WHERE section_id = 'api-reference'
+LIMIT 1;
+----
+api-reference	true
+
+# =============================================================================
+# Test: md_extract_section with include_subsections parameter
+# =============================================================================
+
+# Test 2-arg version (default: minimal, no subsections)
+query T
+SELECT md_extract_section(E'# Main\nMain content\n## Sub\nSub content'::markdown, 'main') NOT LIKE '%Sub content%';
+----
+true
+
+# Test 3-arg version with include_subsections=false
+query T
+SELECT md_extract_section(E'# Main\nMain content\n## Sub\nSub content'::markdown, 'main', false) NOT LIKE '%Sub content%';
+----
+true
+
+# Test 3-arg version with include_subsections=true (full mode)
+query T
+SELECT md_extract_section(E'# Main\nMain content\n## Sub\nSub content'::markdown, 'main', true) LIKE '%Sub content%';
+----
+true
+
+# Test extracting nested section with subsections
+query T
+SELECT md_extract_section(E'# Doc\n## Parent\nParent content\n### Child\nChild content\n## Sibling\nSibling'::markdown, 'parent', true) LIKE '%Child content%';
+----
+true
+
+# Test extracting nested section without subsections
+query T
+SELECT md_extract_section(E'# Doc\n## Parent\nParent content\n### Child\nChild content\n## Sibling\nSibling'::markdown, 'parent', false) NOT LIKE '%Child content%';
+----
+true
+
+# =============================================================================
+# Test: max_depth parameter
+# =============================================================================
+
+# Test max_depth limits section levels parsed
+query I
+SELECT count(*)
+FROM read_markdown_sections('test/markdown/sections_test.md', max_depth := 1);
+----
+1
+
+# Test max_depth=2 gets top level and one level of children
+query I
+SELECT count(*)
+FROM read_markdown_sections('test/markdown/sections_test.md', max_depth := 2)
+WHERE level <= 2;
+----
+5
+
+# Test max_depth with min_level offset
+query TI
+SELECT section_id, level
+FROM read_markdown_sections('test/markdown/sections_test.md', min_level := 2, max_depth := 1)
+ORDER BY start_line
+LIMIT 3;
+----
+functions	2
+classes	2
+bold-and-code-heading	2
+
+# =============================================================================
+# Test: Fragment syntax (file.md#section-id)
+# =============================================================================
+
+# Test fragment syntax filters to specific section and its descendants
+query TI
+SELECT section_id, count(*) OVER() as total_sections
+FROM read_markdown_sections('test/markdown/sections_test.md#functions')
+LIMIT 1;
+----
+functions	3
+
+# Test fragment syntax with content_mode
+query TT
+SELECT section_id, length(content) > 0 as has_content
+FROM read_markdown_sections('test/markdown/sections_test.md#functions', content_mode := 'full')
+LIMIT 1;
+----
+functions	true
+
+# Test fragment includes descendant sections
+query T
+SELECT section_id
+FROM read_markdown_sections('test/markdown/sections_test.md#api-reference')
+ORDER BY start_line
+LIMIT 3;
+----
+api-reference
+functions
+read_data-path
+
+# =============================================================================
+# Test: end_line consistency with content mode
+# =============================================================================
+
+# Test minimal mode end_line reflects section boundaries
+query TII
+SELECT section.section_id, section.start_line, section.end_line
+FROM (SELECT UNNEST(md_extract_sections(E'# H1\nLine2\n## H2\nLine4\n', 1, 6, 'minimal')) as section)
+ORDER BY section.start_line;
+----
+h1	1	2
+h2	3	3
+
+# Test full mode content includes subsections (end_line is heading position)
+query TT
+SELECT section.section_id, section.content LIKE '%Line4%' as has_full_content
+FROM (SELECT UNNEST(md_extract_sections(E'# H1\nLine2\n## H2\nLine4', 1, 6, 'full')) as section)
+WHERE section.section_id = 'h1';
+----
+h1	true
+
+# =============================================================================
+# Test: Backward compatibility
+# =============================================================================
+
+# Test explicit 'full' mode matches previous behavior
+query T
+SELECT section.content LIKE '%## Sub%' OR section.content LIKE '%Sub content%'
+FROM (SELECT UNNEST(md_extract_sections(E'# Main\nIntro\n## Sub\nSub content', 1, 6, 'full')) as section)
+WHERE section.section_id = 'main';
+----
+true
+
+# Test level filtering still works with content_mode
+query I
+SELECT count(*)
+FROM (SELECT UNNEST(md_extract_sections(E'# H1\n## H2\n### H3\n#### H4', 2, 3, 'minimal')) as section);
+----
+2
+
+# =============================================================================
+# Test: Edge cases
+# =============================================================================
+
+# Test empty document with content_mode
+query I
+SELECT count(*)
+FROM (SELECT UNNEST(md_extract_sections(E'', 1, 6, 'minimal')) as section);
+----
+0
+
+# Test single section (no subsections to include/exclude)
+query TT
+SELECT section.section_id, section.content LIKE '%Only content%'
+FROM (SELECT UNNEST(md_extract_sections(E'# Single\nOnly content here', 1, 6, 'minimal')) as section);
+----
+single	true
+
+# Test invalid content_mode falls back gracefully (treated as minimal)
+query I
+SELECT count(*)
+FROM (SELECT UNNEST(md_extract_sections(E'# H1\n## H2', 1, 6, 'invalid_mode')) as section);
+----
+2
+
+# Test content_mode with frontmatter
+query TI
+SELECT section.section_id, section.level
+FROM (SELECT UNNEST(md_extract_sections(E'---\ntitle: Test\n---\n\n# Main\n## Sub', 1, 6, 'minimal')) as section)
+ORDER BY section.start_line;
+----
+main	1
+sub	2

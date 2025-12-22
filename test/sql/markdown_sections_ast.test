@@ -97,13 +97,14 @@ WHERE section.title = 'First';
 ----
 First	true
 
-# Test line number accuracy
+# Test line number accuracy (with default 'minimal' content_mode)
+# end_line reflects content scope: minimal stops at next heading
 query TII
-SELECT section.title, section.start_line, section.end_line  
+SELECT section.title, section.start_line, section.end_line
 FROM (SELECT UNNEST(md_extract_sections(E'Line 1\n# Title on Line 2\nContent on line 3\nMore content\n\n## Sub on Line 6\nSub content')) as section)
 ORDER BY section.start_line;
 ----
-Title on Line 2	2	2
+Title on Line 2	2	5
 Sub on Line 6	6	6
 
 # Test interaction with other markdown elements (code blocks)
