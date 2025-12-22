@@ -106,18 +106,29 @@ Reads Markdown files and returns one row per file.
 Reads Markdown files and parses them into hierarchical sections.
 
 **Parameters:**
-- `files` (required) - File path, glob pattern, directory, or list of mixed patterns
+- `files` (required) - File path, glob pattern, directory, or list of mixed patterns. Supports fragment syntax: `'file.md#section-id'` to filter to a specific section and its descendants.
 - `include_content := true` - Include section content in output
 - `min_level := 1` - Minimum heading level to include (1-6)
 - `max_level := 6` - Maximum heading level to include (1-6)
+- `content_mode := 'minimal'` - Content extraction mode (see below)
+- `max_depth := 6` - Maximum depth relative to min_level (e.g., `max_depth := 2` with `min_level := 1` includes h1 and h2 only)
+- `max_content_length := 0` - Maximum content length for 'smart' mode (0 = auto, uses 2000 chars)
 - `include_empty_sections := false` - Include sections without content
 - `include_filepath := false` - Include file_path column in output
 - `extract_metadata := true` - Include frontmatter as a special section (level=0)
 - Plus all `read_markdown` parameters
 
-**Returns:** `(section_id VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or `(file_path VARCHAR, section_id VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` with `include_filepath := true`
+**Content Modes:**
+- `'minimal'` (default) - Content stops at ANY next heading. Each section contains only its immediate content, not subsections.
+- `'full'` - Content includes all subsections until next same-or-higher level heading. Use this for complete section extraction.
+- `'smart'` - Adaptive mode: includes small subsections fully, truncates large ones with references like `"... (see #subsection-id)"`.
 
-**Note:** When `extract_metadata := true`, YAML frontmatter is included as a special section with `level=0`, `section_id='frontmatter'`, and the raw YAML content (without `---` delimiters) as the content.
+**Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `include_filepath := true` adds `file_path VARCHAR` column.
+
+**Notes:**
+- When `extract_metadata := true`, YAML frontmatter is included as a special section with `level=0`, `section_id='frontmatter'`, and the raw YAML content (without `---` delimiters) as the content.
+- The `section_path` column provides hierarchical navigation paths like `"parent/child/grandchild"`.
+- Fragment syntax `'file.md#section-id'` returns the matching section and all its descendants.
 
 ### Content Extraction Functions
 
@@ -136,7 +147,8 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_valid(markdown)`** - Validate markdown content and return boolean
 - **`md_stats(markdown)`** - Get document statistics (word count, reading time, etc.)
 - **`md_extract_metadata(markdown)`** - Extract frontmatter metadata as `MAP(VARCHAR, VARCHAR)`
-- **`md_extract_section(markdown, section_id)`** - Extract specific section by ID
+- **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. With `include_subsections := true`, includes all nested content (full mode); default is minimal mode.
+- **`md_extract_sections(markdown, [min_level, max_level, content_mode])`** - Extract all sections as a list. Supports optional level filtering and content_mode ('minimal', 'full', 'smart').
 - **`md_section_breadcrumb(file_path, section_id)`** - Generate breadcrumb navigation for section
 - **`value_to_md(value)`** - Convert any value to markdown representation
 
@@ -163,10 +175,50 @@ SELECT
 FROM read_markdown('docs/**/*.md')
 WHERE cardinality(md_extract_metadata(content)) > 0;
 
--- Validate markdown content  
+-- Validate markdown content
 SELECT filename, md_valid(content::varchar) as is_valid
 FROM read_markdown('**/*.md')
 WHERE NOT md_valid(content::varchar);
+```
+
+### Content Mode Examples
+
+```sql
+-- Default 'minimal' mode: each section has only its immediate content
+SELECT section_id, title, length(content) as content_length
+FROM read_markdown_sections('docs/guide.md')
+WHERE level = 1;
+
+-- 'full' mode: sections include all nested subsections
+SELECT section_id, title, length(content) as content_length
+FROM read_markdown_sections('docs/guide.md', content_mode := 'full')
+WHERE level = 1;
+
+-- 'smart' mode: adaptive - includes small subsections, summarizes large ones
+SELECT section_id, title, content
+FROM read_markdown_sections('docs/guide.md', content_mode := 'smart')
+WHERE level = 1;
+
+-- Fragment syntax: get a specific section and its descendants
+SELECT section_id, title, level
+FROM read_markdown_sections('README.md#installation');
+
+-- Limit parsing depth: only top 2 levels
+SELECT section_id, level, title
+FROM read_markdown_sections('docs/**/*.md', max_depth := 2);
+
+-- Extract section with subsections using scalar function
+SELECT md_extract_section(content, 'api-reference', true) as full_section
+FROM read_markdown('docs/api.md');
+
+-- Extract section without subsections (minimal)
+SELECT md_extract_section(content, 'api-reference', false) as minimal_section
+FROM read_markdown('docs/api.md');
+
+-- Use section_path for hierarchical navigation
+SELECT section_path, title
+FROM read_markdown_sections('docs/**/*.md')
+WHERE section_path LIKE 'api-reference/%';
 ```
 
 ## Use Cases
@@ -306,19 +358,22 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.0.1):**
+**✅ Available (v1.1.0):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`) with full parameter support
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`)
-- Advanced section filtering and processing options (min/max level, content inclusion, etc.)
+- **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
+- **Fragment syntax** for filtering sections: `'file.md#section-id'`
+- **Section hierarchy** with `section_path` column for navigation
+- Advanced section filtering and processing options (min/max level, max_depth, content inclusion, etc.)
 - Frontmatter metadata as `MAP(VARCHAR, VARCHAR)` for easy field access
 - Replacement scan support for table-like syntax (`FROM '*.md'`)
 - MARKDOWN type with automatic VARCHAR casting
-- Cross-platform support (Linux, macOS, WebAssembly, Windows)  
+- Cross-platform support (Linux, macOS, WebAssembly, Windows)
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 218+ passing assertions
+- Full test suite with 490+ passing assertions
 
 **🗓️ Future Roadmap:**
 - Custom renderer integration for specialized markdown flavors
@@ -349,7 +404,7 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 218 passing assertions across 11 test files:
+Comprehensive test suite with 490+ passing assertions across 14 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
 - **Performance tests**: Large-scale document processing
