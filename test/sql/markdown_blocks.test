@@ -1,0 +1,152 @@
+# name: test/sql/markdown_blocks.test
+# description: Test read_markdown_blocks functionality and markdown_doc_block type
+# group: [markdown]
+
+require markdown
+
+# =============================================================================
+# Test: markdown_doc_block type exists
+# =============================================================================
+
+query I
+SELECT typeof({block_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{}, block_order: 1}::markdown_doc_block);
+----
+markdown_doc_block
+
+# =============================================================================
+# Test: Basic read_markdown_blocks from file (flattened output)
+# =============================================================================
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_basic.md');
+----
+4
+
+# =============================================================================
+# Test: Block types are correctly identified
+# =============================================================================
+
+query II
+SELECT block_type, level FROM read_markdown_blocks('test/data/blocks_basic.md') ORDER BY block_order;
+----
+heading	1
+paragraph	NULL
+code	NULL
+blockquote	1
+
+# =============================================================================
+# Test: Heading content extraction
+# =============================================================================
+
+query II
+SELECT block_type, content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
+----
+heading	Hello
+
+# =============================================================================
+# Test: Code block with language
+# =============================================================================
+
+query II
+SELECT content, attributes['language'] FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'code';
+----
+print("hello")	python
+
+# =============================================================================
+# Test: Frontmatter extraction
+# =============================================================================
+
+query III
+SELECT block_type, level, encoding FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE block_type = 'frontmatter';
+----
+frontmatter	0	yaml
+
+query I
+SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE block_type = 'frontmatter';
+----
+true
+
+# =============================================================================
+# Test: List extraction (JSON encoded)
+# =============================================================================
+
+query II
+SELECT block_type, encoding FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+----
+list	json
+
+query I
+SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+----
+false
+
+# =============================================================================
+# Test: Ordered list
+# =============================================================================
+
+query I
+SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_ordered_list.md') WHERE block_type = 'list';
+----
+true
+
+# =============================================================================
+# Test: Horizontal rule
+# =============================================================================
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_hr.md') WHERE block_type = 'hr';
+----
+1
+
+# =============================================================================
+# Test: Table extraction (JSON encoded)
+# =============================================================================
+
+query II
+SELECT block_type, encoding FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+----
+table	json
+
+query I
+SELECT content LIKE '%"headers"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+----
+true
+
+# Verify headers contain the correct values (Name, Age)
+query I
+SELECT content LIKE '%"Name"%' AND content LIKE '%"Age"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+----
+true
+
+# Verify data rows contain the correct values
+query I
+SELECT content LIKE '%"Alice"%' AND content LIKE '%"Bob"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+----
+true
+
+# =============================================================================
+# Test: Block order is sequential
+# =============================================================================
+
+query I
+SELECT string_agg(block_order::VARCHAR, ',' ORDER BY block_order) FROM read_markdown_blocks('test/data/blocks_basic.md');
+----
+1,2,3,4
+
+# =============================================================================
+# Test: include_filepath option
+# =============================================================================
+
+query I
+SELECT file_path LIKE '%blocks_basic.md' FROM read_markdown_blocks('test/data/blocks_basic.md', include_filepath := true) LIMIT 1;
+----
+true
+
+# =============================================================================
+# Test: All columns present
+# =============================================================================
+
+query IIIIII
+SELECT block_type, content IS NOT NULL, level, encoding, attributes IS NOT NULL, block_order FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
+----
+heading	true	1	text	true	1

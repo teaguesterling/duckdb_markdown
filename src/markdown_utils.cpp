@@ -568,6 +568,332 @@ std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
     return sections;
 }
 
+//===--------------------------------------------------------------------===//
+// Block-Level Document Parsing
+//===--------------------------------------------------------------------===//
+
+// Helper to render a node's content as plain text
+static std::string RenderNodeContent(cmark_node *node) {
+    char *text = cmark_render_plaintext(node, CMARK_OPT_DEFAULT, 0);
+    if (!text) return "";
+    std::string result(text);
+    free(text);
+    // Trim trailing newlines
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+        result.pop_back();
+    }
+    return result;
+}
+
+// Helper to get text content from inline children
+static std::string GetInlineText(cmark_node *node) {
+    std::string result;
+    cmark_node *child = cmark_node_first_child(node);
+    while (child) {
+        cmark_node_type type = cmark_node_get_type(child);
+        if (type == CMARK_NODE_TEXT || type == CMARK_NODE_CODE) {
+            const char *literal = cmark_node_get_literal(child);
+            if (literal) result += literal;
+        } else if (type == CMARK_NODE_SOFTBREAK) {
+            result += " ";
+        } else if (type == CMARK_NODE_LINEBREAK) {
+            result += "\n";
+        } else {
+            // Recursively get text from nested nodes
+            result += GetInlineText(child);
+        }
+        child = cmark_node_next(child);
+    }
+    return result;
+}
+
+std::vector<MarkdownBlock> ParseBlocks(const std::string& markdown_str) {
+    std::vector<MarkdownBlock> blocks;
+
+    if (markdown_str.empty()) {
+        return blocks;
+    }
+
+    int32_t block_order = 1;
+
+    // Check for frontmatter first
+    std::string frontmatter = ExtractRawFrontmatter(markdown_str);
+    if (!frontmatter.empty()) {
+        MarkdownBlock fm_block;
+        fm_block.block_type = "frontmatter";
+        fm_block.content = frontmatter;
+        fm_block.level = 0;
+        fm_block.encoding = "yaml";
+        fm_block.block_order = block_order++;
+        blocks.push_back(fm_block);
+    }
+
+    // Strip frontmatter before parsing with cmark
+    std::string body = StripFrontmatter(markdown_str);
+
+    // Parse with cmark-gfm (with extensions for tables)
+    cmark_gfm_core_extensions_ensure_registered();  // Must be called before finding extensions
+    cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+
+    // Enable GFM extensions
+    cmark_syntax_extension *table_ext = cmark_find_syntax_extension("table");
+    if (table_ext) {
+        cmark_parser_attach_syntax_extension(parser, table_ext);
+    }
+
+    cmark_parser_feed(parser, body.c_str(), body.length());
+    cmark_node *doc = cmark_parser_finish(parser);
+    cmark_parser_free(parser);
+
+    if (!doc) {
+        return blocks;
+    }
+
+    // Iterate through top-level children of the document
+    cmark_node *child = cmark_node_first_child(doc);
+
+    while (child) {
+        cmark_node_type node_type = cmark_node_get_type(child);
+        MarkdownBlock block;
+        block.encoding = "text";
+        block.level = -1;  // -1 = not applicable (will be NULL in output)
+        block.block_order = block_order++;
+
+        switch (node_type) {
+            case CMARK_NODE_HEADING: {
+                block.block_type = "heading";
+                block.level = cmark_node_get_heading_level(child);
+                block.content = GetInlineText(child);
+
+                // Generate ID from heading text
+                std::unordered_map<std::string, int32_t> id_counts;
+                std::string id = GenerateSectionId(block.content, id_counts);
+                block.attributes["id"] = id;
+                break;
+            }
+
+            case CMARK_NODE_PARAGRAPH: {
+                block.block_type = "paragraph";
+                // Render paragraph to markdown to preserve inline formatting
+                char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+                if (md) {
+                    block.content = md;
+                    free(md);
+                    // Trim trailing newlines
+                    while (!block.content.empty() && (block.content.back() == '\n' || block.content.back() == '\r')) {
+                        block.content.pop_back();
+                    }
+                }
+                break;
+            }
+
+            case CMARK_NODE_CODE_BLOCK: {
+                block.block_type = "code";
+                const char *literal = cmark_node_get_literal(child);
+                block.content = literal ? literal : "";
+                // Trim trailing newline from code content
+                while (!block.content.empty() && block.content.back() == '\n') {
+                    block.content.pop_back();
+                }
+                const char *info = cmark_node_get_fence_info(child);
+                if (info && strlen(info) > 0) {
+                    // Parse language from info string (first word)
+                    std::string info_str(info);
+                    size_t space_pos = info_str.find(' ');
+                    if (space_pos != std::string::npos) {
+                        block.attributes["language"] = info_str.substr(0, space_pos);
+                        block.attributes["info_string"] = info_str;
+                    } else {
+                        block.attributes["language"] = info_str;
+                    }
+                }
+                break;
+            }
+
+            case CMARK_NODE_BLOCK_QUOTE: {
+                block.block_type = "blockquote";
+                block.level = 1;  // Could calculate nesting depth
+                // Render blockquote content without the > prefix
+                char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+                if (md) {
+                    block.content = md;
+                    free(md);
+                    // Remove leading > and trim
+                    std::string result;
+                    std::istringstream iss(block.content);
+                    std::string line;
+                    while (std::getline(iss, line)) {
+                        // Remove leading "> " or ">"
+                        if (line.length() >= 2 && line[0] == '>' && line[1] == ' ') {
+                            result += line.substr(2) + "\n";
+                        } else if (line.length() >= 1 && line[0] == '>') {
+                            result += line.substr(1) + "\n";
+                        } else {
+                            result += line + "\n";
+                        }
+                    }
+                    // Trim trailing newlines
+                    while (!result.empty() && result.back() == '\n') {
+                        result.pop_back();
+                    }
+                    block.content = result;
+                }
+                break;
+            }
+
+            case CMARK_NODE_LIST: {
+                block.block_type = "list";
+                block.level = 1;
+                block.encoding = "json";
+
+                cmark_list_type list_type = cmark_node_get_list_type(child);
+                block.attributes["ordered"] = (list_type == CMARK_ORDERED_LIST) ? "true" : "false";
+
+                if (list_type == CMARK_ORDERED_LIST) {
+                    int start = cmark_node_get_list_start(child);
+                    block.attributes["start"] = std::to_string(start);
+                }
+
+                // Build JSON array of list items
+                std::string json = "[";
+                bool first = true;
+                cmark_node *item = cmark_node_first_child(child);
+                while (item) {
+                    if (cmark_node_get_type(item) == CMARK_NODE_ITEM) {
+                        if (!first) json += ", ";
+                        first = false;
+
+                        std::string item_text = RenderNodeContent(item);
+                        // Escape JSON special characters
+                        std::string escaped;
+                        for (char c : item_text) {
+                            switch (c) {
+                                case '"': escaped += "\\\""; break;
+                                case '\\': escaped += "\\\\"; break;
+                                case '\n': escaped += "\\n"; break;
+                                case '\r': escaped += "\\r"; break;
+                                case '\t': escaped += "\\t"; break;
+                                default: escaped += c;
+                            }
+                        }
+                        json += "\"" + escaped + "\"";
+                    }
+                    item = cmark_node_next(item);
+                }
+                json += "]";
+                block.content = json;
+                break;
+            }
+
+            case CMARK_NODE_THEMATIC_BREAK: {
+                block.block_type = "hr";
+                block.content = "";
+                break;
+            }
+
+            case CMARK_NODE_HTML_BLOCK: {
+                block.block_type = "html";
+                const char *literal = cmark_node_get_literal(child);
+                block.content = literal ? literal : "";
+                // Trim trailing newlines
+                while (!block.content.empty() && block.content.back() == '\n') {
+                    block.content.pop_back();
+                }
+                break;
+            }
+
+            default: {
+                // Handle table extension and other nodes
+                const char *type_string = cmark_node_get_type_string(child);
+                if (type_string && strcmp(type_string, "table") == 0) {
+                    block.block_type = "table";
+                    block.encoding = "json";
+
+                    // Build JSON representation of table
+                    std::string headers_json = "";
+                    std::string rows_json = "";
+                    bool is_first_row = true;
+                    bool first_data_row = true;
+
+                    // Get table rows - in GFM tables, first row is always the header
+                    // The table may have table_header and table_row children
+                    cmark_node *row = cmark_node_first_child(child);
+
+                    while (row) {
+                        const char *row_type = cmark_node_get_type_string(row);
+                        // Accept both table_row and table_header node types
+                        bool is_row_node = row_type && (strcmp(row_type, "table_row") == 0 ||
+                                                         strcmp(row_type, "table_header") == 0);
+                        if (is_row_node) {
+                            std::string row_json = "[";
+                            bool first_cell = true;
+
+                            cmark_node *cell = cmark_node_first_child(row);
+                            while (cell) {
+                                const char *cell_type = cmark_node_get_type_string(cell);
+                                // Accept table_cell and any header cell variants
+                                bool is_cell = cell_type && (strcmp(cell_type, "table_cell") == 0 ||
+                                                              strstr(cell_type, "cell") != nullptr);
+                                if (is_cell) {
+                                    if (!first_cell) row_json += ", ";
+                                    first_cell = false;
+
+                                    std::string cell_text = GetInlineText(cell);
+                                    // Escape JSON
+                                    std::string escaped;
+                                    for (char c : cell_text) {
+                                        switch (c) {
+                                            case '"': escaped += "\\\""; break;
+                                            case '\\': escaped += "\\\\"; break;
+                                            case '\n': escaped += "\\n"; break;
+                                            default: escaped += c;
+                                        }
+                                    }
+                                    row_json += "\"" + escaped + "\"";
+                                }
+                                cell = cmark_node_next(cell);
+                            }
+                            row_json += "]";
+
+                            // First row is always the header in GFM tables
+                            if (is_first_row) {
+                                headers_json = row_json;
+                                is_first_row = false;
+                            } else {
+                                if (!first_data_row) rows_json += ", ";
+                                first_data_row = false;
+                                rows_json += row_json;
+                            }
+                        }
+                        row = cmark_node_next(row);
+                    }
+
+                    std::string json = "{\"headers\": " + headers_json + ", \"rows\": [" + rows_json + "]}";
+                    block.content = json;
+                } else {
+                    // Unknown block type - render as raw
+                    block.block_type = "raw";
+                    char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+                    if (md) {
+                        block.content = md;
+                        free(md);
+                    }
+                    if (type_string) {
+                        block.attributes["original_type"] = type_string;
+                    }
+                }
+                break;
+            }
+        }
+
+        blocks.push_back(block);
+        child = cmark_node_next(child);
+    }
+
+    cmark_node_free(doc);
+    return blocks;
+}
+
 std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str) {
     std::vector<MarkdownLink> links;
     

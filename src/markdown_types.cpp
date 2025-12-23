@@ -14,6 +14,27 @@ LogicalType MarkdownTypes::MarkdownType() {
     return markdown_type;
 }
 
+//===--------------------------------------------------------------------===//
+// Markdown Document Block Type Definition
+//===--------------------------------------------------------------------===//
+
+LogicalType MarkdownTypes::MarkdownDocBlockType() {
+    // Create the STRUCT type for markdown_doc_block
+    // STRUCT(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR,
+    //        attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)
+    child_list_t<LogicalType> struct_children;
+    struct_children.push_back(make_pair("block_type", LogicalType::VARCHAR));
+    struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
+    struct_children.push_back(make_pair("level", LogicalType::INTEGER));
+    struct_children.push_back(make_pair("encoding", LogicalType::VARCHAR));
+    struct_children.push_back(make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)));
+    struct_children.push_back(make_pair("block_order", LogicalType::INTEGER));
+
+    auto block_type = LogicalType::STRUCT(std::move(struct_children));
+    block_type.SetAlias("markdown_doc_block");
+    return block_type;
+}
+
 static bool IsMarkdownType(const LogicalType& t) {
     return t.id() == LogicalTypeId::VARCHAR && t.HasAlias() && 
            (t.GetAlias() == "markdown" || t.GetAlias() == "md");
@@ -94,6 +115,10 @@ void MarkdownTypes::Register(ExtensionLoader &loader) {
     // Register Markdown<->VARCHAR cast functions (isomorphic - raw markdown)
     loader.RegisterCastFunction(LogicalType(LogicalTypeId::VARCHAR), markdown_type, VarcharToMarkdownCast, 0); // Implicit cast cost 0
     loader.RegisterCastFunction(markdown_type, LogicalType(LogicalTypeId::VARCHAR), MarkdownToVarcharCast, 0); // Implicit cast cost 0
+
+    // Register the markdown_doc_block STRUCT type
+    const auto doc_block_type = MarkdownDocBlockType();
+    loader.RegisterType("markdown_doc_block", doc_block_type);
 }
 
 } // namespace duckdb

@@ -131,7 +131,7 @@ private:
 
     /**
      * @brief Execution function for read_markdown_sections
-     * 
+     *
      * @param context Client context
      * @param input Execution input data
      * @param state Local state for the function
@@ -140,6 +140,33 @@ private:
     static void MarkdownReadSectionsFunction(ClientContext &context,
                                             TableFunctionInput &input,
                                             DataChunk &output);
+
+    /**
+     * @brief Bind function for read_markdown_blocks
+     *
+     * Returns one row per file with blocks as LIST<markdown_doc_block>
+     *
+     * @param context Client context for the query
+     * @param input Bind input parameters
+     * @param return_types Types of columns to return
+     * @param names Names of columns to return
+     * @return Function data for execution
+     */
+    static unique_ptr<FunctionData> MarkdownReadBlocksBind(ClientContext &context,
+                                                            TableFunctionBindInput &input,
+                                                            vector<LogicalType> &return_types,
+                                                            vector<string> &names);
+
+    /**
+     * @brief Execution function for read_markdown_blocks
+     *
+     * @param context Client context
+     * @param input Execution input data
+     * @param output Output chunk to write results to
+     */
+    static void MarkdownReadBlocksFunction(ClientContext &context,
+                                           TableFunctionInput &input,
+                                           DataChunk &output);
 
     /**
      * @brief Get file paths from various input types (single file, list, glob, directory)

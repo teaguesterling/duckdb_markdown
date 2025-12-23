@@ -107,6 +107,22 @@ std::string ExtractSection(const std::string& markdown_str,
                           bool include_subsections = false);
 
 //===--------------------------------------------------------------------===//
+// Block-Level Document Representation
+//===--------------------------------------------------------------------===//
+
+struct MarkdownBlock {
+    std::string block_type;      // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
+    std::string content;         // Primary content
+    int32_t level;               // Heading level (1-6), nesting depth, or 0
+    std::string encoding;        // text, json, yaml, base64
+    std::map<std::string, std::string> attributes;  // language, id, class, etc.
+    int32_t block_order;         // Optional ordering for table storage
+};
+
+// Parse document into blocks (block-level AST)
+std::vector<MarkdownBlock> ParseBlocks(const std::string& markdown_str);
+
+//===--------------------------------------------------------------------===//
 // Content Extraction
 //===--------------------------------------------------------------------===//
 
