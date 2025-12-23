@@ -150,3 +150,129 @@ query IIIIII
 SELECT block_type, content IS NOT NULL, level, encoding, attributes IS NOT NULL, block_order FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
 ----
 heading	true	1	text	true	1
+
+# =============================================================================
+# Test: Complex document with multiple block types
+# =============================================================================
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_nested.md');
+----
+11
+
+# Verify all expected block types are present
+query I
+SELECT count(DISTINCT block_type) FROM read_markdown_blocks('test/data/blocks_nested.md');
+----
+7
+
+# Check heading levels
+query II
+SELECT content, level FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE block_type = 'heading' ORDER BY block_order;
+----
+Main Heading	1
+Subheading	2
+Deep Heading	3
+
+# =============================================================================
+# Test: Code blocks with and without language
+# =============================================================================
+
+query II
+SELECT attributes['language'], content LIKE '%SELECT%' FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE block_type = 'code' ORDER BY block_order;
+----
+sql	true
+NULL	false
+
+# =============================================================================
+# Test: Special characters in content
+# =============================================================================
+
+# Heading with inline formatting should extract text
+query I
+SELECT content FROM read_markdown_blocks('test/data/blocks_special.md') WHERE block_type = 'heading';
+----
+Heading with bold and italic
+
+# Paragraph with inline code and links
+query I
+SELECT content LIKE '%inline code%' FROM read_markdown_blocks('test/data/blocks_special.md') WHERE block_type = 'paragraph';
+----
+true
+
+# =============================================================================
+# Test: Multiple files via glob
+# =============================================================================
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md');
+----
+29
+
+query I
+SELECT count(DISTINCT file_path) FROM read_markdown_blocks('test/data/blocks_*.md', include_filepath := true);
+----
+8
+
+# =============================================================================
+# Test: Empty file handling
+# =============================================================================
+
+statement ok
+COPY (SELECT '') TO '__TEST_DIR__/empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query I
+SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/empty.md');
+----
+0
+
+# =============================================================================
+# Test: Only frontmatter
+# =============================================================================
+
+statement ok
+COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '__TEST_DIR__/only_fm.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query II
+SELECT block_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
+----
+frontmatter	0
+
+# =============================================================================
+# Test: Attributes are correctly populated
+# =============================================================================
+
+# Headings should have id attribute
+query I
+SELECT attributes['id'] IS NOT NULL FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
+----
+true
+
+# Lists should have ordered attribute
+query I
+SELECT attributes['ordered'] IN ('true', 'false') FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+----
+true
+
+# =============================================================================
+# Test: Blockquote content is properly extracted
+# =============================================================================
+
+query I
+SELECT content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'blockquote';
+----
+A quote
+
+# =============================================================================
+# Test: List JSON content is valid
+# =============================================================================
+
+query I
+SELECT content LIKE '["%' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+----
+true
+
+query I
+SELECT content LIKE '%"]' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+----
+true

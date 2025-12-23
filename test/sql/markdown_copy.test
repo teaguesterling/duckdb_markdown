@@ -390,6 +390,119 @@ SELECT content LIKE '%```python%' FROM read_text('__TEST_DIR__/blocks_roundtrip.
 true
 
 # =============================================================================
+# Test: Blocks Mode - Ordered list with start
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_olist (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_olist VALUES
+    ('list', '["First", "Second", "Third"]', 1, 'json', MAP{'ordered': 'true', 'start': '5'});
+
+statement ok
+COPY blocks_olist TO '__TEST_DIR__/blocks_olist.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%5. First%' FROM read_text('__TEST_DIR__/blocks_olist.md');
+----
+true
+
+query I
+SELECT content LIKE '%6. Second%' FROM read_text('__TEST_DIR__/blocks_olist.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Code block without language
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_code_nolang (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_code_nolang VALUES
+    ('code', 'plain code here', NULL, 'text', MAP{});
+
+statement ok
+COPY blocks_code_nolang TO '__TEST_DIR__/blocks_code_nolang.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Should have ``` without language
+query I
+SELECT content LIKE E'```\nplain code here\n```%' FROM read_text('__TEST_DIR__/blocks_code_nolang.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Multiple heading levels
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_headings (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_headings VALUES
+    ('heading', 'Level 1', 1, 'text', MAP{}),
+    ('heading', 'Level 2', 2, 'text', MAP{}),
+    ('heading', 'Level 3', 3, 'text', MAP{}),
+    ('heading', 'Level 4', 4, 'text', MAP{}),
+    ('heading', 'Level 5', 5, 'text', MAP{}),
+    ('heading', 'Level 6', 6, 'text', MAP{});
+
+statement ok
+COPY blocks_headings TO '__TEST_DIR__/blocks_headings.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%# Level 1%' FROM read_text('__TEST_DIR__/blocks_headings.md');
+----
+true
+
+query I
+SELECT content LIKE '%## Level 2%' FROM read_text('__TEST_DIR__/blocks_headings.md');
+----
+true
+
+query I
+SELECT content LIKE '%###### Level 6%' FROM read_text('__TEST_DIR__/blocks_headings.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Special characters
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_special (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_special VALUES
+    ('paragraph', 'Text with "quotes" and special chars: <>&', NULL, 'text', MAP{});
+
+statement ok
+COPY blocks_special TO '__TEST_DIR__/blocks_special.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%"quotes"%' FROM read_text('__TEST_DIR__/blocks_special.md');
+----
+true
+
+# =============================================================================
+# Test: Clean up additional blocks tables
+# =============================================================================
+
+statement ok
+DROP TABLE blocks_olist;
+
+statement ok
+DROP TABLE blocks_code_nolang;
+
+statement ok
+DROP TABLE blocks_headings;
+
+statement ok
+DROP TABLE blocks_special;
+
+# =============================================================================
 # Test: Clean up blocks tables
 # =============================================================================
 
