@@ -487,6 +487,36 @@ SELECT content LIKE '%"quotes"%' FROM read_text('__TEST_DIR__/blocks_special.md'
 true
 
 # =============================================================================
+# Test: Blocks Mode - Table round-trip renders markdown
+# =============================================================================
+
+statement ok
+COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_table.md'))
+TO '__TEST_DIR__/blocks_table_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Should render as proper markdown table, not JSON
+query I
+SELECT content LIKE '%| Name | Age |%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+----
+true
+
+query I
+SELECT content LIKE '%|---|---|%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+----
+true
+
+query I
+SELECT content LIKE '%| Alice | 30 |%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+----
+true
+
+# Should NOT contain raw JSON
+query I
+SELECT content NOT LIKE '%"headers"%' FROM read_text('__TEST_DIR__/blocks_table_roundtrip.md');
+----
+true
+
+# =============================================================================
 # Test: Clean up additional blocks tables
 # =============================================================================
 

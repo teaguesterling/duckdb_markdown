@@ -634,11 +634,107 @@ string MarkdownCopyFunction::RenderBlock(const string &block_type, const string 
             result = content + "\n\n";
         }
     } else if (block_type == "table") {
-        // Table - content is JSON encoded
-        if (encoding == "json") {
-            // For now, output the raw content - full JSON parsing for tables is complex
-            // In a complete implementation, we would parse the JSON and render as markdown table
-            result = content + "\n\n";
+        // Table - content is JSON encoded as {"headers": [...], "rows": [[...], ...]}
+        if (encoding == "json" && content.find("\"headers\"") != string::npos) {
+            // Parse JSON table format
+            vector<string> headers;
+            vector<vector<string>> rows;
+
+            // Simple JSON parsing for table structure
+            // Find headers array
+            size_t headers_start = content.find("\"headers\":");
+            if (headers_start != string::npos) {
+                size_t arr_start = content.find('[', headers_start);
+                size_t arr_end = content.find(']', arr_start);
+                if (arr_start != string::npos && arr_end != string::npos) {
+                    string headers_str = content.substr(arr_start + 1, arr_end - arr_start - 1);
+                    // Parse header items
+                    bool in_string = false;
+                    bool escape_next = false;
+                    string current;
+                    for (char c : headers_str) {
+                        if (escape_next) {
+                            current += c;
+                            escape_next = false;
+                        } else if (c == '\\') {
+                            escape_next = true;
+                        } else if (c == '"') {
+                            if (in_string) {
+                                headers.push_back(current);
+                                current.clear();
+                            }
+                            in_string = !in_string;
+                        } else if (in_string) {
+                            current += c;
+                        }
+                    }
+                }
+            }
+
+            // Find rows array
+            size_t rows_start = content.find("\"rows\":");
+            if (rows_start != string::npos) {
+                size_t outer_start = content.find('[', rows_start);
+                if (outer_start != string::npos) {
+                    // Parse each row
+                    size_t pos = outer_start + 1;
+                    while (pos < content.size()) {
+                        size_t row_start = content.find('[', pos);
+                        if (row_start == string::npos) break;
+                        size_t row_end = content.find(']', row_start);
+                        if (row_end == string::npos) break;
+
+                        string row_str = content.substr(row_start + 1, row_end - row_start - 1);
+                        vector<string> row;
+                        bool in_string = false;
+                        bool escape_next = false;
+                        string current;
+                        for (char c : row_str) {
+                            if (escape_next) {
+                                current += c;
+                                escape_next = false;
+                            } else if (c == '\\') {
+                                escape_next = true;
+                            } else if (c == '"') {
+                                if (in_string) {
+                                    row.push_back(current);
+                                    current.clear();
+                                }
+                                in_string = !in_string;
+                            } else if (in_string) {
+                                current += c;
+                            }
+                        }
+                        if (!row.empty()) {
+                            rows.push_back(row);
+                        }
+                        pos = row_end + 1;
+                    }
+                }
+            }
+
+            // Render as markdown table
+            if (!headers.empty()) {
+                result = "|";
+                for (const auto& h : headers) {
+                    result += " " + h + " |";
+                }
+                result += "\n|";
+                for (size_t i = 0; i < headers.size(); i++) {
+                    result += "---|";
+                }
+                result += "\n";
+                for (const auto& row : rows) {
+                    result += "|";
+                    for (const auto& cell : row) {
+                        result += " " + cell + " |";
+                    }
+                    result += "\n";
+                }
+                result += "\n";
+            } else {
+                result = content + "\n\n";
+            }
         } else {
             result = content + "\n\n";
         }
