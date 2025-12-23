@@ -28,6 +28,14 @@ struct MarkdownReadSectionBindData : public TableFunctionData {
     idx_t current_section_index = 0;
 };
 
+struct MarkdownReadBlocksBindData : public TableFunctionData {
+    vector<string> files;
+    MarkdownReader::MarkdownReadOptions options;
+    // Flattened blocks with file path association
+    vector<pair<string, markdown_utils::MarkdownBlock>> all_blocks;
+    idx_t current_block_index = 0;
+};
+
 
 //===--------------------------------------------------------------------===//
 // Helper Functions
@@ -427,6 +435,128 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context,
 }
 
 //===--------------------------------------------------------------------===//
+// Blocks Reader Implementation
+//===--------------------------------------------------------------------===//
+
+unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &context,
+                                                                 TableFunctionBindInput &input,
+                                                                 vector<LogicalType> &return_types,
+                                                                 vector<string> &names) {
+    auto result = make_uniq<MarkdownReadBlocksBindData>();
+
+    // Parse the file path parameter
+    if (input.inputs.empty()) {
+        throw InvalidInputException("read_markdown_blocks requires at least one argument");
+    }
+
+    auto &path_param = input.inputs[0];
+    result->files = GetFiles(context, path_param, false);
+
+    // Parse options
+    ParseMarkdownOptions(input, result->options);
+
+    // Pre-process all files to extract blocks (flattened)
+    for (const auto &file_path : result->files) {
+        try {
+            string content = ReadMarkdownFile(context, file_path, result->options);
+            auto blocks = markdown_utils::ParseBlocks(content);
+            for (auto &block : blocks) {
+                result->all_blocks.push_back({file_path, block});
+            }
+        } catch (const std::exception &e) {
+            // Skip files that can't be read
+            continue;
+        }
+    }
+
+    // Define return columns (flattened - one row per block)
+    if (result->options.include_filepath) {
+        names.emplace_back("file_path");
+        return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+    }
+
+    names.emplace_back("block_type");
+    return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+
+    names.emplace_back("content");
+    return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+
+    names.emplace_back("level");
+    return_types.emplace_back(LogicalType(LogicalTypeId::INTEGER));
+
+    names.emplace_back("encoding");
+    return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+
+    names.emplace_back("attributes");
+    return_types.emplace_back(LogicalType::MAP(LogicalType(LogicalTypeId::VARCHAR), LogicalType(LogicalTypeId::VARCHAR)));
+
+    names.emplace_back("block_order");
+    return_types.emplace_back(LogicalType(LogicalTypeId::INTEGER));
+
+    return std::move(result);
+}
+
+void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context,
+                                                TableFunctionInput &input,
+                                                DataChunk &output) {
+    auto &bind_data = input.bind_data->CastNoConst<MarkdownReadBlocksBindData>();
+
+    if (bind_data.current_block_index >= bind_data.all_blocks.size()) {
+        output.SetCardinality(0);
+        return;
+    }
+
+    idx_t output_idx = 0;
+
+    while (bind_data.current_block_index < bind_data.all_blocks.size() && output_idx < STANDARD_VECTOR_SIZE) {
+        const auto &[file_path, block] = bind_data.all_blocks[bind_data.current_block_index];
+
+        idx_t column_idx = 0;
+
+        // Set file path if requested
+        if (bind_data.options.include_filepath) {
+            output.data[column_idx].SetValue(output_idx, Value(file_path));
+            column_idx++;
+        }
+
+        // block_type
+        output.data[column_idx].SetValue(output_idx, Value(block.block_type));
+        column_idx++;
+
+        // content
+        output.data[column_idx].SetValue(output_idx, Value(block.content));
+        column_idx++;
+
+        // level (NULL if -1, meaning "not applicable")
+        output.data[column_idx].SetValue(output_idx, block.level >= 0 ? Value::INTEGER(block.level) : Value());
+        column_idx++;
+
+        // encoding
+        output.data[column_idx].SetValue(output_idx, Value(block.encoding));
+        column_idx++;
+
+        // attributes MAP
+        vector<Value> attr_keys;
+        vector<Value> attr_values;
+        for (const auto &attr : block.attributes) {
+            attr_keys.push_back(Value(attr.first));
+            attr_values.push_back(Value(attr.second));
+        }
+        Value attributes_map = Value::MAP(LogicalType(LogicalTypeId::VARCHAR), LogicalType(LogicalTypeId::VARCHAR), attr_keys, attr_values);
+        output.data[column_idx].SetValue(output_idx, attributes_map);
+        column_idx++;
+
+        // block_order
+        output.data[column_idx].SetValue(output_idx, Value::INTEGER(block.block_order));
+
+        output_idx++;
+        bind_data.current_block_index++;
+    }
+
+    output.SetCardinality(output_idx);
+}
+
+//===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
 
@@ -467,6 +597,17 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
     read_sections_func.named_parameters["max_content_length"] = LogicalType(LogicalTypeId::UBIGINT);
 
     loader.RegisterFunction(read_sections_func);
+
+    // Register read_markdown_blocks function
+    TableFunction read_blocks_func("read_markdown_blocks", {LogicalType(LogicalTypeId::VARCHAR)}, MarkdownReadBlocksFunction, MarkdownReadBlocksBind);
+
+    // Add named parameters for blocks
+    read_blocks_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
+    read_blocks_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
+    read_blocks_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
+    read_blocks_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
+
+    loader.RegisterFunction(read_blocks_func);
 }
 
 } // namespace duckdb

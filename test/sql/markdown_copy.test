@@ -1,0 +1,434 @@
+# name: test/sql/markdown_copy.test
+# description: Test COPY TO markdown functionality
+# group: [markdown]
+
+require markdown
+
+# =============================================================================
+# Test: Table Mode - Basic Export
+# =============================================================================
+
+# Create a test table
+statement ok
+CREATE TABLE test_copy (id INTEGER, name VARCHAR, value DOUBLE);
+
+statement ok
+INSERT INTO test_copy VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.0), (3, 'Charlie', 30.75);
+
+# Test basic COPY TO markdown (default table mode)
+statement ok
+COPY test_copy TO '__TEST_DIR__/table_basic.md' (FORMAT MARKDOWN);
+
+# Verify the file was created and has correct structure
+query I
+SELECT content LIKE '%| id |%' FROM read_text('__TEST_DIR__/table_basic.md');
+----
+true
+
+# Verify header separator exists
+query I
+SELECT content LIKE '%|---:%' FROM read_text('__TEST_DIR__/table_basic.md');
+----
+true
+
+# Verify data row exists
+query I
+SELECT content LIKE '%| 1 | Alice |%' FROM read_text('__TEST_DIR__/table_basic.md');
+----
+true
+
+# =============================================================================
+# Test: Table Mode - Explicit mode option
+# =============================================================================
+
+statement ok
+COPY test_copy TO '__TEST_DIR__/table_explicit.md' (FORMAT MARKDOWN, markdown_mode 'table');
+
+query I
+SELECT content LIKE '%| id |%' FROM read_text('__TEST_DIR__/table_explicit.md');
+----
+true
+
+# =============================================================================
+# Test: Table Mode - Numeric alignment
+# =============================================================================
+
+# Numeric columns should be right-aligned (---:)
+query I
+SELECT content LIKE '%---:|%' FROM read_text('__TEST_DIR__/table_basic.md');
+----
+true
+
+# =============================================================================
+# Test: Table Mode - Pipe escaping
+# =============================================================================
+
+statement ok
+CREATE TABLE pipe_test (val VARCHAR);
+
+statement ok
+INSERT INTO pipe_test VALUES ('a|b'), ('c|d');
+
+statement ok
+COPY pipe_test TO '__TEST_DIR__/table_pipes.md' (FORMAT MARKDOWN, escape_pipes true);
+
+# Verify pipes are escaped (check for backslash-pipe sequence)
+query I
+SELECT content LIKE '%a\|b%' FROM read_text('__TEST_DIR__/table_pipes.md');
+----
+true
+
+# =============================================================================
+# Test: Table Mode - Newline handling
+# =============================================================================
+
+statement ok
+CREATE TABLE newline_test (val VARCHAR);
+
+statement ok
+INSERT INTO newline_test VALUES (E'line1\nline2');
+
+statement ok
+COPY newline_test TO '__TEST_DIR__/table_newlines.md' (FORMAT MARKDOWN, escape_newlines true);
+
+# Verify newlines are converted to <br>
+query I
+SELECT content LIKE '%<br>%' FROM read_text('__TEST_DIR__/table_newlines.md');
+----
+true
+
+# =============================================================================
+# Test: Table Mode - NULL handling
+# =============================================================================
+
+statement ok
+CREATE TABLE null_test (id INTEGER, name VARCHAR);
+
+statement ok
+INSERT INTO null_test VALUES (1, NULL), (2, 'test');
+
+statement ok
+COPY null_test TO '__TEST_DIR__/table_nulls.md' (FORMAT MARKDOWN, null_value 'N/A');
+
+# Verify null value replacement
+query I
+SELECT content LIKE '%N/A%' FROM read_text('__TEST_DIR__/table_nulls.md');
+----
+true
+
+# =============================================================================
+# Test: Table Mode - No header option
+# =============================================================================
+
+statement ok
+COPY test_copy TO '__TEST_DIR__/table_noheader.md' (FORMAT MARKDOWN, header false);
+
+# File should NOT have column names as first line
+query I
+SELECT content NOT LIKE '%| id | name |%' FROM read_text('__TEST_DIR__/table_noheader.md');
+----
+true
+
+# =============================================================================
+# Test: Document Mode - Basic Export
+# =============================================================================
+
+statement ok
+CREATE TABLE sections (level INTEGER, title VARCHAR, content VARCHAR);
+
+statement ok
+INSERT INTO sections VALUES
+    (1, 'Introduction', 'This is the intro.'),
+    (2, 'Details', 'More details here.'),
+    (1, 'Conclusion', 'Final thoughts.');
+
+statement ok
+COPY sections TO '__TEST_DIR__/doc_basic.md' (FORMAT MARKDOWN, markdown_mode 'document');
+
+# Verify headings are rendered
+query I
+SELECT content LIKE '%# Introduction%' FROM read_text('__TEST_DIR__/doc_basic.md');
+----
+true
+
+query I
+SELECT content LIKE '%## Details%' FROM read_text('__TEST_DIR__/doc_basic.md');
+----
+true
+
+# Verify content is included
+query I
+SELECT content LIKE '%This is the intro.%' FROM read_text('__TEST_DIR__/doc_basic.md');
+----
+true
+
+# =============================================================================
+# Test: Document Mode - With frontmatter
+# =============================================================================
+
+statement ok
+COPY sections TO '__TEST_DIR__/doc_frontmatter.md' (FORMAT MARKDOWN, markdown_mode 'document', frontmatter 'title: Test Doc
+author: Test Author');
+
+# Verify frontmatter delimiters
+query I
+SELECT content LIKE '%---%title:%---%' OR content LIKE '%---%' FROM read_text('__TEST_DIR__/doc_frontmatter.md');
+----
+true
+
+# Verify frontmatter content
+query I
+SELECT content LIKE '%title: Test Doc%' FROM read_text('__TEST_DIR__/doc_frontmatter.md');
+----
+true
+
+# =============================================================================
+# Test: Document Mode - Custom column names
+# =============================================================================
+
+statement ok
+CREATE TABLE custom_sections (depth INTEGER, heading VARCHAR, body VARCHAR);
+
+statement ok
+INSERT INTO custom_sections VALUES (1, 'Custom Title', 'Custom body text.');
+
+statement ok
+COPY custom_sections TO '__TEST_DIR__/doc_custom.md' (FORMAT MARKDOWN, markdown_mode 'document',
+    level_column 'depth', title_column 'heading', content_column 'body');
+
+query I
+SELECT content LIKE '%# Custom Title%' FROM read_text('__TEST_DIR__/doc_custom.md');
+----
+true
+
+query I
+SELECT content LIKE '%Custom body text.%' FROM read_text('__TEST_DIR__/doc_custom.md');
+----
+true
+
+# =============================================================================
+# Test: Document Mode - Level 0 as frontmatter
+# =============================================================================
+
+statement ok
+CREATE TABLE doc_with_fm (level INTEGER, title VARCHAR, content VARCHAR);
+
+statement ok
+INSERT INTO doc_with_fm VALUES
+    (0, '', 'title: Generated Doc'),
+    (1, 'Body', 'Main content');
+
+statement ok
+COPY doc_with_fm TO '__TEST_DIR__/doc_level0.md' (FORMAT MARKDOWN, markdown_mode 'document');
+
+# Level 0 should be output as frontmatter block
+query I
+SELECT content LIKE '%---
+title: Generated Doc
+---%' FROM read_text('__TEST_DIR__/doc_level0.md');
+----
+true
+
+# =============================================================================
+# Test: Empty table export
+# =============================================================================
+
+statement ok
+CREATE TABLE empty_table (id INTEGER, name VARCHAR);
+
+statement ok
+COPY empty_table TO '__TEST_DIR__/table_empty.md' (FORMAT MARKDOWN);
+
+# Should still have header
+query I
+SELECT content LIKE '%| id |%' FROM read_text('__TEST_DIR__/table_empty.md');
+----
+true
+
+# =============================================================================
+# Test: Query export (not just table)
+# =============================================================================
+
+statement ok
+COPY (SELECT 1 as a, 'test' as b) TO '__TEST_DIR__/query_copy.md' (FORMAT MARKDOWN);
+
+query I
+SELECT content LIKE '%| a | b |%' FROM read_text('__TEST_DIR__/query_copy.md');
+----
+true
+
+query I
+SELECT content LIKE '%| 1 | test |%' FROM read_text('__TEST_DIR__/query_copy.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Basic Export
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_test (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_test VALUES
+    ('heading', 'My Document', 1, 'text', MAP{}),
+    ('paragraph', 'This is a paragraph.', NULL, 'text', MAP{}),
+    ('code', 'print("hello")', NULL, 'text', MAP{'language': 'python'}),
+    ('blockquote', 'A wise quote', 1, 'text', MAP{});
+
+statement ok
+COPY blocks_test TO '__TEST_DIR__/blocks_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify heading
+query I
+SELECT content LIKE '%# My Document%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+----
+true
+
+# Verify paragraph
+query I
+SELECT content LIKE '%This is a paragraph.%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+----
+true
+
+# Verify code block with language
+query I
+SELECT content LIKE '%```python%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+----
+true
+
+# Verify code content
+query I
+SELECT content LIKE '%print("hello")%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+----
+true
+
+# Verify blockquote
+query I
+SELECT content LIKE '%> A wise quote%' FROM read_text('__TEST_DIR__/blocks_basic.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Frontmatter
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_fm (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_fm VALUES
+    ('frontmatter', 'title: Test', 0, 'yaml', MAP{}),
+    ('heading', 'Content', 1, 'text', MAP{});
+
+statement ok
+COPY blocks_fm TO '__TEST_DIR__/blocks_fm.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%---%title: Test%---%' FROM read_text('__TEST_DIR__/blocks_fm.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Lists
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_list (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_list VALUES
+    ('list', '["Item 1", "Item 2", "Item 3"]', 1, 'json', MAP{'ordered': 'false'});
+
+statement ok
+COPY blocks_list TO '__TEST_DIR__/blocks_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%- Item 1%' FROM read_text('__TEST_DIR__/blocks_list.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Horizontal Rule
+# =============================================================================
+
+statement ok
+CREATE TABLE blocks_hr (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+
+statement ok
+INSERT INTO blocks_hr VALUES
+    ('heading', 'Before', 1, 'text', MAP{}),
+    ('hr', '', NULL, 'text', MAP{}),
+    ('heading', 'After', 1, 'text', MAP{});
+
+statement ok
+COPY blocks_hr TO '__TEST_DIR__/blocks_hr.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%---%' FROM read_text('__TEST_DIR__/blocks_hr.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Round-trip
+# =============================================================================
+
+# Read blocks from a file and write them back
+statement ok
+COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
+TO '__TEST_DIR__/blocks_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify the roundtrip preserved structure
+query I
+SELECT content LIKE '%# Hello%' FROM read_text('__TEST_DIR__/blocks_roundtrip.md');
+----
+true
+
+query I
+SELECT content LIKE '%```python%' FROM read_text('__TEST_DIR__/blocks_roundtrip.md');
+----
+true
+
+# =============================================================================
+# Test: Clean up blocks tables
+# =============================================================================
+
+statement ok
+DROP TABLE blocks_test;
+
+statement ok
+DROP TABLE blocks_fm;
+
+statement ok
+DROP TABLE blocks_list;
+
+statement ok
+DROP TABLE blocks_hr;
+
+# =============================================================================
+# Test: Clean up
+# =============================================================================
+
+statement ok
+DROP TABLE test_copy;
+
+statement ok
+DROP TABLE pipe_test;
+
+statement ok
+DROP TABLE newline_test;
+
+statement ok
+DROP TABLE null_test;
+
+statement ok
+DROP TABLE sections;
+
+statement ok
+DROP TABLE custom_sections;
+
+statement ok
+DROP TABLE doc_with_fm;
+
+statement ok
+DROP TABLE empty_table;

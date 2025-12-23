@@ -16,6 +16,7 @@ set(EXTENSION_SOURCES
     src/markdown_extension.cpp
     src/markdown_reader_functions.cpp
     src/markdown_reader_files.cpp
+    src/markdown_copy.cpp
     src/markdown_types.cpp
     src/markdown_scalar_functions.cpp
     src/markdown_extraction_functions.cpp

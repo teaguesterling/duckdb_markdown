@@ -5,6 +5,7 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 ## Features
 
 - **Markdown Content Extraction**: Extract code blocks, links, images, and tables from Markdown text
+- **COPY TO Markdown**: Export query results as Markdown tables or reconstruct documents from sections
 - **Documentation Analysis**: Analyze large documentation repositories with SQL queries
 - **Cross-Platform Support**: Works on Linux, macOS, and WebAssembly (Windows support in development)
 - **GitHub Flavored Markdown**: Uses cmark-gfm for accurate parsing of modern Markdown
@@ -58,6 +59,15 @@ FROM read_markdown('**/*.md');
 -- Use replacement scan syntax for convenience
 SELECT * FROM '*.md';
 SELECT * FROM 'docs/**/*.md';
+
+-- Export results as Markdown table
+COPY (SELECT * FROM my_table) TO 'output.md' (FORMAT MARKDOWN);
+
+-- Round-trip: read sections, process, write back
+COPY (
+  SELECT level, title, upper(content) as content
+  FROM read_markdown_sections('doc.md')
+) TO 'processed.md' (FORMAT MARKDOWN, markdown_mode 'document');
 ```
 
 ## Table-like Syntax Support
@@ -221,6 +231,101 @@ FROM read_markdown_sections('docs/**/*.md')
 WHERE section_path LIKE 'api-reference/%';
 ```
 
+## COPY TO Markdown
+
+Export query results to Markdown files with two modes:
+
+### Table Mode (Default)
+
+Export any query result as a formatted Markdown table with automatic column alignment:
+
+```sql
+-- Basic table export
+COPY (SELECT * FROM my_table) TO 'output.md' (FORMAT MARKDOWN);
+
+-- With options
+COPY my_table TO 'output.md' (FORMAT MARKDOWN,
+    header true,           -- Include header row (default: true)
+    escape_pipes true,     -- Escape | characters (default: true)
+    escape_newlines true,  -- Convert newlines to <br> (default: true)
+    null_value 'N/A'       -- Custom NULL representation (default: empty)
+);
+```
+
+**Output:**
+```markdown
+| id | name | score |
+|---:|---|---:|
+| 1 | Alice | 95.5 |
+| 2 | Bob | 87.0 |
+```
+
+Alignment is automatic: numeric columns are right-aligned, text is left-aligned, booleans are centered.
+
+### Document Mode
+
+Reconstruct Markdown documents from structured section data. This complements `read_markdown_sections` for round-trip document processing:
+
+```sql
+-- Create sections
+CREATE TABLE sections (level INTEGER, title VARCHAR, content VARCHAR);
+INSERT INTO sections VALUES
+    (1, 'Introduction', 'Welcome to the guide.'),
+    (2, 'Getting Started', 'First steps here.'),
+    (1, 'Conclusion', 'Thanks for reading!');
+
+-- Export as document
+COPY sections TO 'guide.md' (FORMAT MARKDOWN, markdown_mode 'document');
+```
+
+**Output:**
+```markdown
+# Introduction
+
+Welcome to the guide.
+
+## Getting Started
+
+First steps here.
+
+# Conclusion
+
+Thanks for reading!
+```
+
+**Document Mode Options:**
+```sql
+COPY sections TO 'doc.md' (FORMAT MARKDOWN,
+    markdown_mode 'document',
+    level_column 'level',      -- Column with heading level 1-6 (default: 'level')
+    title_column 'title',      -- Column with heading text (default: 'title')
+    content_column 'content',  -- Column with section body (default: 'content')
+    frontmatter 'title: My Doc
+author: Me',                   -- Optional YAML frontmatter
+    blank_lines 1              -- Blank lines between sections (default: 1)
+);
+```
+
+**Level 0 as Frontmatter:**
+Rows with `level = 0` are rendered as YAML frontmatter blocks:
+
+```sql
+INSERT INTO doc VALUES (0, '', 'title: Generated Doc');
+INSERT INTO doc VALUES (1, 'Body', 'Main content');
+COPY doc TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'document');
+```
+
+**Output:**
+```markdown
+---
+title: Generated Doc
+---
+
+# Body
+
+Main content
+```
+
 ## Use Cases
 
 ### Documentation Analysis
@@ -358,8 +463,9 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.1.0):**
+**✅ Available (v1.2.0):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`) with full parameter support
+- **COPY TO markdown** with table and document modes (see below)
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`)
 - **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
@@ -373,15 +479,18 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 490+ passing assertions
+- Full test suite with 549+ passing assertions
+
+**🚧 In Development:**
+- **Block-level document representation** (`markdown_doc_block` type) - See [docs/markdown_doc_block.md](docs/markdown_doc_block.md)
+- `read_markdown_blocks()` function for full-fidelity document parsing
+- `markdown_mode 'blocks'` for COPY TO with block-level control
 
 **🗓️ Future Roadmap:**
+- Document interchange format for cross-extension compatibility (HTML, XML, etc.)
 - Custom renderer integration for specialized markdown flavors
 - Streaming parser optimizations for very large documents (>100MB)
 - Advanced query optimization for document search workloads
-- Optional YAML extension integration for advanced frontmatter parsing
-
-**💡 Note:** DuckDB CLI already supports markdown table output via `.mode markdown`, eliminating the need for COPY TO markdown functionality.
 
 ## Dependencies
 
@@ -404,7 +513,7 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 490+ passing assertions across 14 test files:
+Comprehensive test suite with 549+ passing assertions across 15 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
 - **Performance tests**: Large-scale document processing
