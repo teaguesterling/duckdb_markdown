@@ -763,7 +763,27 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string& markdown_str) {
                         if (!first) json += ", ";
                         first = false;
 
-                        std::string item_text = RenderNodeContent(item);
+                        // Get text content of list item (from first paragraph child)
+                        std::string item_text;
+                        cmark_node *item_child = cmark_node_first_child(item);
+                        while (item_child) {
+                            if (cmark_node_get_type(item_child) == CMARK_NODE_PARAGRAPH) {
+                                item_text = GetInlineText(item_child);
+                                break;
+                            } else if (cmark_node_get_type(item_child) == CMARK_NODE_LIST) {
+                                // Nested list - skip for now, just get first text
+                                break;
+                            } else {
+                                // Try to get inline text directly
+                                std::string txt = GetInlineText(item_child);
+                                if (!txt.empty()) {
+                                    item_text = txt;
+                                    break;
+                                }
+                            }
+                            item_child = cmark_node_next(item_child);
+                        }
+
                         // Escape JSON special characters
                         std::string escaped;
                         for (char c : item_text) {
