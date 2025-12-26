@@ -549,6 +549,59 @@ statement ok
 DROP TABLE blocks_hr;
 
 # =============================================================================
+# Test: Error handling - invalid markdown_mode
+# =============================================================================
+
+statement error
+COPY (SELECT 1 as x) TO '__TEST_DIR__/invalid.md' (FORMAT MARKDOWN, markdown_mode 'invalid');
+----
+Invalid markdown_mode
+
+# =============================================================================
+# Test: Error handling - missing block_type column
+# =============================================================================
+
+statement error
+COPY (SELECT 'content' as content) TO '__TEST_DIR__/missing.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+----
+Blocks mode requires a 'block_type' column
+
+# =============================================================================
+# Test: Error handling - missing level column for document mode
+# =============================================================================
+
+statement error
+COPY (SELECT 'title' as title, 'content' as content) TO '__TEST_DIR__/missing.md' (FORMAT MARKDOWN, markdown_mode 'document');
+----
+Document mode requires a 'level' column
+
+# =============================================================================
+# Test: Blocks mode with minimal columns
+# =============================================================================
+
+statement ok
+COPY (SELECT 'heading' as block_type, 'Minimal' as content) TO '__TEST_DIR__/minimal.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content LIKE '%# Minimal%' FROM read_text('__TEST_DIR__/minimal.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks mode with custom column names
+# =============================================================================
+
+statement ok
+COPY (SELECT 'heading' as type, 'Custom' as body, 2 as depth)
+TO '__TEST_DIR__/custom_cols.md' (FORMAT MARKDOWN, markdown_mode 'blocks',
+    block_type_column 'type', content_column 'body', level_column 'depth');
+
+query I
+SELECT content LIKE '%## Custom%' FROM read_text('__TEST_DIR__/custom_cols.md');
+----
+true
+
+# =============================================================================
 # Test: Clean up
 # =============================================================================
 

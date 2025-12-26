@@ -207,12 +207,12 @@ true
 query I
 SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md');
 ----
-29
+33
 
 query I
 SELECT count(DISTINCT file_path) FROM read_markdown_blocks('test/data/blocks_*.md', include_filepath := true);
 ----
-8
+9
 
 # =============================================================================
 # Test: Empty file handling
@@ -274,5 +274,43 @@ true
 
 query I
 SELECT content LIKE '%"]' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+----
+true
+
+# =============================================================================
+# Test: Unicode and international characters
+# =============================================================================
+
+query I
+SELECT content FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE block_type = 'heading';
+----
+Unicode Test 日本語
+
+query I
+SELECT content LIKE '%émojis%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE block_type = 'paragraph';
+----
+true
+
+query I
+SELECT content LIKE '%中文%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE block_type = 'list';
+----
+true
+
+# =============================================================================
+# Test: Double round-trip stability
+# =============================================================================
+
+statement ok
+COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
+TO '__TEST_DIR__/roundtrip1.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+statement ok
+COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('__TEST_DIR__/roundtrip1.md'))
+TO '__TEST_DIR__/roundtrip2.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Both round-trips should have same block count
+query I
+SELECT (SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/roundtrip1.md')) =
+       (SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/roundtrip2.md'));
 ----
 true
