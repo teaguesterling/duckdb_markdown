@@ -60,7 +60,7 @@ static void LinkExtractionFunction(DataChunk &args, ExpressionState &state, Vect
                 child_list_t<Value> struct_children;
                 struct_children.push_back({"text", Value(link.text)});
                 struct_children.push_back({"url", Value(link.url)});
-                struct_children.push_back({"title", link.title.empty() ? Value() : Value(link.title)});
+                struct_children.push_back({"title", link.title.empty() ? Value(LogicalType::VARCHAR) : Value(link.title)});
                 struct_children.push_back({"is_reference", Value(link.is_reference)});
                 struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(link.line_number))});
                 struct_values.push_back(Value::STRUCT(struct_children));
@@ -93,7 +93,7 @@ static void ImageExtractionFunction(DataChunk &args, ExpressionState &state, Vec
                 child_list_t<Value> struct_children;
                 struct_children.push_back({"alt_text", Value(image.alt_text)});
                 struct_children.push_back({"url", Value(image.url)});
-                struct_children.push_back({"title", image.title.empty() ? Value() : Value(image.title)});
+                struct_children.push_back({"title", image.title.empty() ? Value(LogicalType::VARCHAR) : Value(image.title)});
                 struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(image.line_number))});
                 struct_values.push_back(Value::STRUCT(struct_children));
             }

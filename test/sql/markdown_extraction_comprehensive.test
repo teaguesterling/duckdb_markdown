@@ -284,3 +284,170 @@ CROSS JOIN (
 );
 ----
 10
+
+#===================================================================
+# Test 9: NULL Value Handling in Optional Fields
+#===================================================================
+
+# Test links: first without title, second with title
+# (Regression test for NULL type inference bug)
+query II
+SELECT link.text, link.title
+FROM (
+  SELECT UNNEST(md_extract_links('[A](http://a.com) [B](http://b.com "title")')) as link
+);
+----
+A	NULL
+B	title
+
+# Test links: first with title, second without title
+query II
+SELECT link.text, link.title
+FROM (
+  SELECT UNNEST(md_extract_links('[A](http://a.com "first title") [B](http://b.com)')) as link
+);
+----
+A	first title
+B	NULL
+
+# Test links: all without titles
+query II
+SELECT link.text, link.title
+FROM (
+  SELECT UNNEST(md_extract_links('[A](http://a.com) [B](http://b.com) [C](http://c.com)')) as link
+);
+----
+A	NULL
+B	NULL
+C	NULL
+
+# Test links: all with titles
+query II
+SELECT link.text, link.title
+FROM (
+  SELECT UNNEST(md_extract_links('[A](http://a.com "t1") [B](http://b.com "t2") [C](http://c.com "t3")')) as link
+);
+----
+A	t1
+B	t2
+C	t3
+
+# Test images: first without title, second with title
+# (Same regression test pattern for images)
+query II
+SELECT img.alt_text, img.title
+FROM (
+  SELECT UNNEST(md_extract_images('![A](a.png) ![B](b.png "image title")')) as img
+);
+----
+A	NULL
+B	image title
+
+# Test images: first with title, second without title
+query II
+SELECT img.alt_text, img.title
+FROM (
+  SELECT UNNEST(md_extract_images('![A](a.png "first") ![B](b.png)')) as img
+);
+----
+A	first
+B	NULL
+
+# Test images: all without titles
+query II
+SELECT img.alt_text, img.title
+FROM (
+  SELECT UNNEST(md_extract_images('![A](a.png) ![B](b.png) ![C](c.png)')) as img
+);
+----
+A	NULL
+B	NULL
+C	NULL
+
+# Test mixed NULL patterns don't affect other fields
+query IIII
+SELECT link.text, link.url, link.title, link.is_reference
+FROM (
+  SELECT UNNEST(md_extract_links('[No title](http://a.com) [Has title](http://b.com "the title")')) as link
+);
+----
+No title	http://a.com	NULL	false
+Has title	http://b.com	the title	false
+
+#===================================================================
+# Test 10: Code Block Edge Cases
+#===================================================================
+
+# Test code block with empty info string
+query II
+SELECT cb.language, cb.info_string
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```\ncode\n```')) as cb
+);
+----
+(empty)	(empty)
+
+# Test code block with language and extra info
+query II
+SELECT cb.language, cb.info_string
+FROM (
+  SELECT UNNEST(md_extract_code_blocks(E'```python extra info\ncode\n```')) as cb
+);
+----
+python	python extra info
+
+# Test multiple code blocks with different languages
+query I
+SELECT len(md_extract_code_blocks(E'```js\na\n```\n\n```py\nb\n```'));
+----
+2
+
+#===================================================================
+# Test 11: Table Extraction Edge Cases
+#===================================================================
+
+# Test simple table row count (2 headers + 2 data cells = 4)
+query I
+SELECT len(md_extract_table_rows(E'| A | B |\n|---|---|\n| 1 | 2 |'));
+----
+4
+
+# Test table with empty cells - should still parse headers
+query I
+SELECT count(*) FROM (
+  SELECT UNNEST(md_extract_table_rows(E'| A | B |\n|---|---|\n|  |  |')) as row
+) WHERE row.row_type = 'header';
+----
+2
+
+# Test multiple tables in document
+query I
+SELECT len(md_extract_table_rows(E'| A |\n|---|\n| 1 |\n\nParagraph\n\n| B |\n|---|\n| 2 |'));
+----
+4
+
+#===================================================================
+# Test 12: Section Extraction Edge Cases
+#===================================================================
+
+# Test nested sections
+query I
+SELECT len(md_extract_sections(E'# H1\nContent\n## H2\nMore\n### H3\nDeep'));
+----
+3
+
+# Test section with empty content
+query II
+SELECT s.title, length(s.content) > 0 as has_content
+FROM (
+  SELECT UNNEST(md_extract_sections(E'# Empty Section\n\n# Has Content\nSome text')) as s
+);
+----
+Empty Section	false
+Has Content	true
+
+# Test section level filtering
+query I
+SELECT len(md_extract_sections(E'# H1\n## H2\n### H3', 2, 2));
+----
+1
