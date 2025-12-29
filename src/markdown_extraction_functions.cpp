@@ -307,7 +307,7 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
                 for (const auto &header : headers) {
                     header_values.push_back(Value(header));
                 }
-                
+
                 // Create data rows as list of lists
                 vector<Value> row_values;
                 for (const auto &row : rows) {
@@ -317,54 +317,7 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
                     }
                     row_values.push_back(Value::LIST(cell_values));
                 }
-                
-                // Build JSON using DuckDB's native JSON construction
-                child_list_t<Value> json_children;
-                
-                // Headers array
-                json_children.push_back({"headers", Value::LIST(header_values)});
-                
-                // Data array (2D)  
-                json_children.push_back({"data", Value::LIST(row_values)});
-                
-                // Rows as objects
-                vector<Value> object_rows;
-                for (const auto &row : rows) {
-                    child_list_t<Value> row_obj;
-                    for (size_t j = 0; j < headers.size() && j < row.size(); j++) {
-                        row_obj.push_back({headers[j], Value(row[j])});
-                    }
-                    object_rows.push_back(Value::STRUCT(row_obj));
-                }
-                json_children.push_back({"rows", Value::LIST(object_rows)});
-                
-                // Metadata
-                child_list_t<Value> metadata_children;
-                metadata_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(table.line_number))});
-                metadata_children.push_back({"num_columns", Value::BIGINT(static_cast<int64_t>(table.num_columns))});
-                metadata_children.push_back({"num_rows", Value::BIGINT(static_cast<int64_t>(table.num_rows))});
-                json_children.push_back({"metadata", Value::STRUCT(metadata_children)});
-                
-                Value json_value = Value::STRUCT(json_children);
-                
-                // Build structure description 
-                child_list_t<Value> structure_children;
-                structure_children.push_back({"table_name", Value("table_" + std::to_string(table_idx))});
-                
-                vector<Value> column_info;
-                for (size_t i = 0; i < headers.size(); i++) {
-                    child_list_t<Value> col_children;
-                    col_children.push_back({"name", Value(headers[i])});
-                    col_children.push_back({"index", Value::BIGINT(static_cast<int64_t>(i))});
-                    col_children.push_back({"type", Value("string")});
-                    column_info.push_back(Value::STRUCT(col_children));
-                }
-                structure_children.push_back({"columns", Value::LIST(column_info)});
-                structure_children.push_back({"row_count", Value::BIGINT(static_cast<int64_t>(rows.size()))});
-                structure_children.push_back({"source_line", Value::BIGINT(static_cast<int64_t>(table.line_number))});
-                
-                Value structure_value = Value::STRUCT(structure_children);
-                
+
                 // Create struct for this table
                 child_list_t<Value> table_struct_children;
                 table_struct_children.push_back({"table_index", Value::BIGINT(static_cast<int64_t>(table_idx))});
@@ -373,15 +326,21 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
                 table_struct_children.push_back({"num_rows", Value::BIGINT(static_cast<int64_t>(rows.size()))});
                 table_struct_children.push_back({"headers", Value::LIST(header_values)});
                 table_struct_children.push_back({"table_data", Value::LIST(row_values)});
-                table_struct_children.push_back({"table_json", json_value});
-                table_struct_children.push_back({"json_structure", structure_value});
-                
+
                 struct_values.push_back(Value::STRUCT(table_struct_children));
             }
             
         if (struct_values.empty()) {
-            // For empty lists, we need to specify the type - use a simple empty list
-            result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
+            // For empty lists, use the correct struct type
+            auto empty_list_type = LogicalType::LIST(LogicalType::STRUCT({
+                {"table_index", LogicalType(LogicalTypeId::BIGINT)},
+                {"line_number", LogicalType(LogicalTypeId::BIGINT)},
+                {"num_columns", LogicalType(LogicalTypeId::BIGINT)},
+                {"num_rows", LogicalType(LogicalTypeId::BIGINT)},
+                {"headers", LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR))},
+                {"table_data", LogicalType::LIST(LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR)))}
+            }));
+            result.SetValue(i, Value::LIST(empty_list_type, {}));
         } else {
             result.SetValue(i, Value::LIST(struct_values));
         }
@@ -433,9 +392,7 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
         {"num_columns", LogicalType(LogicalTypeId::BIGINT)},
         {"num_rows", LogicalType(LogicalTypeId::BIGINT)},
         {"headers", LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR))},
-        {"table_data", LogicalType::LIST(LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR)))},
-        {"table_json", LogicalType::STRUCT({})}, // Complex nested struct
-        {"json_structure", LogicalType::STRUCT({})} // Complex nested struct
+        {"table_data", LogicalType::LIST(LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR)))}
     });
     
     // Register md_extract_code_blocks scalar function

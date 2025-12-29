@@ -451,3 +451,43 @@ query I
 SELECT len(md_extract_sections(E'# H1\n## H2\n### H3', 2, 2));
 ----
 1
+
+#===================================================================
+# Test 13: md_extract_tables_json Edge Cases
+#===================================================================
+
+# Test empty input
+query I
+SELECT len(md_extract_tables_json(''));
+----
+0
+
+# Test no tables in content
+query I
+SELECT len(md_extract_tables_json('Just text, no tables'));
+----
+0
+
+# Test basic table structure
+query IIII
+SELECT t.table_index, t.num_columns, t.num_rows, t.headers
+FROM (
+  SELECT UNNEST(md_extract_tables_json(E'| A | B |\n|---|---|\n| 1 | 2 |')) as t
+);
+----
+0	2	1	[A, B]
+
+# Test table data extraction
+query I
+SELECT t.table_data
+FROM (
+  SELECT UNNEST(md_extract_tables_json(E'| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |')) as t
+);
+----
+[[1, 2], [3, 4]]
+
+# Test multiple tables
+query I
+SELECT len(md_extract_tables_json(E'| A |\n|---|\n| 1 |\n\nText\n\n| B |\n|---|\n| 2 |'));
+----
+2
