@@ -185,8 +185,12 @@ std::vector<MarkdownSection> ExtractHeadings(const std::string& markdown_str, in
 // Utility Functions
 //===--------------------------------------------------------------------===//
 
-// Generate breadcrumb path for a section
-std::string GenerateBreadcrumb(const std::string& file_path, const std::string& section_id);
+// Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
+// Parameters: markdown_content - the markdown document
+//             section_id - the target section ID (lowercase)
+//             separator - the separator between titles (default " > ")
+std::string GenerateBreadcrumb(const std::string& markdown_content, const std::string& section_id,
+                               const std::string& separator = " > ");
 
 // Validate internal links
 bool ValidateInternalLink(const std::string& markdown_str, const std::string& link_target);

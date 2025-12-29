@@ -1148,9 +1148,53 @@ std::vector<MarkdownTable> ExtractTables(const std::string& markdown_str) {
 // Utility Functions
 //===--------------------------------------------------------------------===//
 
-std::string GenerateBreadcrumb(const std::string& file_path, const std::string& section_id) {
-    // TODO: Build full breadcrumb path by walking up parent sections
-    return file_path + "#" + section_id;
+std::string GenerateBreadcrumb(const std::string& markdown_content, const std::string& section_id,
+                               const std::string& separator) {
+    // Parse sections from markdown
+    auto sections = ExtractSections(markdown_content, 1, 6, true);
+
+    if (sections.empty()) {
+        return "";
+    }
+
+    // Build a map of section_id -> section for quick lookup
+    std::map<std::string, const MarkdownSection*> section_map;
+    for (const auto& section : sections) {
+        section_map[section.id] = &section;
+    }
+
+    // Find the target section
+    auto it = section_map.find(section_id);
+    if (it == section_map.end()) {
+        return "";  // Section not found
+    }
+
+    // Walk up the parent chain to collect titles
+    std::vector<std::string> titles;
+    const MarkdownSection* current = it->second;
+
+    while (current != nullptr) {
+        titles.push_back(current->title);
+        if (current->parent_id.empty()) {
+            break;
+        }
+        auto parent_it = section_map.find(current->parent_id);
+        current = (parent_it != section_map.end()) ? parent_it->second : nullptr;
+    }
+
+    // Reverse to get root-to-leaf order
+    std::reverse(titles.begin(), titles.end());
+
+    // Join with separator
+    std::string result;
+    for (size_t i = 0; i < titles.size(); i++) {
+        if (i > 0) {
+            result += separator;
+        }
+        result += titles[i];
+    }
+
+    return result;
 }
 
 bool ValidateInternalLink(const std::string& markdown_str, const std::string& link_target) {

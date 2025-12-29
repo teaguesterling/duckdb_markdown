@@ -491,3 +491,43 @@ query I
 SELECT len(md_extract_tables_json(E'| A |\n|---|\n| 1 |\n\nText\n\n| B |\n|---|\n| 2 |'));
 ----
 2
+
+#===================================================================
+# Test 14: md_section_breadcrumb
+#===================================================================
+
+# Test deep section breadcrumb
+query I
+SELECT md_section_breadcrumb(E'# Top\n\n## Middle\n\n### Deep', 'deep');
+----
+Top > Middle > Deep
+
+# Test middle section breadcrumb
+query I
+SELECT md_section_breadcrumb(E'# Top\n\n## Middle\n\n### Deep', 'middle');
+----
+Top > Middle
+
+# Test top-level section breadcrumb
+query I
+SELECT md_section_breadcrumb(E'# Top\n\n## Middle\n\n### Deep', 'top');
+----
+Top
+
+# Test section not found returns empty
+query I
+SELECT md_section_breadcrumb(E'# Top\n\n## Middle', 'notfound');
+----
+(empty)
+
+# Test empty content returns empty
+query I
+SELECT md_section_breadcrumb('', 'test');
+----
+(empty)
+
+# Test complex hierarchy
+query I
+SELECT md_section_breadcrumb(E'# Root\n\n## Branch A\n\n### Leaf A1\n\n## Branch B\n\n### Leaf B1', 'leaf-a1');
+----
+Root > Branch A > Leaf A1
