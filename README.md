@@ -112,6 +112,37 @@ Reads Markdown files and returns one row per file.
 
 **Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(file_path VARCHAR, content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` with `include_filepath := true`
 
+#### `read_markdown_blocks(files, [parameters...])`
+Reads Markdown files and parses them into block-level elements (headings, paragraphs, code blocks, lists, tables, etc.).
+
+**Parameters:**
+- `files` (required) - File path, glob pattern, or list of patterns
+- `include_filepath := false` - Include file_path column in output
+
+**Returns:** `(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)`
+
+**Block Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `frontmatter`
+
+**Encoding:** `text` for plain content, `json` for structured content (lists, tables), `yaml` for frontmatter
+
+```sql
+-- Parse document into blocks
+SELECT block_type, content, level
+FROM read_markdown_blocks('README.md')
+ORDER BY block_order;
+
+-- Extract all code blocks with their languages
+SELECT content, attributes['language'] as lang
+FROM read_markdown_blocks('docs/**/*.md')
+WHERE block_type = 'code';
+
+-- Round-trip: read blocks, modify, write back
+COPY (
+  SELECT block_type, content, level, encoding, attributes
+  FROM read_markdown_blocks('doc.md')
+) TO 'copy.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
+
 #### `read_markdown_sections(files, [parameters...])`
 Reads Markdown files and parses them into hierarchical sections.
 
@@ -159,7 +190,7 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_extract_metadata(markdown)`** - Extract frontmatter metadata as `MAP(VARCHAR, VARCHAR)`
 - **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. With `include_subsections := true`, includes all nested content (full mode); default is minimal mode.
 - **`md_extract_sections(markdown, [min_level, max_level, content_mode])`** - Extract all sections as a list. Supports optional level filtering and content_mode ('minimal', 'full', 'smart').
-- **`md_section_breadcrumb(file_path, section_id)`** - Generate breadcrumb navigation for section
+- **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
 - **`value_to_md(value)`** - Convert any value to markdown representation
 
 ### Document Processing Examples
@@ -326,6 +357,45 @@ title: Generated Doc
 Main content
 ```
 
+### Blocks Mode
+
+Export block-level document representation for full-fidelity round-trips. This mode complements `read_markdown_blocks()`:
+
+```sql
+-- Read blocks from a file
+CREATE TABLE blocks AS
+SELECT block_type, content, level, encoding, attributes
+FROM read_markdown_blocks('source.md');
+
+-- Modify blocks
+UPDATE blocks SET content = upper(content) WHERE block_type = 'heading';
+
+-- Write back to markdown
+COPY blocks TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
+
+**Blocks Mode Options:**
+```sql
+COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
+    markdown_mode 'blocks',
+    block_type_column 'block_type',  -- Column with block type (default: 'block_type')
+    content_column 'content',         -- Column with block content (default: 'content')
+    level_column 'level',             -- Column with level/depth (default: 'level')
+    encoding_column 'encoding',       -- Column with encoding type (default: 'encoding')
+    attributes_column 'attributes'    -- Column with attributes map (default: 'attributes')
+);
+```
+
+**Block Rendering:**
+- `heading` - Rendered as `# Title` (level determines # count)
+- `paragraph` - Plain text with blank lines
+- `code` - Fenced code blocks with language from `attributes['language']`
+- `blockquote` - Prefixed with `>`
+- `list` - JSON array rendered as bullet/numbered list (uses `attributes['ordered']`)
+- `table` - JSON object rendered as markdown table
+- `hr` - Horizontal rule `---`
+- `frontmatter` - YAML block between `---` delimiters
+
 ## Use Cases
 
 ### Documentation Analysis
@@ -418,7 +488,7 @@ All functions return structured data using `LIST<STRUCT>` types:
 -- Code blocks
 LIST<STRUCT(language VARCHAR, code VARCHAR, line_number BIGINT, info_string VARCHAR)>
 
--- Links  
+-- Links (is_reference=true for reference-style links like [text][ref])
 LIST<STRUCT(text VARCHAR, url VARCHAR, title VARCHAR, is_reference BOOLEAN, line_number BIGINT)>
 
 -- Images
@@ -426,6 +496,12 @@ LIST<STRUCT(alt_text VARCHAR, url VARCHAR, title VARCHAR, line_number BIGINT)>
 
 -- Table rows
 LIST<STRUCT(table_index BIGINT, row_type VARCHAR, row_index BIGINT, column_index BIGINT, cell_value VARCHAR, line_number BIGINT, num_columns BIGINT, num_rows BIGINT)>
+
+-- Tables JSON
+LIST<STRUCT(table_index BIGINT, line_number BIGINT, num_columns BIGINT, num_rows BIGINT, headers VARCHAR[], table_data VARCHAR[][])>
+
+-- Blocks (from read_markdown_blocks)
+(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)
 ```
 
 Use with `UNNEST()` to flatten into rows or `len()` to count elements.
@@ -463,14 +539,16 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.2.0):**
-- Complete file reading functions (`read_markdown`, `read_markdown_sections`) with full parameter support
-- **COPY TO markdown** with table and document modes (see below)
+**✅ Available (v1.3.0):**
+- Complete file reading functions (`read_markdown`, `read_markdown_sections`, `read_markdown_blocks`) with full parameter support
+- **COPY TO markdown** with table, document, and blocks modes
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
-- Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`)
+- Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`, `md_section_breadcrumb`)
+- **Block-level document representation** with `read_markdown_blocks()` and `markdown_mode 'blocks'`
 - **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
 - **Fragment syntax** for filtering sections: `'file.md#section-id'`
 - **Section hierarchy** with `section_path` column for navigation
+- **Reference link detection** in `md_extract_links` (`is_reference` field)
 - Advanced section filtering and processing options (min/max level, max_depth, content inclusion, etc.)
 - Frontmatter metadata as `MAP(VARCHAR, VARCHAR)` for easy field access
 - Replacement scan support for table-like syntax (`FROM '*.md'`)
@@ -479,12 +557,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 549+ passing assertions
-
-**🚧 In Development:**
-- **Block-level document representation** (`markdown_doc_block` type) - See [docs/markdown_doc_block.md](docs/markdown_doc_block.md)
-- `read_markdown_blocks()` function for full-fidelity document parsing
-- `markdown_mode 'blocks'` for COPY TO with block-level control
+- Full test suite with 761 passing assertions across 16 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)
@@ -513,9 +586,10 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 549+ passing assertions across 15 test files:
+Comprehensive test suite with 761 passing assertions across 16 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
+- **Block-level tests**: Round-trip parsing and rendering
 - **Performance tests**: Large-scale document processing
 - **Cross-platform tests**: File system compatibility scenarios
 - **Integration tests**: Complex queries and real-world usage patterns
