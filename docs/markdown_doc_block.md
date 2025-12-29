@@ -1,39 +1,46 @@
 # Markdown Document Block Type
 
-This document specifies the `markdown_doc_block` type, a structured representation of Markdown document content that enables round-trip document processing and potential interchange with other document format extensions.
+This document specifies the block-level document representation used by the DuckDB Markdown extension. This structured representation enables round-trip document processing and provides a foundation for potential interchange with other document format extensions.
 
 ## Overview
 
-The `markdown_doc_block` type represents a single block-level element in a Markdown document. A complete document is represented as `LIST<markdown_doc_block>`, preserving the sequential order of blocks.
+The markdown extension represents documents as a sequence of block-level elements. Each block is a row with standardized columns, enabling SQL-based document manipulation while preserving document structure.
 
 This design enables:
-- **Round-trip processing**: Read markdown, transform with SQL, write back to markdown
-- **Format conversion**: Other extensions (HTML, XML, etc.) can define compatible block types with converter macros
+- **Round-trip processing**: Read markdown → transform with SQL → write back to markdown
+- **Block-level queries**: Filter, aggregate, and analyze document structure
 - **Programmatic document generation**: Build documents from structured data
+- **Format conversion**: Foundation for cross-format document interchange
 
-## Type Definition
+## Schema
+
+The `read_markdown_blocks()` function returns rows with these columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `block_type` | VARCHAR | Block type identifier (see Block Types below) |
+| `content` | VARCHAR | Primary content of the block |
+| `level` | INTEGER | Heading level (1-6), nesting depth, or NULL |
+| `encoding` | VARCHAR | Content encoding: `'text'`, `'json'`, `'yaml'` |
+| `attributes` | MAP(VARCHAR, VARCHAR) | Type-specific metadata |
+| `block_order` | INTEGER | Sequential position in document |
+| `file_path` | VARCHAR | Source file (when `include_filepath := true`) |
+
+### Custom Type
+
+A `markdown_doc_block` STRUCT type is also registered for programmatic document construction:
 
 ```sql
-CREATE TYPE markdown_doc_block AS STRUCT (
-    block_type VARCHAR,                   -- Block type identifier
-    content VARCHAR,                      -- Primary content
-    level INTEGER,                        -- Heading level (1-6), nesting depth, or NULL
-    encoding VARCHAR,                     -- Content encoding hint
-    attributes MAP(VARCHAR, VARCHAR),     -- Type-specific attributes
-    block_order INTEGER                   -- Optional ordering for table storage
-);
+-- Create a block manually
+SELECT {
+    block_type: 'heading',
+    content: 'Introduction',
+    level: 1,
+    encoding: 'text',
+    attributes: MAP{'id': 'introduction'},
+    block_order: 1
+}::markdown_doc_block;
 ```
-
-### Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `block_type` | VARCHAR | Identifies the block type (see Block Types below) |
-| `content` | VARCHAR | Primary content of the block |
-| `level` | INTEGER | Heading level (1-6), nesting depth for lists/blockquotes, or NULL |
-| `encoding` | VARCHAR | How to interpret `content`: `'text'` (default), `'json'`, `'yaml'`, `'base64'` |
-| `attributes` | MAP(VARCHAR, VARCHAR) | Type-specific metadata (language, id, class, etc.) |
-| `block_order` | INTEGER | Optional field for maintaining order when stored in tables |
 
 ## Block Types
 
@@ -41,29 +48,24 @@ CREATE TYPE markdown_doc_block AS STRUCT (
 
 | Type | Description | Content | Level | Common Attributes |
 |------|-------------|---------|-------|-------------------|
-| `heading` | ATX heading (`#`, `##`, etc.) | Heading text | 1-6 | `id`, `class` |
-| `paragraph` | Text paragraph | Paragraph text | NULL | `class` |
-| `code` | Fenced code block | Code content | NULL | `language`, `id`, `class` |
-| `blockquote` | Block quotation | Quote content | Nesting depth (1+) | `class` |
-| `list` | Ordered or unordered list | JSON-encoded items | Nesting depth (1+) | `ordered`, `start` |
-| `table` | Table | JSON-encoded table data | NULL | `alignments` |
-| `image` | Image (block-level) | Image URL or base64 | NULL | `alt`, `title` |
-| `hr` | Horizontal rule | NULL or empty | NULL | - |
-| `html` | Raw HTML block | HTML content | NULL | - |
-| `raw` | Raw content (pass-through) | Any content | NULL | `format` |
-| `frontmatter` | YAML frontmatter | YAML content | 0 | Any metadata keys |
+| `heading` | ATX heading (`#`, `##`, etc.) | Heading text | 1-6 | `id` |
+| `paragraph` | Text paragraph | Paragraph text | NULL | - |
+| `code` | Fenced code block | Code content | NULL | `language` |
+| `blockquote` | Block quotation | Quote content | Nesting depth (1+) | - |
+| `list` | Ordered or unordered list | JSON array of items | 1 | `ordered`, `start` |
+| `table` | Table | JSON object | NULL | - |
+| `hr` | Horizontal rule | Empty | NULL | - |
+| `frontmatter` | YAML frontmatter | YAML content | 0 | - |
 
 ### Heading
 
 ```sql
-{
-    block_type: 'heading',
-    content: 'Introduction',
-    level: 1,
-    encoding: 'text',
-    attributes: {'id': 'introduction'},
-    block_order: NULL
-}
+-- Example from read_markdown_blocks
+block_type: 'heading'
+content: 'Introduction'
+level: 1
+encoding: 'text'
+attributes: {'id': 'introduction'}
 ```
 
 Renders as:
@@ -74,14 +76,11 @@ Renders as:
 ### Paragraph
 
 ```sql
-{
-    block_type: 'paragraph',
-    content: 'This is a paragraph with **bold** and *italic* text.',
-    level: NULL,
-    encoding: 'text',
-    attributes: {},
-    block_order: NULL
-}
+block_type: 'paragraph'
+content: 'This is a paragraph with **bold** and *italic* text.'
+level: NULL
+encoding: 'text'
+attributes: {}
 ```
 
 Inline formatting is preserved as-is in the content string.
@@ -89,14 +88,11 @@ Inline formatting is preserved as-is in the content string.
 ### Code Block
 
 ```sql
-{
-    block_type: 'code',
-    content: 'def hello():\n    print("Hello, world!")',
-    level: NULL,
-    encoding: 'text',
-    attributes: {'language': 'python'},
-    block_order: NULL
-}
+block_type: 'code'
+content: 'def hello():\n    print("Hello, world!")'
+level: NULL
+encoding: 'text'
+attributes: {'language': 'python'}
 ```
 
 Renders as:
@@ -110,38 +106,28 @@ def hello():
 ### Blockquote
 
 ```sql
-{
-    block_type: 'blockquote',
-    content: 'This is a quoted passage.\n\nWith multiple paragraphs.',
-    level: 1,
-    encoding: 'text',
-    attributes: {},
-    block_order: NULL
-}
+block_type: 'blockquote'
+content: 'This is a quoted passage.'
+level: 1
+encoding: 'text'
+attributes: {}
 ```
 
 Renders as:
 ```markdown
 > This is a quoted passage.
->
-> With multiple paragraphs.
 ```
-
-For nested blockquotes, use `level: 2`, `level: 3`, etc.
 
 ### List
 
-Lists use JSON encoding to represent structure:
+Lists use JSON encoding to represent items:
 
 ```sql
-{
-    block_type: 'list',
-    content: '["First item", "Second item", "Third item"]',
-    level: 1,
-    encoding: 'json',
-    attributes: {'ordered': 'false'},
-    block_order: NULL
-}
+block_type: 'list'
+content: '["First item", "Second item", "Third item"]'
+level: 1
+encoding: 'json'
+attributes: {'ordered': 'false'}
 ```
 
 Renders as:
@@ -153,25 +139,18 @@ Renders as:
 
 **Ordered list:**
 ```sql
-{
-    block_type: 'list',
-    content: '["First", "Second", "Third"]',
-    level: 1,
-    encoding: 'json',
-    attributes: {'ordered': 'true', 'start': '1'},
-    block_order: NULL
-}
+block_type: 'list'
+content: '["First", "Second", "Third"]'
+level: 1
+encoding: 'json'
+attributes: {'ordered': 'true', 'start': '1'}
 ```
 
-**Nested list (JSON structure):**
-```json
-{
-    "items": [
-        "First item",
-        {"text": "Second item", "children": ["Nested a", "Nested b"]},
-        "Third item"
-    ]
-}
+Renders as:
+```markdown
+1. First
+2. Second
+3. Third
 ```
 
 ### Table
@@ -179,68 +158,29 @@ Renders as:
 Tables use JSON encoding:
 
 ```sql
-{
-    block_type: 'table',
-    content: '{"headers": ["Name", "Age", "City"], "rows": [["Alice", "30", "NYC"], ["Bob", "25", "LA"]]}',
-    level: NULL,
-    encoding: 'json',
-    attributes: {'alignments': 'left,right,left'},
-    block_order: NULL
-}
-```
-
-**JSON Schema for tables:**
-```json
-{
-    "headers": ["Column1", "Column2", ...],
-    "rows": [
-        ["cell1", "cell2", ...],
-        ["cell1", "cell2", ...]
-    ]
-}
-```
-
-Alignments are specified in attributes as comma-separated values: `left`, `right`, `center`.
-
-Renders as:
-```markdown
-| Name | Age | City |
-|---|---:|---|
-| Alice | 30 | NYC |
-| Bob | 25 | LA |
-```
-
-### Image
-
-```sql
-{
-    block_type: 'image',
-    content: 'https://example.com/image.png',
-    level: NULL,
-    encoding: 'text',
-    attributes: {'alt': 'Example image', 'title': 'Figure 1'},
-    block_order: NULL
-}
+block_type: 'table'
+content: '{"headers": ["Name", "Age"], "rows": [["Alice", "30"], ["Bob", "25"]]}'
+level: NULL
+encoding: 'json'
+attributes: {}
 ```
 
 Renders as:
 ```markdown
-![Example image](https://example.com/image.png "Figure 1")
+| Name | Age |
+|---|---|
+| Alice | 30 |
+| Bob | 25 |
 ```
-
-For embedded images, use `encoding: 'base64'` and include the data URI in content.
 
 ### Horizontal Rule
 
 ```sql
-{
-    block_type: 'hr',
-    content: NULL,
-    level: NULL,
-    encoding: 'text',
-    attributes: {},
-    block_order: NULL
-}
+block_type: 'hr'
+content: ''
+level: NULL
+encoding: 'text'
+attributes: {}
 ```
 
 Renders as:
@@ -251,14 +191,11 @@ Renders as:
 ### Frontmatter
 
 ```sql
-{
-    block_type: 'frontmatter',
-    content: 'title: My Document\nauthor: Jane Doe\ndate: 2024-01-15',
-    level: 0,
-    encoding: 'yaml',
-    attributes: {},
-    block_order: NULL
-}
+block_type: 'frontmatter'
+content: 'title: My Document\nauthor: Jane Doe'
+level: 0
+encoding: 'yaml'
+attributes: {}
 ```
 
 Renders as:
@@ -266,7 +203,6 @@ Renders as:
 ---
 title: My Document
 author: Jane Doe
-date: 2024-01-15
 ---
 ```
 
@@ -277,159 +213,184 @@ Note: `level: 0` indicates frontmatter, consistent with `read_markdown_sections`
 ### Reading Blocks
 
 ```sql
--- Read markdown file(s) and return blocks
-SELECT * FROM read_markdown_blocks('document.md');
+-- Read markdown file and return one row per block
+SELECT block_type, content, level, attributes
+FROM read_markdown_blocks('document.md')
+ORDER BY block_order;
 
--- Returns:
--- file_path VARCHAR (optional)
--- blocks LIST<markdown_doc_block>
--- metadata MAP(VARCHAR, VARCHAR)
+-- With file path for multi-file queries
+SELECT file_path, block_type, content
+FROM read_markdown_blocks('docs/**/*.md', include_filepath := true);
 
--- Unnest for block-level operations
-SELECT b.block_type, b.content, b.attributes['language'] as lang
-FROM read_markdown_blocks('doc.md'), UNNEST(blocks) AS b
-WHERE b.block_type = 'code';
+-- Filter to specific block types
+SELECT content, attributes['language'] as lang
+FROM read_markdown_blocks('tutorial.md')
+WHERE block_type = 'code';
+
+-- Count blocks by type
+SELECT block_type, count(*) as count
+FROM read_markdown_blocks('**/*.md')
+GROUP BY block_type
+ORDER BY count DESC;
 ```
 
 ### Writing Blocks
 
-```sql
--- COPY with blocks mode
-COPY (SELECT blocks FROM my_docs)
-TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
-
--- From a table with block columns
-CREATE TABLE doc_blocks AS
-SELECT * FROM UNNEST([
-    {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: {}, block_order: 1},
-    {block_type: 'paragraph', content: 'Content here.', level: NULL, encoding: 'text', attributes: {}, block_order: 2}
-]::LIST<markdown_doc_block>);
-
-COPY doc_blocks TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
-```
-
-### Scalar Functions
+Use `COPY TO` with `markdown_mode 'blocks'`:
 
 ```sql
--- Convert markdown string to blocks
-SELECT md_to_blocks(content) FROM documents;
+-- Round-trip: read, transform, write
+COPY (
+    SELECT block_type, content, level, encoding, attributes
+    FROM read_markdown_blocks('input.md')
+) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
--- Convert blocks to markdown string
-SELECT md_from_blocks(blocks) FROM my_docs;
+-- Transform headings to uppercase
+COPY (
+    SELECT
+        block_type,
+        CASE WHEN block_type = 'heading' THEN upper(content) ELSE content END as content,
+        level,
+        encoding,
+        attributes
+    FROM read_markdown_blocks('doc.md')
+    ORDER BY block_order
+) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+-- Generate document from scratch
+COPY (
+    SELECT * FROM (VALUES
+        ('heading', 'My Document', 1, 'text', MAP{}),
+        ('paragraph', 'Welcome to this guide.', NULL, 'text', MAP{}),
+        ('code', 'print("hello")', NULL, 'text', MAP{'language': 'python'})
+    ) AS t(block_type, content, level, encoding, attributes)
+) TO 'generated.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```
 
-## Document Interchange
-
-The `markdown_doc_block` type is designed to enable document interchange between format-specific extensions. Each extension defines its own block type:
-
-- `markdown_doc_block` - This extension (Markdown)
-- `html_doc_block` - Hypothetical HTML extension
-- `xml_doc_block` - Hypothetical XML extension
-
-### Converter Macros
-
-Extensions can provide converter macros for interoperability:
+### COPY TO Options
 
 ```sql
--- Hypothetical: Convert HTML blocks to Markdown blocks
-SELECT html_to_markdown_blocks(html_blocks) FROM html_docs;
-
--- Hypothetical: Convert Markdown blocks to HTML blocks
-SELECT markdown_to_html_blocks(md_blocks) FROM markdown_docs;
+COPY data TO 'file.md' (FORMAT MARKDOWN,
+    markdown_mode 'blocks',
+    block_type_column 'block_type',   -- Default: 'block_type'
+    content_column 'content',          -- Default: 'content'
+    level_column 'level',              -- Default: 'level'
+    encoding_column 'encoding',        -- Default: 'encoding'
+    attributes_column 'attributes'     -- Default: 'attributes'
+);
 ```
-
-### Common Block Type Mapping
-
-| Concept | markdown_doc_block | html_doc_block (hypothetical) |
-|---------|-------------------|-------------------------------|
-| Heading | `heading` (level 1-6) | `h1`-`h6` |
-| Paragraph | `paragraph` | `p` |
-| Code | `code` | `pre > code` |
-| Quote | `blockquote` | `blockquote` |
-| List | `list` | `ul`, `ol` |
-| Table | `table` | `table` |
-| Image | `image` | `img` |
-| Divider | `hr` | `hr` |
 
 ## Examples
 
-### Complete Document
+### Extract All Code Examples
 
 ```sql
-SELECT [
-    {block_type: 'frontmatter', content: 'title: Guide\nauthor: Alice', level: 0, encoding: 'yaml', attributes: {}, block_order: 1},
-    {block_type: 'heading', content: 'Introduction', level: 1, encoding: 'text', attributes: {'id': 'introduction'}, block_order: 2},
-    {block_type: 'paragraph', content: 'Welcome to this guide.', level: NULL, encoding: 'text', attributes: {}, block_order: 3},
-    {block_type: 'heading', content: 'Getting Started', level: 2, encoding: 'text', attributes: {'id': 'getting-started'}, block_order: 4},
-    {block_type: 'paragraph', content: 'First, install the package:', level: NULL, encoding: 'text', attributes: {}, block_order: 5},
-    {block_type: 'code', content: 'pip install example', level: NULL, encoding: 'text', attributes: {'language': 'bash'}, block_order: 6},
-    {block_type: 'heading', content: 'Conclusion', level: 1, encoding: 'text', attributes: {'id': 'conclusion'}, block_order: 7},
-    {block_type: 'paragraph', content: 'Thanks for reading!', level: NULL, encoding: 'text', attributes: {}, block_order: 8}
-]::LIST<markdown_doc_block> as document;
-```
-
-### Round-Trip Processing
-
-```sql
--- Read, transform, write
-COPY (
-    SELECT list_transform(blocks, b ->
-        CASE
-            WHEN b.block_type = 'heading'
-            THEN struct_pack(
-                block_type := b.block_type,
-                content := upper(b.content),
-                level := b.level,
-                encoding := b.encoding,
-                attributes := b.attributes,
-                block_order := b.block_order
-            )::markdown_doc_block
-            ELSE b
-        END
-    ) as blocks
-    FROM read_markdown_blocks('input.md')
-) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
-```
-
-### Filter and Extract
-
-```sql
--- Extract all code blocks with their context
-WITH doc AS (
-    SELECT UNNEST(blocks) as b,
-           generate_subscripts(blocks, 1) as idx
-    FROM read_markdown_blocks('tutorial.md')
-)
+-- Get all Python code blocks from documentation
 SELECT
-    b.content as code,
-    b.attributes['language'] as language
-FROM doc
-WHERE b.block_type = 'code';
+    file_path,
+    content as code,
+    block_order
+FROM read_markdown_blocks('docs/**/*.md', include_filepath := true)
+WHERE block_type = 'code'
+  AND attributes['language'] = 'python'
+ORDER BY file_path, block_order;
 ```
 
-### Generate Documentation
+### Document Statistics
 
 ```sql
--- Generate markdown from database schema
-SELECT list_aggregate([
-    {block_type: 'heading', content: table_name, level: 2, encoding: 'text', attributes: {}, block_order: NULL},
-    {block_type: 'paragraph', content: 'Columns:', level: NULL, encoding: 'text', attributes: {}, block_order: NULL},
-    {block_type: 'table', content: json_object(
-        'headers', ['Name', 'Type', 'Nullable'],
-        'rows', list_transform(columns, c -> [c.name, c.type, c.nullable::VARCHAR])
-    ), level: NULL, encoding: 'json', attributes: {}, block_order: NULL}
-]::LIST<markdown_doc_block>, 'list_concat') as blocks
-FROM information_schema.tables
-JOIN information_schema.columns USING (table_name);
+-- Analyze document structure
+SELECT
+    file_path,
+    count(*) FILTER (WHERE block_type = 'heading') as headings,
+    count(*) FILTER (WHERE block_type = 'code') as code_blocks,
+    count(*) FILTER (WHERE block_type = 'paragraph') as paragraphs,
+    count(*) FILTER (WHERE block_type = 'table') as tables
+FROM read_markdown_blocks('**/*.md', include_filepath := true)
+GROUP BY file_path;
 ```
 
-## Compatibility Notes
+### Filter and Reassemble
 
-- **Inline formatting**: Preserved as-is in content strings (e.g., `**bold**`, `*italic*`, `[links](url)`)
-- **HTML in Markdown**: Use `block_type: 'html'` for raw HTML blocks
-- **Unknown block types**: Writers should pass through unknown types using `raw` with appropriate encoding
-- **Empty content**: Use empty string `''` rather than NULL for blocks with no content (except `hr`)
+```sql
+-- Remove all code blocks from a document
+COPY (
+    SELECT block_type, content, level, encoding, attributes
+    FROM read_markdown_blocks('doc.md')
+    WHERE block_type != 'code'
+    ORDER BY block_order
+) TO 'doc_no_code.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
+
+### Merge Documents
+
+```sql
+-- Combine multiple documents with separators
+COPY (
+    SELECT block_type, content, level, encoding, attributes
+    FROM (
+        SELECT *, 1 as doc_order FROM read_markdown_blocks('intro.md')
+        UNION ALL
+        SELECT 'hr' as block_type, '' as content, NULL as level,
+               'text' as encoding, MAP{} as attributes, 999 as block_order, 2 as doc_order
+        UNION ALL
+        SELECT *, 3 as doc_order FROM read_markdown_blocks('main.md')
+    )
+    ORDER BY doc_order, block_order
+) TO 'combined.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
+
+## Block Rendering Rules
+
+When writing blocks to markdown:
+
+| Block Type | Rendering |
+|------------|-----------|
+| `heading` | `#` repeated `level` times, followed by content |
+| `paragraph` | Content followed by blank line |
+| `code` | Fenced with ``` and optional language from `attributes['language']` |
+| `blockquote` | Each line prefixed with `>` |
+| `list` | JSON array rendered as `- item` or `N. item` based on `attributes['ordered']` |
+| `table` | JSON object rendered as markdown table with `\|` separators |
+| `hr` | `---` |
+| `frontmatter` | Content wrapped in `---` delimiters |
+
+## Round-Trip Fidelity
+
+The block representation preserves document structure but normalizes some formatting:
+
+**Preserved:**
+- Block order and hierarchy
+- Heading levels
+- Code block languages
+- List ordering (ordered vs unordered)
+- Table structure
+- Frontmatter content
+- Inline formatting within blocks
+
+**Normalized:**
+- Whitespace between blocks (standardized to single blank line)
+- Heading style (always ATX `#` style, not Setext underlines)
+- Horizontal rule style (always `---`)
+- Code fence style (always triple backticks)
+
+## Future: Document Interchange
+
+The block representation is designed to enable document interchange between format-specific extensions. Future extensions could define compatible types:
+
+- `html_doc_block` - HTML documents
+- `xml_doc_block` - XML/XHTML documents
+- `rst_doc_block` - reStructuredText documents
+
+Converter functions would enable cross-format operations:
+
+```sql
+-- Hypothetical future API
+SELECT markdown_to_html_blocks(blocks) FROM markdown_docs;
+SELECT html_to_markdown_blocks(blocks) FROM html_docs;
+```
 
 ## Version History
 
+- **1.1** (2024-12): Updated to match flattened output implementation
 - **1.0** (2024): Initial specification
