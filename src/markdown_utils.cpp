@@ -3,6 +3,7 @@
 #include "duckdb/common/exception.hpp"
 #include <algorithm>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <map>
@@ -916,35 +917,49 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string& markdown_str) {
 
 std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str) {
     std::vector<MarkdownLink> links;
-    
+
     if (markdown_str.empty()) {
         return links;
     }
-    
+
+    // Pre-scan for reference link definitions to detect reference-style links
+    // Reference definitions look like: [id]: url "optional title"
+    // Pattern matches: [id]: followed by URL (optionally in angle brackets)
+    std::set<std::string> reference_urls;
+    std::regex ref_pattern(R"(^\s*\[([^\]]+)\]:\s+<?([^\s>]+)>?)", std::regex::multiline);
+    std::sregex_iterator ref_begin(markdown_str.begin(), markdown_str.end(), ref_pattern);
+    std::sregex_iterator ref_end;
+    for (auto it = ref_begin; it != ref_end; ++it) {
+        std::string url = (*it)[2].str();
+        reference_urls.insert(url);
+    }
+
     // Parse with cmark-gfm
     cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
     cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
     cmark_node *doc = cmark_parser_finish(parser);
-    
+
     // Walk the AST looking for link nodes
     cmark_iter *iter = cmark_iter_new(doc);
     cmark_event_type ev_type;
-    
+
     while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
         cmark_node *cur = cmark_iter_get_node(iter);
-        
+
         if (ev_type == CMARK_EVENT_ENTER && cmark_node_get_type(cur) == CMARK_NODE_LINK) {
             MarkdownLink link;
-            
+
             // Get link properties
             const char *url = cmark_node_get_url(cur);
             const char *title = cmark_node_get_title(cur);
-            
+
             link.url = url ? url : "";
             link.title = title ? title : "";
             link.line_number = cmark_node_get_start_line(cur);
-            link.is_reference = false; // TODO: Detect reference links
-            
+
+            // Check if this URL matches a reference definition
+            link.is_reference = reference_urls.find(link.url) != reference_urls.end();
+
             // Get link text from child text nodes
             cmark_node *child = cmark_node_first_child(cur);
             std::string text;
@@ -960,16 +975,16 @@ std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str) {
                 child = cmark_node_next(child);
             }
             link.text = text;
-            
+
             links.push_back(link);
         }
     }
-    
+
     // Cleanup
     cmark_iter_free(iter);
     cmark_node_free(doc);
     cmark_parser_free(parser);
-    
+
     return links;
 }
 

@@ -531,3 +531,43 @@ query I
 SELECT md_section_breadcrumb(E'# Root\n\n## Branch A\n\n### Leaf A1\n\n## Branch B\n\n### Leaf B1', 'leaf-a1');
 ----
 Root > Branch A > Leaf A1
+
+#===================================================================
+# Test 15: Reference Link Detection
+#===================================================================
+
+# Test inline link is not marked as reference
+query II
+SELECT link.text, link.is_reference
+FROM (SELECT UNNEST(md_extract_links('[Inline](http://example.com)')) as link);
+----
+Inline	false
+
+# Test reference link is detected
+query II
+SELECT link.text, link.is_reference
+FROM (SELECT UNNEST(md_extract_links(E'[Reference][ref]\n\n[ref]: http://reference.com')) as link);
+----
+Reference	true
+
+# Test mixed inline and reference links
+query II
+SELECT link.text, link.is_reference
+FROM (SELECT UNNEST(md_extract_links(E'[Inline](http://inline.com) and [Reference][id]\n\n[id]: http://ref.com')) as link);
+----
+Inline	false
+Reference	true
+
+# Test shortcut reference link (link text = reference id)
+query II
+SELECT link.text, link.is_reference
+FROM (SELECT UNNEST(md_extract_links(E'[Google]\n\n[Google]: http://google.com')) as link);
+----
+Google	true
+
+# Test angle bracket URL in reference definition
+query II
+SELECT link.text, link.is_reference
+FROM (SELECT UNNEST(md_extract_links(E'[Link][ref]\n\n[ref]: <http://example.com>')) as link);
+----
+Link	true
