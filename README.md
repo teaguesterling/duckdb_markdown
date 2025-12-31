@@ -264,7 +264,13 @@ WHERE section_path LIKE 'api-reference/%';
 
 ## COPY TO Markdown
 
-Export query results to Markdown files with two modes:
+Export query results to Markdown files. Three modes support different use cases:
+
+| Mode | Use Case | Input Columns |
+|------|----------|---------------|
+| `table` (default) | Export any query as a markdown table | Any columns |
+| `document` | Reconstruct markdown from sections | `level`, `title`, `content` |
+| `blocks` | Round-trip block-level representation | `block_type`, `content`, `level`, `encoding`, `attributes` |
 
 ### Table Mode (Default)
 
@@ -395,6 +401,29 @@ COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
 - `table` - JSON object rendered as markdown table
 - `hr` - Horizontal rule `---`
 - `frontmatter` - YAML block between `---` delimiters
+
+### Round-Trip Workflow Example
+
+Complete workflow reading, transforming, and writing markdown:
+
+```sql
+-- Read sections from source document
+CREATE TABLE my_sections AS
+SELECT level, title, content
+FROM read_markdown_sections('source.md', content_mode := 'minimal');
+
+-- Transform content (e.g., add prefix to all headings)
+UPDATE my_sections SET title = 'Chapter: ' || title WHERE level = 1;
+
+-- Write back to markdown
+COPY my_sections TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'document');
+
+-- Or use blocks for full-fidelity round-trip
+COPY (
+    SELECT block_type, content, level, encoding, attributes
+    FROM read_markdown_blocks('source.md')
+) TO 'copy.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
 
 ## Use Cases
 
