@@ -193,6 +193,44 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
 - **`value_to_md(value)`** - Convert any value to markdown representation
 
+### Duck Block Conversion Functions
+
+Convert document blocks back to Markdown. These functions complement `read_markdown_blocks()` for in-memory document transformations:
+
+- **`duck_block_to_md(block)`** - Convert a single `markdown_doc_block` to Markdown string
+- **`duck_blocks_to_md(blocks[])`** - Convert a list of blocks to a complete Markdown document
+- **`duck_blocks_to_sections(blocks[])`** - Convert blocks to a list of sections with hierarchy
+
+```sql
+-- Convert single block to markdown
+SELECT duck_block_to_md({
+    block_type: 'heading',
+    content: 'Hello World',
+    level: 1,
+    encoding: 'text',
+    attributes: MAP{},
+    block_order: 0
+}::markdown_doc_block);
+-- Returns: '# Hello World\n\n'
+
+-- Convert list of blocks to markdown document
+SELECT duck_blocks_to_md(list(b ORDER BY block_order))
+FROM read_markdown_blocks('source.md') b;
+
+-- Transform blocks in-memory and get markdown back
+SELECT duck_blocks_to_md([
+    {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
+    {block_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
+]::markdown_doc_block[]);
+
+-- Convert blocks to sections format for hierarchical processing
+SELECT s.section_id, s.level, s.title, length(s.content) as content_len
+FROM (
+    SELECT unnest(duck_blocks_to_sections(list(b ORDER BY block_order))) as s
+    FROM read_markdown_blocks('doc.md') b
+);
+```
+
 ### Document Processing Examples
 
 ```sql
