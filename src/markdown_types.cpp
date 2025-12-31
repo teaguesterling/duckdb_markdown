@@ -30,9 +30,9 @@ LogicalType MarkdownTypes::MarkdownDocBlockType() {
     struct_children.push_back(make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)));
     struct_children.push_back(make_pair("block_order", LogicalType::INTEGER));
 
-    auto block_type = LogicalType::STRUCT(std::move(struct_children));
-    block_type.SetAlias("markdown_doc_block");
-    return block_type;
+    // Note: We intentionally don't use SetAlias() here because it breaks struct_extract()
+    // The type is registered with the name "markdown_doc_block" in Register() instead
+    return LogicalType::STRUCT(std::move(struct_children));
 }
 
 static bool IsMarkdownType(const LogicalType& t) {
