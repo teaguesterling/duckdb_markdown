@@ -8,10 +8,12 @@ require markdown
 # Test: markdown_doc_block type exists
 # =============================================================================
 
+# Verify the markdown_doc_block type is registered and can be cast to
+# Note: typeof() returns full struct signature, not alias name (SetAlias breaks struct_extract)
 query I
-SELECT typeof({block_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{}, block_order: 1}::markdown_doc_block);
+SELECT ({block_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{}, block_order: 1}::markdown_doc_block).block_type;
 ----
-markdown_doc_block
+heading
 
 # =============================================================================
 # Test: Basic read_markdown_blocks from file (flattened output)
