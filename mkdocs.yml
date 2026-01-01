@@ -1,0 +1,12 @@
+site_name: DuckDB Markdown Extension
+site_description: Markdown processing capabilities for DuckDB
+repo_url: https://github.com/teaguesterling/duckdb_markdown
+
+theme:
+  name: readthedocs
+
+nav:
+  - Home: index.md
+  - Document Block Spec: doc_block_spec.md
+  - Markdown Implementation: markdown_doc_block.md
+  - Updating: UPDATING.md
