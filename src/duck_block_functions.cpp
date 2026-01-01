@@ -233,6 +233,10 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 		// Image: ![alt](src "title")
 		string src = GetAttribute(attributes, "src");
 		string alt = GetAttribute(attributes, "alt");
+		// Fall back to content as alt text if alt attribute is empty
+		if (alt.empty() && !content.empty()) {
+			alt = content;
+		}
 		string title = GetAttribute(attributes, "title");
 		result = "![" + alt + "](" + src;
 		if (!title.empty()) {
