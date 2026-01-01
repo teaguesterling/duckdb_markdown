@@ -1,5 +1,7 @@
 # DuckDB Markdown Extension
 
+[![Documentation Status](https://readthedocs.org/projects/duckdb-markdown/badge/?version=latest)](https://duckdb-markdown.readthedocs.io/)
+
 This extension adds Markdown processing capabilities to DuckDB, enabling structured analysis of Markdown documents and content extraction for documentation analysis, content auditing, and knowledge base processing.
 
 ## Features
