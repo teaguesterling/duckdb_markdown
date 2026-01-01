@@ -9,4 +9,5 @@ nav:
   - Home: index.md
   - Document Block Spec: doc_block_spec.md
   - Markdown Implementation: markdown_doc_block.md
+  - Ecosystem Integration: ecosystem.md
   - Updating: UPDATING.md

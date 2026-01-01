@@ -6,6 +6,7 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 
 - [Document Block Specification](doc_block_spec.md) - Format-agnostic specification for representing documents as blocks
 - [Markdown Implementation](markdown_doc_block.md) - Markdown-specific implementation details
+- [Ecosystem Integration](ecosystem.md) - Using with webbed (HTML/XML) and duck_block_utils
 - [Updating](UPDATING.md) - Guide for updating the extension
 
 ## Quick Start
