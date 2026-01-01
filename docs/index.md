@@ -22,4 +22,23 @@ SELECT * FROM read_markdown('docs/**/*.md');
 SELECT * FROM read_markdown_blocks('README.md');
 ```
 
+## Duck Block Functions
+
+Convert blocks back to Markdown without writing to files:
+
+```sql
+-- Convert a single block to markdown
+SELECT duck_block_to_md(block) FROM read_markdown_blocks('doc.md');
+
+-- Convert a list of blocks to a complete document
+SELECT duck_blocks_to_md(list(b ORDER BY block_order))
+FROM read_markdown_blocks('doc.md') b;
+
+-- Convert blocks to hierarchical sections
+SELECT unnest(duck_blocks_to_sections(list(b ORDER BY block_order)))
+FROM read_markdown_blocks('doc.md') b;
+```
+
+See [Markdown Implementation](markdown_doc_block.md#duck-block-conversion-functions) for details.
+
 For full usage details, see the [main README](https://github.com/teaguesterling/duckdb_markdown).
