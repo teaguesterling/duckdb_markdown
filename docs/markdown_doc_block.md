@@ -11,7 +11,10 @@ This document describes the Markdown-specific implementation of the [Document Bl
 The markdown extension implements the doc_block spec for CommonMark and GitHub Flavored Markdown documents. It provides:
 
 - `read_markdown_blocks()` - Parse markdown into block rows
-- `COPY TO` with `markdown_mode 'blocks'` - Render blocks to markdown
+- `COPY TO` with `markdown_mode 'blocks'` or `'duck_block'` - Render blocks to markdown files
+- `duck_block_to_md()` - Convert single block to markdown string
+- `duck_blocks_to_md()` - Convert list of blocks to markdown string
+- `duck_blocks_to_sections()` - Convert blocks to hierarchical sections
 
 ## Supported Block Types
 
@@ -86,7 +89,7 @@ GROUP BY file_path, block_type;
 ```sql
 COPY query TO 'output.md' (
     FORMAT MARKDOWN,
-    markdown_mode 'blocks',
+    markdown_mode 'blocks',  -- or 'duck_block'
     -- Column mapping (defaults shown)
     block_type_column 'block_type',
     content_column 'content',
@@ -141,6 +144,78 @@ COPY (
         ('code', 'print("hello")', NULL, 'text', MAP{'language': 'python'})
     ) AS t(block_type, content, level, encoding, attributes)
 ) TO 'generated.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
+
+## Duck Block Conversion Functions
+
+Convert blocks back to Markdown without writing to files. These functions enable in-memory document transformation pipelines.
+
+### duck_block_to_md(block)
+
+Converts a single `markdown_doc_block` struct to a Markdown string.
+
+```sql
+SELECT duck_block_to_md({
+    block_type: 'heading',
+    content: 'Hello World',
+    level: 1,
+    encoding: 'text',
+    attributes: MAP{},
+    block_order: 0
+}::markdown_doc_block);
+-- Returns: '# Hello World\n\n'
+```
+
+### duck_blocks_to_md(blocks[])
+
+Converts a list of blocks to a complete Markdown document string.
+
+```sql
+-- Transform and render in one query
+SELECT duck_blocks_to_md(
+    list(b ORDER BY block_order)
+)
+FROM read_markdown_blocks('source.md') b;
+
+-- Build document programmatically
+SELECT duck_blocks_to_md([
+    {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
+    {block_type: 'paragraph', content: 'Body.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
+]::markdown_doc_block[]);
+```
+
+### duck_blocks_to_sections(blocks[])
+
+Converts blocks to a list of section structs with hierarchy information.
+
+**Output Schema:**
+| Column | Type | Description |
+|--------|------|-------------|
+| `section_id` | VARCHAR | Section identifier (from `id` attribute or generated) |
+| `section_path` | VARCHAR | Hierarchical path (`"Parent > Child > Grandchild"`) |
+| `level` | INTEGER | Heading level (0 for frontmatter) |
+| `title` | VARCHAR | Section heading text |
+| `content` | MARKDOWN | Rendered content until next heading |
+
+```sql
+-- Extract sections from blocks
+SELECT s.section_id, s.level, s.title, length(s.content) as len
+FROM (
+    SELECT unnest(duck_blocks_to_sections(
+        list(b ORDER BY block_order)
+    )) as s
+    FROM read_markdown_blocks('doc.md') b
+);
+
+-- Pipeline: read blocks -> filter -> convert to sections
+SELECT s.*
+FROM (
+    SELECT unnest(duck_blocks_to_sections(
+        list(b ORDER BY block_order)
+    )) as s
+    FROM read_markdown_blocks('tutorial.md') b
+    WHERE b.block_type IN ('heading', 'paragraph', 'code')
+);
 ```
 
 ## Round-Trip Fidelity
@@ -218,5 +293,6 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2 | 2024-12 | Added duck_block conversion functions, `duck_block` COPY mode alias |
 | 1.1 | 2024-12 | Aligned with doc_block_spec v1.0, added metadata type |
 | 1.0 | 2024 | Initial implementation |

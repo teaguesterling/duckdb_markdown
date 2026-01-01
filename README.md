@@ -308,7 +308,7 @@ Export query results to Markdown files. Three modes support different use cases:
 |------|----------|---------------|
 | `table` (default) | Export any query as a markdown table | Any columns |
 | `document` | Reconstruct markdown from sections | `level`, `title`, `content` |
-| `blocks` | Round-trip block-level representation | `block_type`, `content`, `level`, `encoding`, `attributes` |
+| `blocks` / `duck_block` | Round-trip block-level representation | `block_type`, `content`, `level`, `encoding`, `attributes` |
 
 ### Table Mode (Default)
 
@@ -611,7 +611,8 @@ The extension is designed for high-performance document processing:
 - **COPY TO markdown** with table, document, and blocks modes
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`, `md_section_breadcrumb`)
-- **Block-level document representation** with `read_markdown_blocks()` and `markdown_mode 'blocks'`
+- **Block-level document representation** with `read_markdown_blocks()` and `markdown_mode 'blocks'` / `'duck_block'`
+- **Duck block conversion functions** (`duck_block_to_md`, `duck_blocks_to_md`, `duck_blocks_to_sections`)
 - **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
 - **Fragment syntax** for filtering sections: `'file.md#section-id'`
 - **Section hierarchy** with `section_path` column for navigation
@@ -624,7 +625,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 761 passing assertions across 16 test files
+- Full test suite with 784 passing assertions across 17 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)
@@ -653,7 +654,7 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 761 passing assertions across 16 test files:
+Comprehensive test suite with 784 passing assertions across 17 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
 - **Block-level tests**: Round-trip parsing and rendering
