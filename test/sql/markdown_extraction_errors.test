@@ -1,6 +1,6 @@
 # name: test/sql/markdown_extraction_errors.test
 # description: Test error handling and edge cases for markdown extraction functions
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

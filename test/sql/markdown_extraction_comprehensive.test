@@ -1,6 +1,6 @@
-# name: test/sql/markdown_extraction_comprehensive_clean.test
+# name: test/sql/markdown_extraction_comprehensive.test
 # description: Clean comprehensive test suite for markdown extraction functions
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

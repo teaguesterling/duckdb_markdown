@@ -1,6 +1,6 @@
 # name: test/sql/markdown_api.test
 # description: Test basic Markdown extraction API
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

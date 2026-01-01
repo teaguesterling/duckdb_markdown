@@ -1,6 +1,6 @@
 # name: test/sql/markdown_filesystem_errors_simple.test
 # description: Simple tests for error handling in different file system scenarios
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

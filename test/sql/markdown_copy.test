@@ -1,6 +1,6 @@
 # name: test/sql/markdown_copy.test
 # description: Test COPY TO markdown functionality
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

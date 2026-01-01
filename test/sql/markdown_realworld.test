@@ -1,6 +1,6 @@
 # name: test/sql/markdown_realworld.test
 # description: Real-world Markdown extension usage examples
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

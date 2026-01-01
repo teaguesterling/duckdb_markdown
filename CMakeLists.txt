@@ -21,6 +21,7 @@ set(EXTENSION_SOURCES
     src/markdown_scalar_functions.cpp
     src/markdown_extraction_functions.cpp
     src/markdown_utils.cpp
+    src/duck_block_functions.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

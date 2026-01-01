@@ -1,6 +1,6 @@
 # name: test/sql/markdown_content_modes.test
 # description: Test content_mode parameter for section extraction (Issue #8)
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

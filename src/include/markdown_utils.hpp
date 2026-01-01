@@ -13,9 +13,9 @@ namespace markdown_utils {
 //===--------------------------------------------------------------------===//
 
 enum class MarkdownFlavor {
-    GFM,          // GitHub Flavored Markdown (default)
-    COMMONMARK,   // Standard CommonMark
-    MULTIMARKDOWN // Extended features
+	GFM,          // GitHub Flavored Markdown (default)
+	COMMONMARK,   // Standard CommonMark
+	MULTIMARKDOWN // Extended features
 };
 
 //===--------------------------------------------------------------------===//
@@ -23,33 +23,33 @@ enum class MarkdownFlavor {
 //===--------------------------------------------------------------------===//
 
 struct MarkdownSection {
-    std::string id;              // Stable section identifier
-    std::string section_path;    // Full hierarchical path (e.g., "parent/child/grandchild")
-    int level;                   // Heading level (1-6)
-    std::string title;           // Heading text
-    std::string content;         // Section content (including subsections)
-    std::string parent_id;       // Parent section ID (empty for top-level)
-    idx_t position;              // Position within parent
-    idx_t start_line;            // Starting line number
-    idx_t end_line;              // Ending line number
+	std::string id;           // Stable section identifier
+	std::string section_path; // Full hierarchical path (e.g., "parent/child/grandchild")
+	int level;                // Heading level (1-6)
+	std::string title;        // Heading text
+	std::string content;      // Section content (including subsections)
+	std::string parent_id;    // Parent section ID (empty for top-level)
+	idx_t position;           // Position within parent
+	idx_t start_line;         // Starting line number
+	idx_t end_line;           // Ending line number
 };
 
 struct MarkdownMetadata {
-    std::string title;
-    std::string description;
-    std::vector<std::string> tags;
-    std::string date;
-    std::map<std::string, std::string> custom_fields;
+	std::string title;
+	std::string description;
+	std::vector<std::string> tags;
+	std::string date;
+	std::map<std::string, std::string> custom_fields;
 };
 
 struct MarkdownStats {
-    idx_t word_count;
-    idx_t char_count;
-    idx_t line_count;
-    idx_t heading_count;
-    idx_t code_block_count;
-    idx_t link_count;
-    double reading_time_minutes;  // Estimated reading time
+	idx_t word_count;
+	idx_t char_count;
+	idx_t line_count;
+	idx_t heading_count;
+	idx_t code_block_count;
+	idx_t link_count;
+	double reading_time_minutes; // Estimated reading time
 };
 
 //===--------------------------------------------------------------------===//
@@ -57,27 +57,27 @@ struct MarkdownStats {
 //===--------------------------------------------------------------------===//
 
 // Convert Markdown to HTML
-std::string MarkdownToHTML(const std::string& markdown_str, MarkdownFlavor flavor = MarkdownFlavor::GFM);
+std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavor = MarkdownFlavor::GFM);
 
 // Convert Markdown to plain text (for FTS)
-std::string MarkdownToText(const std::string& markdown_str);
+std::string MarkdownToText(const std::string &markdown_str);
 
 // Extract frontmatter metadata
-MarkdownMetadata ExtractMetadata(const std::string& markdown_str);
+MarkdownMetadata ExtractMetadata(const std::string &markdown_str);
 
 // Extract raw frontmatter YAML content (without --- delimiters)
 // Returns empty string if no frontmatter found
-std::string ExtractRawFrontmatter(const std::string& markdown_str);
+std::string ExtractRawFrontmatter(const std::string &markdown_str);
 
 // Strip frontmatter from markdown content, returning only the body
 // This is needed because cmark-gfm doesn't understand YAML frontmatter
-std::string StripFrontmatter(const std::string& markdown_str);
+std::string StripFrontmatter(const std::string &markdown_str);
 
 // Convert metadata to DuckDB MAP value
-Value MetadataToMap(const MarkdownMetadata& metadata);
+Value MetadataToMap(const MarkdownMetadata &metadata);
 
 // Calculate document statistics
-MarkdownStats CalculateStats(const std::string& markdown_str);
+MarkdownStats CalculateStats(const std::string &markdown_str);
 
 //===--------------------------------------------------------------------===//
 // Section Parsing
@@ -89,97 +89,89 @@ MarkdownStats CalculateStats(const std::string& markdown_str);
 // - "smart": Adaptive - include small subsections, summarize large ones
 
 // Parse document into sections
-std::vector<MarkdownSection> ParseSections(const std::string& markdown_str,
-                                          int32_t min_level = 1,
-                                          int32_t max_level = 6,
-                                          bool include_content = true,
-                                          const std::string& content_mode = "minimal",
-                                          idx_t max_content_length = 0);
+std::vector<MarkdownSection> ParseSections(const std::string &markdown_str, int32_t min_level = 1,
+                                           int32_t max_level = 6, bool include_content = true,
+                                           const std::string &content_mode = "minimal", idx_t max_content_length = 0);
 
 // Generate stable section IDs
-std::string GenerateSectionId(const std::string& heading_text,
-                             const std::unordered_map<std::string, int32_t>& id_counts);
+std::string GenerateSectionId(const std::string &heading_text,
+                              const std::unordered_map<std::string, int32_t> &id_counts);
 
 // Extract specific section by ID
 // include_subsections: true = 'full' mode, false = 'minimal' mode
-std::string ExtractSection(const std::string& markdown_str,
-                          const std::string& section_id,
-                          bool include_subsections = false);
+std::string ExtractSection(const std::string &markdown_str, const std::string &section_id,
+                           bool include_subsections = false);
 
 //===--------------------------------------------------------------------===//
 // Block-Level Document Representation
 //===--------------------------------------------------------------------===//
 
 struct MarkdownBlock {
-    std::string block_type;      // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
-    std::string content;         // Primary content
-    int32_t level;               // Heading level (1-6), nesting depth, or 0
-    std::string encoding;        // text, json, yaml, base64
-    std::map<std::string, std::string> attributes;  // language, id, class, etc.
-    int32_t block_order;         // Optional ordering for table storage
+	std::string block_type; // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
+	std::string content;    // Primary content
+	int32_t level;          // Heading level (1-6), nesting depth, or 0
+	std::string encoding;   // text, json, yaml, base64
+	std::map<std::string, std::string> attributes; // language, id, class, etc.
+	int32_t block_order;                           // Optional ordering for table storage
 };
 
 // Parse document into blocks (block-level AST)
-std::vector<MarkdownBlock> ParseBlocks(const std::string& markdown_str);
+std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str);
 
 //===--------------------------------------------------------------------===//
 // Content Extraction
 //===--------------------------------------------------------------------===//
 
 struct CodeBlock {
-    std::string language;
-    std::string code;
-    idx_t line_number;
-    std::string info_string;  // Full info string after language
+	std::string language;
+	std::string code;
+	idx_t line_number;
+	std::string info_string; // Full info string after language
 };
 
 struct MarkdownLink {
-    std::string text;
-    std::string url;
-    std::string title;
-    bool is_reference;
-    idx_t line_number;
+	std::string text;
+	std::string url;
+	std::string title;
+	bool is_reference;
+	idx_t line_number;
 };
 
 struct MarkdownImage {
-    std::string alt_text;
-    std::string url;
-    std::string title;
-    idx_t line_number;
+	std::string alt_text;
+	std::string url;
+	std::string title;
+	idx_t line_number;
 };
 
 struct MarkdownTable {
-    std::vector<std::string> headers;  // Table headers
-    std::vector<std::string> alignments; // Column alignments (left, right, center)
-    std::vector<std::vector<std::string>> rows; // Table data rows
-    idx_t line_number;
-    idx_t num_columns;
-    idx_t num_rows;
+	std::vector<std::string> headers;           // Table headers
+	std::vector<std::string> alignments;        // Column alignments (left, right, center)
+	std::vector<std::vector<std::string>> rows; // Table data rows
+	idx_t line_number;
+	idx_t num_columns;
+	idx_t num_rows;
 };
 
 // Extract code blocks
-std::vector<CodeBlock> ExtractCodeBlocks(const std::string& markdown_str, 
-                                        const std::string& language_filter = "");
+std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str, const std::string &language_filter = "");
 
 // Extract sections using cmark-gfm AST (replacement for regex-based ParseSections)
-std::vector<MarkdownSection> ExtractSections(const std::string& markdown_str,
-                                            int32_t min_level = 1,
-                                            int32_t max_level = 6,
-                                            bool include_content = true,
-                                            const std::string& content_mode = "minimal",
-                                            idx_t max_content_length = 0);
+std::vector<MarkdownSection> ExtractSections(const std::string &markdown_str, int32_t min_level = 1,
+                                             int32_t max_level = 6, bool include_content = true,
+                                             const std::string &content_mode = "minimal", idx_t max_content_length = 0);
 
 // Extract links
-std::vector<MarkdownLink> ExtractLinks(const std::string& markdown_str);
+std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str);
 
 // Extract images
-std::vector<MarkdownImage> ExtractImages(const std::string& markdown_str);
+std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str);
 
 // Extract tables
-std::vector<MarkdownTable> ExtractTables(const std::string& markdown_str);
+std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str);
 
 // Extract headings for TOC
-std::vector<MarkdownSection> ExtractHeadings(const std::string& markdown_str, int32_t max_level = 6);
+std::vector<MarkdownSection> ExtractHeadings(const std::string &markdown_str, int32_t max_level = 6);
 
 //===--------------------------------------------------------------------===//
 // Utility Functions
@@ -189,14 +181,14 @@ std::vector<MarkdownSection> ExtractHeadings(const std::string& markdown_str, in
 // Parameters: markdown_content - the markdown document
 //             section_id - the target section ID (lowercase)
 //             separator - the separator between titles (default " > ")
-std::string GenerateBreadcrumb(const std::string& markdown_content, const std::string& section_id,
-                               const std::string& separator = " > ");
+std::string GenerateBreadcrumb(const std::string &markdown_content, const std::string &section_id,
+                               const std::string &separator = " > ");
 
 // Validate internal links
-bool ValidateInternalLink(const std::string& markdown_str, const std::string& link_target);
+bool ValidateInternalLink(const std::string &markdown_str, const std::string &link_target);
 
 // Normalize Markdown content
-std::string NormalizeMarkdown(const std::string& markdown_str);
+std::string NormalizeMarkdown(const std::string &markdown_str);
 
 } // namespace markdown_utils
 

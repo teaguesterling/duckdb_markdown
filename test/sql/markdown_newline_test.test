@@ -1,6 +1,6 @@
 # name: test/sql/markdown_newline_test.test
 # description: Test newline handling in markdown extraction using string replacement
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

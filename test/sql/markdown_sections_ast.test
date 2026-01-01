@@ -1,6 +1,6 @@
 # name: test/sql/markdown_sections_ast.test
 # description: Test cmark-gfm AST-based section extraction functionality
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

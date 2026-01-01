@@ -1,6 +1,6 @@
 # name: test/sql/markdown_blocks.test
 # description: Test read_markdown_blocks functionality and markdown_doc_block type
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

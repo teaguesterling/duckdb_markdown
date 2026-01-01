@@ -1,6 +1,6 @@
 # name: test/sql/markdown_extraction_integration.test
 # description: Integration tests for markdown extraction functions with complex scenarios
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

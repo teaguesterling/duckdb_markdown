@@ -12,34 +12,38 @@
 #include "markdown_types.hpp"
 #include "markdown_scalar_functions.hpp"
 #include "markdown_extraction_functions.hpp"
+#include "duck_block_functions.hpp"
 
 namespace duckdb {
 
 static void LoadInternal(ExtensionLoader &loader) {
-    // Register Markdown reader
-    MarkdownReader::RegisterFunction(loader);
+	// Register Markdown reader
+	MarkdownReader::RegisterFunction(loader);
 
-    // Register Markdown functions
-    MarkdownFunctions::Register(loader);
+	// Register Markdown functions
+	MarkdownFunctions::Register(loader);
 
-    // Register Markdown extraction functions
-    MarkdownExtractionFunctions::Register(loader);
+	// Register Markdown extraction functions
+	MarkdownExtractionFunctions::Register(loader);
 
-    // Register Markdown types
-    MarkdownTypes::Register(loader);
+	// Register duck_block conversion functions
+	DuckBlockFunctions::Register(loader);
 
-    // Register Markdown copy functions
-    RegisterMarkdownCopyFunctions(loader);
+	// Register Markdown types
+	MarkdownTypes::Register(loader);
+
+	// Register Markdown copy functions
+	RegisterMarkdownCopyFunctions(loader);
 }
 
 void MarkdownExtension::Load(ExtensionLoader &loader) {
-    LoadInternal(loader);
+	LoadInternal(loader);
 
-    // Register Markdown files as automatically recognized by DuckDB
-    auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
+	// Register Markdown files as automatically recognized by DuckDB
+	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
 
-    // Add replacement scan for Markdown files
-    config.replacement_scans.emplace_back(MarkdownReader::ReadMarkdownReplacement);
+	// Add replacement scan for Markdown files
+	config.replacement_scans.emplace_back(MarkdownReader::ReadMarkdownReplacement);
 }
 
 std::string MarkdownExtension::Name() {
@@ -59,13 +63,12 @@ std::string MarkdownExtension::Version() const {
 extern "C" {
 
 DUCKDB_CPP_EXTENSION_ENTRY(markdown, loader) {
-    duckdb::LoadInternal(loader);
+	duckdb::LoadInternal(loader);
 }
 
 DUCKDB_EXTENSION_API const char *markdown_version() {
 	return duckdb::DuckDB::LibraryVersion();
 }
-
 }
 
 #ifndef DUCKDB_EXTENSION_MAIN

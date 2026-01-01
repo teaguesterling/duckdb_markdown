@@ -1,6 +1,6 @@
-# name: test/sql/markdown_glob_unit_simple.test  
+# name: test/sql/markdown_glob_unit_simple.test
 # description: Simple unit tests for glob functionality using extraction functions
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

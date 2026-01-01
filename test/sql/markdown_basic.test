@@ -1,6 +1,6 @@
 # name: test/sql/markdown_basic.test
 # description: Basic Markdown extension functionality tests
-# group: [markdown]
+# group: [sql]
 
 # Before we load the extension, this will fail
 statement error

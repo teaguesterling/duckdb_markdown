@@ -1,6 +1,6 @@
 # name: test/sql/markdown_sections_features.test
 # description: Test section extraction features including backticks, section_path, frontmatter, and metadata
-# group: [markdown]
+# group: [sql]
 
 require markdown
 
