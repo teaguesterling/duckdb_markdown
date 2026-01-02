@@ -233,6 +233,60 @@ FROM (
 );
 ```
 
+### Inline Element Functions
+
+Build rich text content with structured inline elements. These functions enable format-agnostic document construction:
+
+- **`doc_inline_to_md(inline)`** - Convert a single `doc_inline` struct to Markdown
+- **`doc_inlines_to_md(inlines[])`** - Convert a list of inline elements to Markdown string
+
+**Supported inline types:**
+
+| Type | Output | Attributes |
+|------|--------|------------|
+| `link` | `[text](href "title")` | `href`, `title` |
+| `image` | `![alt](src "title")` | `src`, `title` |
+| `bold` / `strong` | `**text**` | - |
+| `italic` / `em` | `*text*` | - |
+| `code` | `` `text` `` | - |
+| `text` | plain text | - |
+| `strikethrough` / `del` | `~~text~~` | - |
+| `linebreak` / `br` | hard break | - |
+
+```sql
+-- Convert a single inline element
+SELECT doc_inline_to_md({
+    inline_type: 'link',
+    content: 'Click here',
+    attributes: MAP{'href': 'https://example.com', 'title': 'Example'}
+}::doc_inline);
+-- Returns: '[Click here](https://example.com "Example")'
+
+-- Compose rich text from multiple inlines
+SELECT doc_inlines_to_md([
+    {inline_type: 'text', content: 'Check out ', attributes: MAP{}},
+    {inline_type: 'link', content: 'our docs', attributes: MAP{'href': 'https://docs.example.com'}},
+    {inline_type: 'text', content: ' for ', attributes: MAP{}},
+    {inline_type: 'bold', content: 'more info', attributes: MAP{}},
+    {inline_type: 'text', content: '.', attributes: MAP{}}
+]::doc_inline[]);
+-- Returns: 'Check out [our docs](https://docs.example.com) for **more info**.'
+
+-- Use inlines in blocks for rich document generation
+SELECT duck_blocks_to_md([
+    {block_type: 'heading', content: 'Welcome', level: 1,
+     encoding: 'text', attributes: MAP{}, block_order: 0},
+    {block_type: 'paragraph',
+     content: doc_inlines_to_md([
+         {inline_type: 'text', content: 'Visit ', attributes: MAP{}},
+         {inline_type: 'link', content: 'GitHub', attributes: MAP{'href': 'https://github.com'}},
+         {inline_type: 'text', content: ' for projects.', attributes: MAP{}}
+     ]::doc_inline[]),
+     level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
+]::markdown_doc_block[]);
+-- Returns: '# Welcome\n\nVisit [GitHub](https://github.com) for projects.\n\n'
+```
+
 ### Document Processing Examples
 
 ```sql
@@ -615,6 +669,7 @@ The extension is designed for high-performance document processing:
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`, `md_section_breadcrumb`)
 - **Block-level document representation** with `read_markdown_blocks()` and `markdown_mode 'blocks'` / `'duck_block'`
 - **Duck block conversion functions** (`duck_block_to_md`, `duck_blocks_to_md`, `duck_blocks_to_sections`)
+- **Inline element functions** (`doc_inline_to_md`, `doc_inlines_to_md`) for rich text composition
 - **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
 - **Fragment syntax** for filtering sections: `'file.md#section-id'`
 - **Section hierarchy** with `section_path` column for navigation
@@ -627,7 +682,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 784 passing assertions across 17 test files
+- Full test suite with 810 passing assertions across 18 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)
@@ -656,7 +711,7 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 784 passing assertions across 17 test files:
+Comprehensive test suite with 810 passing assertions across 18 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
 - **Block-level tests**: Round-trip parsing and rendering
