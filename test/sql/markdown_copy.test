@@ -263,18 +263,18 @@ SELECT content LIKE '%| 1 | test |%' FROM read_text('__TEST_DIR__/query_copy.md'
 true
 
 # =============================================================================
-# Test: Blocks Mode - Basic Export
+# Test: Blocks Mode - Basic Export (uses duck_block shape)
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_test (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_test (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_test VALUES
-    ('heading', 'My Document', 1, 'text', MAP{}),
-    ('paragraph', 'This is a paragraph.', NULL, 'text', MAP{}),
-    ('code', 'print("hello")', NULL, 'text', MAP{'language': 'python'}),
-    ('blockquote', 'A wise quote', 1, 'text', MAP{});
+    ('block', 'heading', 'My Document', 1, 'text', MAP{}, 0),
+    ('block', 'paragraph', 'This is a paragraph.', NULL, 'text', MAP{}, 1),
+    ('block', 'code', 'print("hello")', NULL, 'text', MAP{'language': 'python'}, 2),
+    ('block', 'blockquote', 'A wise quote', 1, 'text', MAP{}, 3);
 
 statement ok
 COPY blocks_test TO '__TEST_DIR__/blocks_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -314,12 +314,12 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_fm (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_fm (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_fm VALUES
-    ('frontmatter', 'title: Test', 0, 'yaml', MAP{}),
-    ('heading', 'Content', 1, 'text', MAP{});
+    ('block', 'frontmatter', 'title: Test', 0, 'yaml', MAP{}, 0),
+    ('block', 'heading', 'Content', 1, 'text', MAP{}, 1);
 
 statement ok
 COPY blocks_fm TO '__TEST_DIR__/blocks_fm.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -334,11 +334,11 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_list (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_list (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_list VALUES
-    ('list', '["Item 1", "Item 2", "Item 3"]', 1, 'json', MAP{'ordered': 'false'});
+    ('block', 'list', '["Item 1", "Item 2", "Item 3"]', 1, 'json', MAP{'ordered': 'false'}, 0);
 
 statement ok
 COPY blocks_list TO '__TEST_DIR__/blocks_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -353,13 +353,13 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_hr (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_hr (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_hr VALUES
-    ('heading', 'Before', 1, 'text', MAP{}),
-    ('hr', '', NULL, 'text', MAP{}),
-    ('heading', 'After', 1, 'text', MAP{});
+    ('block', 'heading', 'Before', 1, 'text', MAP{}, 0),
+    ('block', 'hr', '', NULL, 'text', MAP{}, 1),
+    ('block', 'heading', 'After', 1, 'text', MAP{}, 2);
 
 statement ok
 COPY blocks_hr TO '__TEST_DIR__/blocks_hr.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -370,12 +370,12 @@ SELECT content LIKE '%---%' FROM read_text('__TEST_DIR__/blocks_hr.md');
 true
 
 # =============================================================================
-# Test: Blocks Mode - Round-trip
+# Test: Blocks Mode - Round-trip with duck_block shape
 # =============================================================================
 
 # Read blocks from a file and write them back
 statement ok
-COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
 TO '__TEST_DIR__/blocks_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Verify the roundtrip preserved structure
@@ -394,11 +394,11 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_olist (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_olist (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_olist VALUES
-    ('list', '["First", "Second", "Third"]', 1, 'json', MAP{'ordered': 'true', 'start': '5'});
+    ('block', 'list', '["First", "Second", "Third"]', 1, 'json', MAP{'ordered': 'true', 'start': '5'}, 0);
 
 statement ok
 COPY blocks_olist TO '__TEST_DIR__/blocks_olist.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -418,11 +418,11 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_code_nolang (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_code_nolang (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_code_nolang VALUES
-    ('code', 'plain code here', NULL, 'text', MAP{});
+    ('block', 'code', 'plain code here', NULL, 'text', MAP{}, 0);
 
 statement ok
 COPY blocks_code_nolang TO '__TEST_DIR__/blocks_code_nolang.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -438,16 +438,16 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_headings (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_headings (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_headings VALUES
-    ('heading', 'Level 1', 1, 'text', MAP{}),
-    ('heading', 'Level 2', 2, 'text', MAP{}),
-    ('heading', 'Level 3', 3, 'text', MAP{}),
-    ('heading', 'Level 4', 4, 'text', MAP{}),
-    ('heading', 'Level 5', 5, 'text', MAP{}),
-    ('heading', 'Level 6', 6, 'text', MAP{});
+    ('block', 'heading', 'Level 1', 1, 'text', MAP{}, 0),
+    ('block', 'heading', 'Level 2', 2, 'text', MAP{}, 1),
+    ('block', 'heading', 'Level 3', 3, 'text', MAP{}, 2),
+    ('block', 'heading', 'Level 4', 4, 'text', MAP{}, 3),
+    ('block', 'heading', 'Level 5', 5, 'text', MAP{}, 4),
+    ('block', 'heading', 'Level 6', 6, 'text', MAP{}, 5);
 
 statement ok
 COPY blocks_headings TO '__TEST_DIR__/blocks_headings.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -472,11 +472,11 @@ true
 # =============================================================================
 
 statement ok
-CREATE TABLE blocks_special (block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR));
+CREATE TABLE blocks_special (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
 
 statement ok
 INSERT INTO blocks_special VALUES
-    ('paragraph', 'Text with "quotes" and special chars: <>&', NULL, 'text', MAP{});
+    ('block', 'paragraph', 'Text with "quotes" and special chars: <>&', NULL, 'text', MAP{}, 0);
 
 statement ok
 COPY blocks_special TO '__TEST_DIR__/blocks_special.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -491,7 +491,7 @@ true
 # =============================================================================
 
 statement ok
-COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_table.md'))
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_table.md'))
 TO '__TEST_DIR__/blocks_table_roundtrip.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Should render as proper markdown table, not JSON
@@ -558,13 +558,13 @@ COPY (SELECT 1 as x) TO '__TEST_DIR__/invalid.md' (FORMAT MARKDOWN, markdown_mod
 Invalid markdown_mode
 
 # =============================================================================
-# Test: Error handling - missing block_type column
+# Test: Error handling - missing element_type column
 # =============================================================================
 
 statement error
 COPY (SELECT 'content' as content) TO '__TEST_DIR__/missing.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ----
-Blocks mode requires a 'block_type' column
+Blocks mode requires a 'element_type' column
 
 # =============================================================================
 # Test: Error handling - missing level column for document mode
@@ -580,7 +580,7 @@ Document mode requires a 'level' column
 # =============================================================================
 
 statement ok
-COPY (SELECT 'heading' as block_type, 'Minimal' as content) TO '__TEST_DIR__/minimal.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+COPY (SELECT 'heading' as element_type, 'Minimal' as content) TO '__TEST_DIR__/minimal.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 query I
 SELECT content LIKE '%# Minimal%' FROM read_text('__TEST_DIR__/minimal.md');
@@ -594,7 +594,7 @@ true
 statement ok
 COPY (SELECT 'heading' as type, 'Custom' as body, 2 as depth)
 TO '__TEST_DIR__/custom_cols.md' (FORMAT MARKDOWN, markdown_mode 'blocks',
-    block_type_column 'type', content_column 'body', level_column 'depth');
+    element_type_column 'type', content_column 'body', level_column 'depth');
 
 query I
 SELECT content LIKE '%## Custom%' FROM read_text('__TEST_DIR__/custom_cols.md');

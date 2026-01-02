@@ -33,8 +33,8 @@ struct WriteMarkdownBindData : public FunctionData {
 	string content_mode = "minimal"; // 'minimal' or 'full'
 	int32_t blank_lines = 1;
 
-	// Blocks mode column names (configurable)
-	string block_type_column = "block_type";
+	// Blocks mode column names (configurable) - uses duck_block naming
+	string element_type_column = "element_type";
 	string encoding_column = "encoding";
 	string attributes_column = "attributes";
 
@@ -43,7 +43,7 @@ struct WriteMarkdownBindData : public FunctionData {
 	idx_t title_col_idx = DConstants::INVALID_INDEX;
 	idx_t content_col_idx = DConstants::INVALID_INDEX;
 	// Blocks mode column indices
-	idx_t block_type_col_idx = DConstants::INVALID_INDEX;
+	idx_t element_type_col_idx = DConstants::INVALID_INDEX;
 	idx_t encoding_col_idx = DConstants::INVALID_INDEX;
 	idx_t attributes_col_idx = DConstants::INVALID_INDEX;
 	vector<string> alignments; // Per-column alignment for table mode
@@ -148,8 +148,8 @@ private:
 	// Blocks Mode Helpers
 	//===--------------------------------------------------------------------===//
 
-	//! Render a single block from flattened block representation
-	static string RenderBlock(const string &block_type, const string &content, int32_t level, const string &encoding,
+	//! Render a single block from flattened duck_block representation
+	static string RenderBlock(const string &element_type, const string &content, int32_t level, const string &encoding,
 	                          const Value &attributes, const WriteMarkdownBindData &bind_data);
 };
 

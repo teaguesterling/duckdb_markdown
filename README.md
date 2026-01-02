@@ -232,6 +232,10 @@ SELECT duck_block_to_md({
 SELECT duck_blocks_to_md(list(b ORDER BY block_order))
 FROM read_markdown_blocks('source.md') b;
 
+-- Or use the cast syntax for block lists
+SELECT (list(b ORDER BY block_order)::markdown_doc_block[])::markdown
+FROM read_markdown_blocks('source.md') b;
+
 -- Transform blocks in-memory and get markdown back
 SELECT duck_blocks_to_md([
     {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
@@ -248,12 +252,14 @@ FROM (
 
 ### Unified Element Functions
 
-Build rich text content with the unified `doc_element` type. These functions enable format-agnostic document construction for both block and inline elements:
+Build rich text content with the unified `doc_element` structure. These functions enable format-agnostic document construction for both block and inline elements:
 
-- **`doc_element_to_md(element)`** - Convert a single `doc_element` struct to Markdown
+- **`doc_element_to_md(element)`** - Convert a single element struct to Markdown
 - **`doc_elements_to_md(elements[])`** - Convert a list of elements to Markdown string
 
-**doc_element type:**
+**Note:** The `doc_element` type is defined by the `duck_block_utils` extension. These functions work with any struct matching the expected shape:
+
+**doc_element structure:**
 ```sql
 STRUCT(
     kind          VARCHAR,              -- 'block' or 'inline'
@@ -717,7 +723,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 824 passing assertions across 18 test files
+- Full test suite with 832 passing assertions across 18 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)

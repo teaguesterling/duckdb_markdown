@@ -6,12 +6,15 @@
 namespace duckdb {
 
 /**
- * @brief Duck Block conversion functions for converting doc_block types to Markdown
+ * @brief Duck Block conversion functions for converting duck_block types to Markdown
  *
  * This class provides functions for:
- * - Converting a single doc_block to Markdown (duck_block_to_md)
- * - Converting a list of doc_blocks to Markdown (duck_blocks_to_md)
- * - Converting doc_blocks to markdown_sections format (duck_blocks_to_sections)
+ * - Converting a single duck_block to Markdown (duck_block_to_md)
+ * - Converting a list of duck_blocks to Markdown (duck_blocks_to_md)
+ * - Converting duck_blocks to sections format (duck_blocks_to_sections)
+ *
+ * Duck block type (from duck_block_utils):
+ *   STRUCT(kind, element_type, content, level, encoding, attributes, element_order)
  *
  * These functions enable round-trip document processing:
  *   read_markdown_blocks() -> manipulate -> duck_blocks_to_md()
@@ -24,48 +27,37 @@ public:
 	static void Register(ExtensionLoader &loader);
 
 	/**
-	 * @brief Render a single doc_block to Markdown string
-	 *
-	 * @param block_type The type of block (heading, paragraph, code, etc.)
-	 * @param content The block content
-	 * @param level The heading level or nesting depth
-	 * @param encoding The content encoding (text, json, yaml, html, xml, inline)
-	 * @param attributes The block attributes as a MAP value
-	 * @return The rendered Markdown string
-	 */
-	static string RenderBlockToMarkdown(const string &block_type, const string &content, int32_t level,
-	                                    const string &encoding, const Value &attributes);
-
-	/**
-	 * @brief Render a single doc_element to Markdown string
+	 * @brief Render a single duck_block to Markdown string
 	 *
 	 * @param kind 'block' or 'inline'
 	 * @param element_type The type (heading, paragraph, bold, link, etc.)
 	 * @param content The element content
-	 * @param level The level (heading level, nesting depth)
-	 * @param encoding The content encoding
+	 * @param level The level (heading level via attribute, or nesting depth)
+	 * @param encoding The content encoding (text, json, yaml, html, xml)
 	 * @param attributes The element attributes as a MAP value
 	 * @return The rendered Markdown string
 	 */
-	static string RenderElementToMarkdown(const string &kind, const string &element_type, const string &content,
-	                                      int32_t level, const string &encoding, const Value &attributes);
+	static string RenderDuckBlockToMarkdown(const string &kind, const string &element_type, const string &content,
+	                                        int32_t level, const string &encoding, const Value &attributes);
 
 	/**
-	 * @brief Render a list of doc_element structs to Markdown string
+	 * @brief Render a list of duck_block structs to Markdown string
 	 *
-	 * @param elements_value A LIST of doc_element structs
+	 * @param blocks_value A LIST of duck_block structs
 	 * @return The concatenated Markdown string
 	 */
-	static string RenderElementsToMarkdown(const Value &elements_value);
+	static string RenderDuckBlocksToMarkdown(const Value &blocks_value);
 
 private:
-	static void RegisterBlockToMdFunction(ExtensionLoader &loader);
-	static void RegisterBlocksToMdFunction(ExtensionLoader &loader);
-	static void RegisterBlocksToSectionsFunction(ExtensionLoader &loader);
-	static void RegisterElementToMdFunction(ExtensionLoader &loader);
-	static void RegisterElementsToMdFunction(ExtensionLoader &loader);
+	static void RegisterDuckBlockToMdFunction(ExtensionLoader &loader);
+	static void RegisterDuckBlocksToMdFunction(ExtensionLoader &loader);
+	static void RegisterDuckBlocksToSectionsFunction(ExtensionLoader &loader);
 
-	// Helper for inline element rendering (used by RenderElementToMarkdown)
+	// Render block-level element to markdown
+	static string RenderBlockElementToMarkdown(const string &element_type, const string &content, int32_t level,
+	                                           const string &encoding, const Value &attributes);
+
+	// Render inline element to markdown
 	static string RenderInlineElementToMarkdown(const string &element_type, const string &content,
 	                                            const Value &attributes);
 

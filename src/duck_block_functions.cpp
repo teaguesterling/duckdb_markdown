@@ -242,79 +242,17 @@ string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_t
 }
 
 //===--------------------------------------------------------------------===//
-// RenderElementToMarkdown (unified block/inline rendering)
+// RenderBlockElementToMarkdown (helper for block elements)
 //===--------------------------------------------------------------------===//
 
-string DuckBlockFunctions::RenderElementToMarkdown(const string &kind, const string &element_type,
-                                                    const string &content, int32_t level,
-                                                    const string &encoding, const Value &attributes) {
-	if (kind == "block") {
-		// Delegate to block rendering
-		return RenderBlockToMarkdown(element_type, content, level, encoding, attributes);
-	} else if (kind == "inline") {
-		// Use inline rendering
-		return RenderInlineElementToMarkdown(element_type, content, attributes);
-	} else {
-		// Unknown kind - try to guess based on element_type
-		// Block types
-		if (element_type == "heading" || element_type == "paragraph" || element_type == "blockquote" ||
-		    element_type == "list" || element_type == "table" || element_type == "hr" ||
-		    element_type == "metadata" || element_type == "frontmatter") {
-			return RenderBlockToMarkdown(element_type, content, level, encoding, attributes);
-		}
-		// Assume inline otherwise
-		return RenderInlineElementToMarkdown(element_type, content, attributes);
-	}
-}
-
-//===--------------------------------------------------------------------===//
-// RenderElementsToMarkdown (list of elements)
-//===--------------------------------------------------------------------===//
-
-string DuckBlockFunctions::RenderElementsToMarkdown(const Value &elements_value) {
-	if (elements_value.IsNull() || elements_value.type().id() != LogicalTypeId::LIST) {
-		return "";
-	}
-
-	auto &list_children = ListValue::GetChildren(elements_value);
+string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content, int32_t level,
+                                                        const string &encoding, const Value &attributes) {
 	string result;
 
-	for (const auto &element_value : list_children) {
-		if (element_value.IsNull()) {
-			continue;
-		}
-
-		auto &struct_children = StructValue::GetChildren(element_value);
-		if (struct_children.size() < 7) {
-			continue;
-		}
-
-		// doc_element: kind, element_type, content, level, encoding, attributes, element_order
-		string kind = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
-		string element_type = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
-		string content = struct_children[2].IsNull() ? "" : struct_children[2].ToString();
-		int32_t level = struct_children[3].IsNull() ? 0 : struct_children[3].GetValue<int32_t>();
-		string encoding = struct_children[4].IsNull() ? "text" : struct_children[4].ToString();
-		Value attributes = struct_children[5];
-
-		result += RenderElementToMarkdown(kind, element_type, content, level, encoding, attributes);
-	}
-
-	return result;
-}
-
-//===--------------------------------------------------------------------===//
-// RenderBlockToMarkdown
-//===--------------------------------------------------------------------===//
-
-string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const string &content, int32_t level,
-                                                 const string &encoding, const Value &attributes) {
-	string result;
-
-	if (block_type == "frontmatter" || block_type == "metadata") {
+	if (element_type == "frontmatter" || element_type == "metadata") {
 		// YAML frontmatter
 		result = "---\n" + content + "\n---\n\n";
-	} else if (block_type == "heading") {
+	} else if (element_type == "heading") {
 		// ATX heading with level
 		// Per spec: heading_level attribute takes priority, fall back to level field
 		int32_t heading_level = 1;
@@ -332,14 +270,14 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 		if (heading_level < 1) heading_level = 1;
 		if (heading_level > 6) heading_level = 6;
 		result = string(heading_level, '#') + " " + content + "\n\n";
-	} else if (block_type == "paragraph") {
+	} else if (element_type == "paragraph") {
 		// Plain paragraph
 		result = content + "\n\n";
-	} else if (block_type == "code") {
+	} else if (element_type == "code") {
 		// Fenced code block
 		string language = GetAttribute(attributes, "language");
 		result = "```" + language + "\n" + content + "\n```\n\n";
-	} else if (block_type == "blockquote") {
+	} else if (element_type == "blockquote") {
 		// Block quote - add > prefix to each line
 		string quoted;
 		std::istringstream iss(content);
@@ -348,7 +286,7 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 			quoted += "> " + line + "\n";
 		}
 		result = quoted + "\n";
-	} else if (block_type == "list") {
+	} else if (element_type == "list") {
 		// List - content is JSON encoded
 		if (encoding == "json" && content.length() > 2 && content[0] == '[') {
 			bool ordered = GetAttribute(attributes, "ordered") == "true";
@@ -374,7 +312,7 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 		} else {
 			result = content + "\n\n";
 		}
-	} else if (block_type == "table") {
+	} else if (element_type == "table") {
 		// Table - content is JSON encoded
 		if (encoding == "json" && content.find("\"headers\"") != string::npos) {
 			vector<string> headers;
@@ -405,9 +343,9 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 		} else {
 			result = content + "\n\n";
 		}
-	} else if (block_type == "hr") {
+	} else if (element_type == "hr") {
 		result = "---\n\n";
-	} else if (block_type == "image") {
+	} else if (element_type == "image") {
 		// Image: ![alt](src "title")
 		string src = GetAttribute(attributes, "src");
 		string alt = GetAttribute(attributes, "alt");
@@ -421,7 +359,7 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 			result += " \"" + title + "\"";
 		}
 		result += ")\n\n";
-	} else if (block_type == "raw" || block_type == "html" || block_type == "md:html_block") {
+	} else if (element_type == "raw" || element_type == "html" || element_type == "md:html_block") {
 		// Raw content - output as-is
 		result = content + "\n\n";
 	} else {
@@ -433,16 +371,79 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 }
 
 //===--------------------------------------------------------------------===//
-// duck_block_to_md - Single block to Markdown
+// RenderDuckBlockToMarkdown (unified block/inline rendering)
 //===--------------------------------------------------------------------===//
 
-void DuckBlockFunctions::RegisterBlockToMdFunction(ExtensionLoader &loader) {
-	auto doc_block_type = MarkdownTypes::MarkdownDocBlockType();
+string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const string &element_type,
+                                                      const string &content, int32_t level,
+                                                      const string &encoding, const Value &attributes) {
+	if (kind == "block") {
+		// Delegate to block rendering
+		return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
+	} else if (kind == "inline") {
+		// Use inline rendering
+		return RenderInlineElementToMarkdown(element_type, content, attributes);
+	} else {
+		// Unknown kind - try to guess based on element_type
+		// Block types
+		if (element_type == "heading" || element_type == "paragraph" || element_type == "blockquote" ||
+		    element_type == "list" || element_type == "table" || element_type == "hr" ||
+		    element_type == "metadata" || element_type == "frontmatter" || element_type == "code" ||
+		    element_type == "image") {
+			return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
+		}
+		// Assume inline otherwise
+		return RenderInlineElementToMarkdown(element_type, content, attributes);
+	}
+}
+
+//===--------------------------------------------------------------------===//
+// RenderDuckBlocksToMarkdown (list of duck_blocks)
+//===--------------------------------------------------------------------===//
+
+string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value) {
+	if (blocks_value.IsNull() || blocks_value.type().id() != LogicalTypeId::LIST) {
+		return "";
+	}
+
+	auto &list_children = ListValue::GetChildren(blocks_value);
+	string result;
+
+	for (const auto &block_value : list_children) {
+		if (block_value.IsNull()) {
+			continue;
+		}
+
+		auto &struct_children = StructValue::GetChildren(block_value);
+		if (struct_children.size() < 7) {
+			continue;
+		}
+
+		// duck_block: kind, element_type, content, level, encoding, attributes, element_order
+		string kind = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
+		string element_type = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
+		string content = struct_children[2].IsNull() ? "" : struct_children[2].ToString();
+		int32_t level = struct_children[3].IsNull() ? 0 : struct_children[3].GetValue<int32_t>();
+		string encoding = struct_children[4].IsNull() ? "text" : struct_children[4].ToString();
+		Value attributes = struct_children[5];
+
+		result += RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
+	}
+
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// duck_block_to_md - Single duck_block to Markdown
+//===--------------------------------------------------------------------===//
+
+void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) {
+	auto duck_block_type = MarkdownTypes::DuckBlockType();
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
 	// duck_block_to_md(block) -> MARKDOWN
 	ScalarFunction duck_block_to_md(
-	    "duck_block_to_md", {doc_block_type}, markdown_type,
+	    "duck_block_to_md", {duck_block_type}, markdown_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) {
 		    auto &block_vector = args.data[0];
 
@@ -456,18 +457,20 @@ void DuckBlockFunctions::RegisterBlockToMdFunction(ExtensionLoader &loader) {
 
 			    // Extract fields from the struct
 			    auto &struct_children = StructValue::GetChildren(block_value);
-			    if (struct_children.size() < 6) {
+			    if (struct_children.size() < 7) {
 				    result.SetValue(i, Value(""));
 				    continue;
 			    }
 
-			    string block_type = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
-			    string content = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
-			    int32_t level = struct_children[2].IsNull() ? -1 : struct_children[2].GetValue<int32_t>();
-			    string encoding = struct_children[3].IsNull() ? "text" : struct_children[3].ToString();
-			    Value attributes = struct_children[4];
+			    // duck_block: kind, element_type, content, level, encoding, attributes, element_order
+			    string kind = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
+			    string element_type = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
+			    string content = struct_children[2].IsNull() ? "" : struct_children[2].ToString();
+			    int32_t level = struct_children[3].IsNull() ? 0 : struct_children[3].GetValue<int32_t>();
+			    string encoding = struct_children[4].IsNull() ? "text" : struct_children[4].ToString();
+			    Value attributes = struct_children[5];
 
-			    string markdown = RenderBlockToMarkdown(block_type, content, level, encoding, attributes);
+			    string markdown = RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
 			    result.SetValue(i, Value(markdown));
 		    }
 	    });
@@ -476,17 +479,17 @@ void DuckBlockFunctions::RegisterBlockToMdFunction(ExtensionLoader &loader) {
 }
 
 //===--------------------------------------------------------------------===//
-// duck_blocks_to_md - List of blocks to Markdown
+// duck_blocks_to_md - List of duck_blocks to Markdown
 //===--------------------------------------------------------------------===//
 
-void DuckBlockFunctions::RegisterBlocksToMdFunction(ExtensionLoader &loader) {
-	auto doc_block_type = MarkdownTypes::MarkdownDocBlockType();
-	auto doc_block_list_type = LogicalType::LIST(doc_block_type);
+void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader) {
+	auto duck_block_type = MarkdownTypes::DuckBlockType();
+	auto duck_block_list_type = LogicalType::LIST(duck_block_type);
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
 	// duck_blocks_to_md(blocks LIST) -> MARKDOWN
 	ScalarFunction duck_blocks_to_md(
-	    "duck_blocks_to_md", {doc_block_list_type}, markdown_type,
+	    "duck_blocks_to_md", {duck_block_list_type}, markdown_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) {
 		    auto &blocks_vector = args.data[0];
 
@@ -498,28 +501,7 @@ void DuckBlockFunctions::RegisterBlocksToMdFunction(ExtensionLoader &loader) {
 				    continue;
 			    }
 
-			    auto &list_children = ListValue::GetChildren(blocks_value);
-			    string markdown;
-
-			    for (const auto &block_value : list_children) {
-				    if (block_value.IsNull()) {
-					    continue;
-				    }
-
-				    auto &struct_children = StructValue::GetChildren(block_value);
-				    if (struct_children.size() < 6) {
-					    continue;
-				    }
-
-				    string block_type = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
-				    string content = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
-				    int32_t level = struct_children[2].IsNull() ? -1 : struct_children[2].GetValue<int32_t>();
-				    string encoding = struct_children[3].IsNull() ? "text" : struct_children[3].ToString();
-				    Value attributes = struct_children[4];
-
-				    markdown += RenderBlockToMarkdown(block_type, content, level, encoding, attributes);
-			    }
-
+			    string markdown = RenderDuckBlocksToMarkdown(blocks_value);
 			    result.SetValue(i, Value(markdown));
 		    }
 	    });
@@ -528,12 +510,12 @@ void DuckBlockFunctions::RegisterBlocksToMdFunction(ExtensionLoader &loader) {
 }
 
 //===--------------------------------------------------------------------===//
-// duck_blocks_to_sections - Convert blocks to sections format
+// duck_blocks_to_sections - Convert duck_blocks to sections format
 //===--------------------------------------------------------------------===//
 
-void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loader) {
-	auto doc_block_type = MarkdownTypes::MarkdownDocBlockType();
-	auto doc_block_list_type = LogicalType::LIST(doc_block_type);
+void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &loader) {
+	auto duck_block_type = MarkdownTypes::DuckBlockType();
+	auto duck_block_list_type = LogicalType::LIST(duck_block_type);
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
 	// Section struct type: (section_id, level, title, content)
@@ -549,7 +531,7 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 
 	// duck_blocks_to_sections(blocks LIST) -> LIST(section)
 	ScalarFunction duck_blocks_to_sections(
-	    "duck_blocks_to_sections", {doc_block_list_type}, section_list_type,
+	    "duck_blocks_to_sections", {duck_block_list_type}, section_list_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) {
 		    auto &blocks_vector = args.data[0];
 
@@ -598,17 +580,19 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 				    }
 
 				    auto &struct_children = StructValue::GetChildren(block_value);
-				    if (struct_children.size() < 6) {
+				    if (struct_children.size() < 7) {
 					    continue;
 				    }
 
-				    string block_type = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
-				    string content = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
-				    int32_t level = struct_children[2].IsNull() ? 0 : struct_children[2].GetValue<int32_t>();
-				    string encoding = struct_children[3].IsNull() ? "text" : struct_children[3].ToString();
-				    Value attributes = struct_children[4];
+				    // duck_block: kind, element_type, content, level, encoding, attributes, element_order
+				    string kind = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
+				    string element_type = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
+				    string content = struct_children[2].IsNull() ? "" : struct_children[2].ToString();
+				    int32_t level = struct_children[3].IsNull() ? 0 : struct_children[3].GetValue<int32_t>();
+				    string encoding = struct_children[4].IsNull() ? "text" : struct_children[4].ToString();
+				    Value attributes = struct_children[5];
 
-				    if (block_type == "heading") {
+				    if (element_type == "heading") {
 					    // Flush previous section
 					    flush_section();
 
@@ -646,7 +630,7 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 						    std::replace(current_section_id.begin(), current_section_id.end(), ' ', '-');
 					    }
 					    current_content.clear();
-				    } else if (block_type == "metadata" || block_type == "frontmatter") {
+				    } else if (element_type == "metadata" || element_type == "frontmatter") {
 					    // Metadata becomes level 0 section
 					    flush_section();
 					    current_title = "";
@@ -659,7 +643,7 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 				    } else {
 					    // Append rendered content to current section
 					    current_content +=
-					        DuckBlockFunctions::RenderBlockToMarkdown(block_type, content, level, encoding, attributes);
+					        RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
 				    }
 			    }
 
@@ -680,91 +664,13 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 }
 
 //===--------------------------------------------------------------------===//
-// doc_element_to_md - Single element to Markdown
-//===--------------------------------------------------------------------===//
-
-void DuckBlockFunctions::RegisterElementToMdFunction(ExtensionLoader &loader) {
-	auto doc_element_type = MarkdownTypes::DocElementType();
-	auto markdown_type = MarkdownTypes::MarkdownType();
-
-	// doc_element_to_md(element) -> MARKDOWN
-	ScalarFunction doc_element_to_md(
-	    "doc_element_to_md", {doc_element_type}, markdown_type,
-	    [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &element_vector = args.data[0];
-
-		    for (idx_t i = 0; i < args.size(); i++) {
-			    auto element_value = element_vector.GetValue(i);
-
-			    if (element_value.IsNull()) {
-				    result.SetValue(i, Value());
-				    continue;
-			    }
-
-			    // Extract fields from the struct
-			    auto &struct_children = StructValue::GetChildren(element_value);
-			    if (struct_children.size() < 7) {
-				    result.SetValue(i, Value(""));
-				    continue;
-			    }
-
-			    // doc_element: kind, element_type, content, level, encoding, attributes, element_order
-			    string kind = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
-			    string element_type = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
-			    string content = struct_children[2].IsNull() ? "" : struct_children[2].ToString();
-			    int32_t level = struct_children[3].IsNull() ? 0 : struct_children[3].GetValue<int32_t>();
-			    string encoding = struct_children[4].IsNull() ? "text" : struct_children[4].ToString();
-			    Value attributes = struct_children[5];
-
-			    string markdown = RenderElementToMarkdown(kind, element_type, content, level, encoding, attributes);
-			    result.SetValue(i, Value(markdown));
-		    }
-	    });
-
-	loader.RegisterFunction(doc_element_to_md);
-}
-
-//===--------------------------------------------------------------------===//
-// doc_elements_to_md - List of elements to Markdown
-//===--------------------------------------------------------------------===//
-
-void DuckBlockFunctions::RegisterElementsToMdFunction(ExtensionLoader &loader) {
-	auto doc_element_type = MarkdownTypes::DocElementType();
-	auto doc_element_list_type = LogicalType::LIST(doc_element_type);
-	auto markdown_type = MarkdownTypes::MarkdownType();
-
-	// doc_elements_to_md(elements LIST) -> MARKDOWN
-	ScalarFunction doc_elements_to_md(
-	    "doc_elements_to_md", {doc_element_list_type}, markdown_type,
-	    [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &elements_vector = args.data[0];
-
-		    for (idx_t i = 0; i < args.size(); i++) {
-			    auto elements_value = elements_vector.GetValue(i);
-
-			    if (elements_value.IsNull()) {
-				    result.SetValue(i, Value());
-				    continue;
-			    }
-
-			    string markdown = RenderElementsToMarkdown(elements_value);
-			    result.SetValue(i, Value(markdown));
-		    }
-	    });
-
-	loader.RegisterFunction(doc_elements_to_md);
-}
-
-//===--------------------------------------------------------------------===//
 // Register All Functions
 //===--------------------------------------------------------------------===//
 
 void DuckBlockFunctions::Register(ExtensionLoader &loader) {
-	RegisterBlockToMdFunction(loader);
-	RegisterBlocksToMdFunction(loader);
-	RegisterBlocksToSectionsFunction(loader);
-	RegisterElementToMdFunction(loader);
-	RegisterElementsToMdFunction(loader);
+	RegisterDuckBlockToMdFunction(loader);
+	RegisterDuckBlocksToMdFunction(loader);
+	RegisterDuckBlocksToSectionsFunction(loader);
 }
 
 } // namespace duckdb

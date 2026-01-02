@@ -19,7 +19,7 @@ LOAD webbed;
 
 -- Read markdown and convert to HTML
 SELECT doc_blocks_to_html(
-    list(b ORDER BY block_order)
+    list(b ORDER BY element_order)
 )
 FROM read_markdown_blocks('README.md') b;
 ```
@@ -29,7 +29,7 @@ FROM read_markdown_blocks('README.md') b;
 ```sql
 -- Markdown -> doc_blocks -> HTML
 WITH blocks AS (
-    SELECT list(b ORDER BY block_order) as doc_blocks
+    SELECT list(b ORDER BY element_order) as doc_blocks
     FROM read_markdown_blocks('input.md') b
 )
 SELECT doc_blocks_to_html(doc_blocks) as html
@@ -79,7 +79,7 @@ LOAD duck_block_utils;
 ```sql
 -- Extract headings as a TOC
 SELECT * FROM doc_blocks_toc(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('README.md') b)
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('README.md') b)
 );
 
 -- Format as indented list
@@ -87,7 +87,7 @@ SELECT
     repeat('  ', level - 1) || '- ' || title as toc_line,
     id
 FROM doc_blocks_toc(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('docs/**/*.md') b)
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('docs/**/*.md') b)
 );
 ```
 
@@ -96,7 +96,7 @@ FROM doc_blocks_toc(
 ```sql
 -- Get plain text content (strips formatting)
 SELECT doc_blocks_to_text(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('doc.md') b)
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b)
 );
 ```
 
@@ -105,13 +105,13 @@ SELECT doc_blocks_to_text(
 ```sql
 -- Keep only headings and code blocks
 SELECT unnest(doc_blocks_filter(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('doc.md') b),
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b),
     ['heading', 'code']
 ));
 
 -- Exclude metadata and raw HTML
 SELECT unnest(doc_blocks_exclude(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('doc.md') b),
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b),
     ['metadata', 'md:html_block']
 ));
 ```
@@ -125,7 +125,7 @@ SELECT
     content as code,
     file_path
 FROM doc_blocks_code_blocks(
-    (SELECT list(b ORDER BY block_order)
+    (SELECT list(b ORDER BY element_order)
      FROM read_markdown_blocks('tutorial/*.md', include_filepath := true) b)
 )
 WHERE language = 'python';
@@ -136,12 +136,12 @@ WHERE language = 'python';
 ```sql
 -- Check for schema compliance
 SELECT doc_blocks_validate(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('doc.md') b)
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b)
 );
 
 -- Lint for common issues
 SELECT * FROM doc_blocks_lint(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('doc.md') b)
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b)
 )
 WHERE severity = 'error';
 ```
@@ -151,7 +151,7 @@ WHERE severity = 'error';
 ```sql
 -- Get block type distribution
 SELECT * FROM doc_blocks_stats(
-    (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('docs/**/*.md') b)
+    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('docs/**/*.md') b)
 );
 ```
 
@@ -167,7 +167,7 @@ LOAD duck_block_utils;
 -- Read markdown, filter content, convert to HTML
 SELECT doc_blocks_to_html(
     doc_blocks_filter(
-        (SELECT list(b ORDER BY block_order) FROM read_markdown_blocks('doc.md') b),
+        (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b),
         ['heading', 'paragraph', 'code']
     )
 );
@@ -184,7 +184,7 @@ FROM web_pages;
 -- Generate markdown report from multiple sources
 WITH all_headings AS (
     SELECT doc_blocks_headings(
-        (SELECT list(b ORDER BY block_order)
+        (SELECT list(b ORDER BY element_order)
          FROM read_markdown_blocks('docs/**/*.md') b)
     ) as headings
 )

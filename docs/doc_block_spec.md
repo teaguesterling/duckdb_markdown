@@ -6,6 +6,13 @@
 
 A format-agnostic specification for representing documents as sequences of typed blocks in DuckDB. This specification enables interoperability between document format extensions, allowing documents to be converted, transformed, and analyzed using SQL.
 
+> **Note**: The duckdb_markdown extension uses the `duck_block` shape from `duck_block_utils`, which extends this specification with:
+> - `kind` column ('block' or 'inline') for unified block/inline representation
+> - `element_type` column (instead of `block_type`)
+> - `element_order` column (instead of `block_order`)
+>
+> See [Markdown Implementation](markdown_doc_block.md) for details.
+
 ## Overview
 
 Documents are represented as ordered sequences of **blocks**. Each block is a row with standardized columns, enabling:

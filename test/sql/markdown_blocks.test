@@ -1,19 +1,18 @@
 # name: test/sql/markdown_blocks.test
-# description: Test read_markdown_blocks functionality and markdown_doc_block type
+# description: Test read_markdown_blocks functionality with duck_block shape
 # group: [sql]
 
 require markdown
 
 # =============================================================================
-# Test: markdown_doc_block type exists
+# Test: duck_block shape returned by read_markdown_blocks
 # =============================================================================
 
-# Verify the markdown_doc_block type is registered and can be cast to
-# Note: typeof() returns full struct signature, not alias name (SetAlias breaks struct_extract)
-query I
-SELECT ({block_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{}, block_order: 1}::markdown_doc_block).block_type;
+# Verify the new column structure (kind, element_type, element_order)
+query III
+SELECT kind, element_type, element_order FROM read_markdown_blocks('test/data/blocks_basic.md') LIMIT 1;
 ----
-heading
+block	heading	1
 
 # =============================================================================
 # Test: Basic read_markdown_blocks from file (flattened output)
@@ -29,7 +28,7 @@ SELECT count(*) FROM read_markdown_blocks('test/data/blocks_basic.md');
 # =============================================================================
 
 query II
-SELECT block_type, level FROM read_markdown_blocks('test/data/blocks_basic.md') ORDER BY block_order;
+SELECT element_type, level FROM read_markdown_blocks('test/data/blocks_basic.md') ORDER BY element_order;
 ----
 heading	1
 paragraph	NULL
@@ -41,7 +40,7 @@ blockquote	1
 # =============================================================================
 
 query II
-SELECT block_type, content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
+SELECT element_type, content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'heading';
 ----
 heading	Hello
 
@@ -50,7 +49,7 @@ heading	Hello
 # =============================================================================
 
 query II
-SELECT content, attributes['language'] FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'code';
+SELECT content, attributes['language'] FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'code';
 ----
 print("hello")	python
 
@@ -59,12 +58,12 @@ print("hello")	python
 # =============================================================================
 
 query III
-SELECT block_type, level, encoding FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE block_type = 'frontmatter';
+SELECT element_type, level, encoding FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
 ----
 frontmatter	0	yaml
 
 query I
-SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE block_type = 'frontmatter';
+SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
 ----
 true
 
@@ -73,12 +72,12 @@ true
 # =============================================================================
 
 query II
-SELECT block_type, encoding FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+SELECT element_type, encoding FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
 list	json
 
 query I
-SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
 false
 
@@ -87,7 +86,7 @@ false
 # =============================================================================
 
 query I
-SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_ordered_list.md') WHERE block_type = 'list';
+SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_ordered_list.md') WHERE element_type = 'list';
 ----
 true
 
@@ -96,7 +95,7 @@ true
 # =============================================================================
 
 query I
-SELECT count(*) FROM read_markdown_blocks('test/data/blocks_hr.md') WHERE block_type = 'hr';
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_hr.md') WHERE element_type = 'hr';
 ----
 1
 
@@ -105,24 +104,24 @@ SELECT count(*) FROM read_markdown_blocks('test/data/blocks_hr.md') WHERE block_
 # =============================================================================
 
 query II
-SELECT block_type, encoding FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+SELECT element_type, encoding FROM read_markdown_blocks('test/data/blocks_table.md') WHERE element_type = 'table';
 ----
 table	json
 
 query I
-SELECT content LIKE '%"headers"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+SELECT content LIKE '%"headers"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE element_type = 'table';
 ----
 true
 
 # Verify headers contain the correct values (Name, Age)
 query I
-SELECT content LIKE '%"Name"%' AND content LIKE '%"Age"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+SELECT content LIKE '%"Name"%' AND content LIKE '%"Age"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE element_type = 'table';
 ----
 true
 
 # Verify data rows contain the correct values
 query I
-SELECT content LIKE '%"Alice"%' AND content LIKE '%"Bob"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE block_type = 'table';
+SELECT content LIKE '%"Alice"%' AND content LIKE '%"Bob"%' FROM read_markdown_blocks('test/data/blocks_table.md') WHERE element_type = 'table';
 ----
 true
 
@@ -131,7 +130,7 @@ true
 # =============================================================================
 
 query I
-SELECT string_agg(block_order::VARCHAR, ',' ORDER BY block_order) FROM read_markdown_blocks('test/data/blocks_basic.md');
+SELECT string_agg(element_order::VARCHAR, ',' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_basic.md');
 ----
 1,2,3,4
 
@@ -148,10 +147,10 @@ true
 # Test: All columns present
 # =============================================================================
 
-query IIIIII
-SELECT block_type, content IS NOT NULL, level, encoding, attributes IS NOT NULL, block_order FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
+query IIIIIII
+SELECT kind, element_type, content IS NOT NULL, level, encoding, attributes IS NOT NULL, element_order FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'heading';
 ----
-heading	true	1	text	true	1
+block	heading	true	1	text	true	1
 
 # =============================================================================
 # Test: Complex document with multiple block types
@@ -164,13 +163,13 @@ SELECT count(*) FROM read_markdown_blocks('test/data/blocks_nested.md');
 
 # Verify all expected block types are present
 query I
-SELECT count(DISTINCT block_type) FROM read_markdown_blocks('test/data/blocks_nested.md');
+SELECT count(DISTINCT element_type) FROM read_markdown_blocks('test/data/blocks_nested.md');
 ----
 7
 
 # Check heading levels
 query II
-SELECT content, level FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE block_type = 'heading' ORDER BY block_order;
+SELECT content, level FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE element_type = 'heading' ORDER BY element_order;
 ----
 Main Heading	1
 Subheading	2
@@ -181,7 +180,7 @@ Deep Heading	3
 # =============================================================================
 
 query II
-SELECT attributes['language'], content LIKE '%SELECT%' FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE block_type = 'code' ORDER BY block_order;
+SELECT attributes['language'], content LIKE '%SELECT%' FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE element_type = 'code' ORDER BY element_order;
 ----
 sql	true
 NULL	false
@@ -192,13 +191,13 @@ NULL	false
 
 # Heading with inline formatting should extract text
 query I
-SELECT content FROM read_markdown_blocks('test/data/blocks_special.md') WHERE block_type = 'heading';
+SELECT content FROM read_markdown_blocks('test/data/blocks_special.md') WHERE element_type = 'heading';
 ----
 Heading with bold and italic
 
 # Paragraph with inline code and links
 query I
-SELECT content LIKE '%inline code%' FROM read_markdown_blocks('test/data/blocks_special.md') WHERE block_type = 'paragraph';
+SELECT content LIKE '%inline code%' FROM read_markdown_blocks('test/data/blocks_special.md') WHERE element_type = 'paragraph';
 ----
 true
 
@@ -236,7 +235,7 @@ statement ok
 COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '__TEST_DIR__/only_fm.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query II
-SELECT block_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
+SELECT element_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
 ----
 frontmatter	0
 
@@ -246,13 +245,13 @@ frontmatter	0
 
 # Headings should have id attribute
 query I
-SELECT attributes['id'] IS NOT NULL FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'heading';
+SELECT attributes['id'] IS NOT NULL FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'heading';
 ----
 true
 
 # Lists should have ordered attribute
 query I
-SELECT attributes['ordered'] IN ('true', 'false') FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+SELECT attributes['ordered'] IN ('true', 'false') FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
 true
 
@@ -261,7 +260,7 @@ true
 # =============================================================================
 
 query I
-SELECT content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE block_type = 'blockquote';
+SELECT content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'blockquote';
 ----
 A quote
 
@@ -270,12 +269,12 @@ A quote
 # =============================================================================
 
 query I
-SELECT content LIKE '["%' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+SELECT content LIKE '["%' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
 true
 
 query I
-SELECT content LIKE '%"]' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE block_type = 'list';
+SELECT content LIKE '%"]' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
 true
 
@@ -284,17 +283,17 @@ true
 # =============================================================================
 
 query I
-SELECT content FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE block_type = 'heading';
+SELECT content FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE element_type = 'heading';
 ----
 Unicode Test 日本語
 
 query I
-SELECT content LIKE '%émojis%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE block_type = 'paragraph';
+SELECT content LIKE '%émojis%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE element_type = 'paragraph';
 ----
 true
 
 query I
-SELECT content LIKE '%中文%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE block_type = 'list';
+SELECT content LIKE '%中文%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE element_type = 'list';
 ----
 true
 
@@ -303,11 +302,11 @@ true
 # =============================================================================
 
 statement ok
-COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('test/data/blocks_basic.md'))
 TO '__TEST_DIR__/roundtrip1.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 statement ok
-COPY (SELECT block_type, content, level, encoding, attributes FROM read_markdown_blocks('__TEST_DIR__/roundtrip1.md'))
+COPY (SELECT kind, element_type, content, level, encoding, attributes FROM read_markdown_blocks('__TEST_DIR__/roundtrip1.md'))
 TO '__TEST_DIR__/roundtrip2.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 # Both round-trips should have same block count

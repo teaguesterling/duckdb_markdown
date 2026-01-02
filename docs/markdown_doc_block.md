@@ -4,26 +4,42 @@ This document describes the Markdown-specific implementation of the [Document Bl
 
 **Extension**: duckdb_markdown
 **Namespace**: `md`
-**Spec Version**: 1.0
+**Spec Version**: 2.0
 
 ## Overview
 
-The markdown extension implements the doc_block spec for CommonMark and GitHub Flavored Markdown documents. It provides:
+The markdown extension implements the duck_block spec for CommonMark and GitHub Flavored Markdown documents. It provides:
 
-- `read_markdown_blocks()` - Parse markdown into block rows
+- `read_markdown_blocks()` - Parse markdown into block rows (duck_block shape)
 - `COPY TO` with `markdown_mode 'blocks'` or `'duck_block'` - Render blocks to markdown files
-- `duck_block_to_md()` - Convert single block to markdown string
-- `duck_blocks_to_md()` - Convert list of blocks to markdown string
+- `duck_block_to_md()` - Convert single duck_block to markdown string
+- `duck_blocks_to_md()` - Convert list of duck_blocks to markdown string
 - `duck_blocks_to_sections()` - Convert blocks to hierarchical sections
-- `doc_element_to_md()` - Convert single doc_element (block or inline) to markdown
-- `doc_elements_to_md()` - Convert list of doc_elements to markdown string
 
-## Supported Block Types
+## Duck Block Type
 
-### Core Types (from spec)
+The extension uses the `duck_block` struct shape from the `duck_block_utils` specification:
 
-| Type | Markdown Element | Notes |
-|------|------------------|-------|
+```sql
+STRUCT(
+    kind          VARCHAR,              -- 'block' or 'inline'
+    element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
+    content       VARCHAR,              -- Text content
+    level         INTEGER,              -- Heading level or nesting depth
+    encoding      VARCHAR,              -- 'text', 'json', 'yaml', 'html', 'xml'
+    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata
+    element_order INTEGER               -- Position in sequence
+)
+```
+
+**Note:** The `duck_block` type is defined by the `duck_block_utils` extension. This extension uses the shape but does not register the type name.
+
+## Supported Element Types
+
+### Block Types (kind = 'block')
+
+| element_type | Markdown Element | Notes |
+|--------------|------------------|-------|
 | `heading` | `#`, `##`, etc. (ATX style) | Level in `attributes['heading_level']` (1-6), falls back to `level` field |
 | `paragraph` | Text blocks | Inline formatting preserved |
 | `code` | Fenced code blocks | Language in `attributes['language']` |
@@ -32,14 +48,34 @@ The markdown extension implements the doc_block spec for CommonMark and GitHub F
 | `table` | GFM tables | JSON `{headers, rows}` |
 | `hr` | `---`, `***`, `___` | Normalized to `---` on output |
 | `metadata` | YAML frontmatter | Level 0, encoding 'yaml' |
+| `frontmatter` | YAML frontmatter | Alias for `metadata` |
 | `image` | `![alt](src "title")` | Details in attributes |
+| `raw` | Raw HTML | Preserved HTML in markdown |
+| `html` | Raw HTML | Alias for raw |
+| `md:html_block` | Raw HTML | Markdown-specific namespace |
 
-### Markdown-Specific Types
+### Inline Types (kind = 'inline')
 
-| Type | Element | Description |
-|------|---------|-------------|
-| `md:html_block` | Raw HTML | Preserved HTML in markdown |
-| `md:footnote` | `[^id]: text` | Footnote definitions |
+| element_type | Markdown Output | Attributes |
+|--------------|-----------------|------------|
+| `link` | `[text](href "title")` | `href`, `title` |
+| `image` | `![alt](src "title")` | `src`, `title` |
+| `bold` / `strong` | `**text**` | - |
+| `italic` / `em` | `*text*` | - |
+| `code` | `` `text` `` | - |
+| `text` | plain text | - |
+| `space` | word separator | - |
+| `softbreak` | soft line break | - |
+| `linebreak` / `br` | hard break | - |
+| `strikethrough` / `del` | `~~text~~` | - |
+| `superscript` / `sup` | `^text^` | - |
+| `subscript` / `sub` | `~text~` | - |
+| `underline` | `<u>text</u>` | HTML fallback |
+| `smallcaps` | `<span style="...">` | HTML fallback |
+| `math` | `$text$` or `$$text$$` | `display`: inline/block |
+| `quoted` | `"text"` or `'text'` | `quote_type`: single/double |
+| `cite` | `[@key]` | `key` |
+| `note` | `[^note]` | - |
 
 ## Reader: read_markdown_blocks()
 
@@ -53,14 +89,17 @@ read_markdown_blocks(
 
 ### Output Schema
 
+Returns rows with duck_block shape:
+
 | Column | Type | Description |
 |--------|------|-------------|
-| `block_type` | VARCHAR | Block type identifier |
+| `kind` | VARCHAR | Always 'block' for this reader |
+| `element_type` | VARCHAR | Block type identifier |
 | `content` | VARCHAR | Block content |
 | `level` | INTEGER | Heading level or nesting depth |
 | `encoding` | VARCHAR | 'text', 'json', or 'yaml' |
 | `attributes` | MAP(VARCHAR, VARCHAR) | Block metadata |
-| `block_order` | INTEGER | Position in document |
+| `element_order` | INTEGER | Position in document (1-indexed) |
 | `file_path` | VARCHAR | Source file (when enabled) |
 
 ### Examples
@@ -72,18 +111,18 @@ SELECT * FROM read_markdown_blocks('README.md');
 -- Filter to headings only
 SELECT content, level
 FROM read_markdown_blocks('doc.md')
-WHERE block_type = 'heading'
-ORDER BY block_order;
+WHERE element_type = 'heading'
+ORDER BY element_order;
 
 -- Extract code blocks by language
 SELECT content, attributes['language'] as lang
 FROM read_markdown_blocks('tutorial.md')
-WHERE block_type = 'code';
+WHERE element_type = 'code';
 
 -- Multi-file analysis
-SELECT file_path, block_type, count(*) as count
+SELECT file_path, element_type, count(*) as count
 FROM read_markdown_blocks('docs/**/*.md', include_filepath := true)
-GROUP BY file_path, block_type;
+GROUP BY file_path, element_type;
 ```
 
 ## Writer: COPY TO Blocks
@@ -93,7 +132,7 @@ COPY query TO 'output.md' (
     FORMAT MARKDOWN,
     markdown_mode 'blocks',  -- or 'duck_block'
     -- Column mapping (defaults shown)
-    block_type_column 'block_type',
+    element_type_column 'element_type',
     content_column 'content',
     level_column 'level',
     encoding_column 'encoding',
@@ -103,8 +142,8 @@ COPY query TO 'output.md' (
 
 ### Rendering Rules
 
-| Block Type | Markdown Output |
-|------------|-----------------|
+| element_type | Markdown Output |
+|--------------|-----------------|
 | `heading` | `#` × level + space + content |
 | `paragraph` | content + blank line |
 | `code` | ` ``` ` + language + newline + content + ` ``` ` |
@@ -120,31 +159,32 @@ COPY query TO 'output.md' (
 ```sql
 -- Round-trip a document
 COPY (
-    SELECT block_type, content, level, encoding, attributes
+    SELECT kind, element_type, content, level, encoding, attributes
     FROM read_markdown_blocks('input.md')
-    ORDER BY block_order
+    ORDER BY element_order
 ) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 -- Transform headings
 COPY (
     SELECT
-        block_type,
-        CASE WHEN block_type = 'heading'
+        kind,
+        element_type,
+        CASE WHEN element_type = 'heading'
              THEN upper(content)
              ELSE content END as content,
         level, encoding, attributes
     FROM read_markdown_blocks('doc.md')
-    ORDER BY block_order
+    ORDER BY element_order
 ) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 
 -- Generate from scratch
 COPY (
     SELECT * FROM (VALUES
-        ('metadata', 'title: Generated Doc', 0, 'yaml', MAP{}),
-        ('heading', 'Introduction', 1, 'text', MAP{'id': 'intro'}),
-        ('paragraph', 'Welcome to this guide.', NULL, 'text', MAP{}),
-        ('code', 'print("hello")', NULL, 'text', MAP{'language': 'python'})
-    ) AS t(block_type, content, level, encoding, attributes)
+        ('block', 'metadata', 'title: Generated Doc', 0, 'yaml', MAP{}::MAP(VARCHAR, VARCHAR), 0),
+        ('block', 'heading', 'Introduction', 1, 'text', MAP{'id': 'intro'}::MAP(VARCHAR, VARCHAR), 1),
+        ('block', 'paragraph', 'Welcome to this guide.', NULL, 'text', MAP{}::MAP(VARCHAR, VARCHAR), 2),
+        ('block', 'code', 'print("hello")', NULL, 'text', MAP{'language': 'python'}::MAP(VARCHAR, VARCHAR), 3)
+    ) AS t(kind, element_type, content, level, encoding, attributes, element_order)
 ) TO 'generated.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```
 
@@ -154,17 +194,18 @@ Convert blocks back to Markdown without writing to files. These functions enable
 
 ### duck_block_to_md(block)
 
-Converts a single `markdown_doc_block` struct to a Markdown string.
+Converts a single `duck_block` struct to a Markdown string.
 
 ```sql
 SELECT duck_block_to_md({
-    block_type: 'heading',
+    kind: 'block',
+    element_type: 'heading',
     content: 'Hello World',
     level: 1,
     encoding: 'text',
     attributes: MAP{},
-    block_order: 0
-}::markdown_doc_block);
+    element_order: 0
+});
 -- Returns: '# Hello World\n\n'
 ```
 
@@ -173,17 +214,21 @@ SELECT duck_block_to_md({
 Converts a list of blocks to a complete Markdown document string.
 
 ```sql
+-- Using the function
+SELECT duck_blocks_to_md(list(b ORDER BY element_order))
+FROM read_markdown_blocks('source.md') b;
+
 -- Transform and render in one query
 SELECT duck_blocks_to_md(
-    list(b ORDER BY block_order)
+    list(b ORDER BY element_order)
 )
 FROM read_markdown_blocks('source.md') b;
 
 -- Build document programmatically
 SELECT duck_blocks_to_md([
-    {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
-    {block_type: 'paragraph', content: 'Body.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
-]::markdown_doc_block[]);
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Body.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]);
 ```
 
 ### duck_blocks_to_sections(blocks[])
@@ -204,7 +249,7 @@ Converts blocks to a list of section structs with hierarchy information.
 SELECT s.section_id, s.level, s.title, length(s.content) as len
 FROM (
     SELECT unnest(duck_blocks_to_sections(
-        list(b ORDER BY block_order)
+        list(b ORDER BY element_order)
     )) as s
     FROM read_markdown_blocks('doc.md') b
 );
@@ -213,122 +258,47 @@ FROM (
 SELECT s.*
 FROM (
     SELECT unnest(duck_blocks_to_sections(
-        list(b ORDER BY block_order)
+        list(b ORDER BY element_order)
     )) as s
     FROM read_markdown_blocks('tutorial.md') b
-    WHERE b.block_type IN ('heading', 'paragraph', 'code')
+    WHERE b.element_type IN ('heading', 'paragraph', 'code')
 );
 ```
 
-## Unified Element Functions
+## Inline Elements in Blocks
 
-The `doc_element` type provides a unified representation for both block and inline elements, enabling format-agnostic document construction.
-
-### doc_element Type
-
-```sql
-STRUCT(
-    kind          VARCHAR,              -- 'block' or 'inline'
-    element_type  VARCHAR,              -- 'heading', 'bold', 'link', etc.
-    content       VARCHAR,              -- Text content
-    level         INTEGER,              -- Heading level or nesting depth
-    encoding      VARCHAR,              -- 'text', 'json', etc.
-    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata
-    element_order INTEGER               -- Position in sequence
-)
-```
-
-### Supported Element Types
-
-**Block types** (kind = 'block'):
-`heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `metadata`, `image`
-
-**Inline types** (kind = 'inline'):
-
-| Type | Markdown Output | Attributes |
-|------|-----------------|------------|
-| `link` | `[text](href "title")` | `href`, `title` |
-| `image` | `![alt](src "title")` | `src`, `title` |
-| `bold` / `strong` | `**text**` | - |
-| `italic` / `em` | `*text*` | - |
-| `code` | `` `text` `` | - |
-| `text` | plain text | - |
-| `space` | word separator | - |
-| `softbreak` | soft line break | - |
-| `linebreak` / `br` | hard break | - |
-| `strikethrough` / `del` | `~~text~~` | - |
-| `superscript` / `sup` | `^text^` | - |
-| `subscript` / `sub` | `~text~` | - |
-| `underline` | `<u>text</u>` | HTML fallback |
-| `smallcaps` | `<span style="...">` | HTML fallback |
-| `math` | `$text$` or `$$text$$` | `display`: inline/block |
-| `quoted` | `"text"` or `'text'` | `quote_type`: single/double |
-| `cite` | `[@key]` | `key` |
-| `note` | `[^note]` | - |
-
-### doc_element_to_md(element)
-
-Converts a single `doc_element` struct to a Markdown string.
-
-```sql
--- Inline link
-SELECT doc_element_to_md({
-    kind: 'inline',
-    element_type: 'link',
-    content: 'Click here',
-    level: 1,
-    encoding: 'text',
-    attributes: MAP{'href': 'https://example.com'},
-    element_order: 0
-}::doc_element);
--- Returns: '[Click here](https://example.com)'
-
--- Block heading
-SELECT doc_element_to_md({
-    kind: 'block',
-    element_type: 'heading',
-    content: 'Title',
-    level: 2,
-    encoding: 'text',
-    attributes: MAP{},
-    element_order: 0
-}::doc_element);
--- Returns: '## Title\n\n'
-```
-
-### doc_elements_to_md(elements[])
-
-Converts a list of elements to a concatenated Markdown string.
+The `duck_block_to_md` and `duck_blocks_to_md` functions support both block and inline elements. Use `kind: 'inline'` for inline formatting:
 
 ```sql
 -- Compose rich inline content
-SELECT doc_elements_to_md([
+SELECT duck_blocks_to_md([
     {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
     {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
     {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
     {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
-]::doc_element[]);
+]);
 -- Returns: 'Check out [our docs](https://docs.example.com) for **more info**'
 ```
 
-### Using Elements in Blocks
+### Using Inline Elements Within Block Content
 
-Combine element functions with block functions for rich document generation:
+Combine inline rendering with block functions for rich document generation:
 
 ```sql
 -- Paragraph with formatted content
 SELECT duck_block_to_md({
-    block_type: 'paragraph',
-    content: doc_elements_to_md([
+    kind: 'block',
+    element_type: 'paragraph',
+    content: duck_blocks_to_md([
         {kind: 'inline', element_type: 'text', content: 'Visit ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
         {kind: 'inline', element_type: 'link', content: 'GitHub', level: 1, encoding: 'text', attributes: MAP{'href': 'https://github.com'}, element_order: 1},
         {kind: 'inline', element_type: 'text', content: ' for projects.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
-    ]::doc_element[]),
+    ])::VARCHAR,
     level: NULL,
     encoding: 'text',
     attributes: MAP{},
-    block_order: 0
-}::markdown_doc_block);
+    element_order: 0
+});
 -- Returns: 'Visit [GitHub](https://github.com) for projects.\n\n'
 ```
 
@@ -350,44 +320,6 @@ SELECT duck_block_to_md({
 - Code fence style → triple backticks
 - List markers → `-` for unordered, `1.` for ordered
 
-## Interoperability
-
-### Converting from HTML
-
-```sql
--- Future: with duckdb_webbed extension
-COPY (
-    SELECT
-        CASE block_type
-            WHEN 'html:h1' THEN 'heading'
-            WHEN 'html:h2' THEN 'heading'
-            WHEN 'html:p' THEN 'paragraph'
-            WHEN 'html:pre' THEN 'code'
-            ELSE block_type
-        END as block_type,
-        content,
-        CASE WHEN block_type LIKE 'html:h%'
-             THEN CAST(right(block_type, 1) AS INTEGER)
-             ELSE level END as level,
-        encoding,
-        attributes
-    FROM read_html_blocks('page.html')
-) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
-```
-
-### Cross-Format Queries
-
-```sql
--- Future: unified block queries
-SELECT block_type, content
-FROM (
-    SELECT *, 'markdown' as source FROM read_markdown_blocks('docs/*.md')
-    UNION ALL
-    SELECT *, 'html' as source FROM read_html_blocks('pages/*.html')
-)
-WHERE block_type = 'heading';
-```
-
 ## Comparison: Sections vs Blocks
 
 The extension provides two document representations:
@@ -407,7 +339,8 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.3 | 2025-01 | Added unified `doc_element` type with `doc_element_to_md()` and `doc_elements_to_md()` functions |
+| 2.0 | 2025-01 | Unified on `duck_block` shape, removed `markdown_doc_block` type |
+| 1.3 | 2025-01 | Added unified `doc_element` type with conversion functions |
 | 1.2 | 2024-12 | Added duck_block conversion functions, `duck_block` COPY mode alias |
 | 1.1 | 2024-12 | Aligned with doc_block_spec v1.0, added metadata type |
 | 1.0 | 2024 | Initial implementation |

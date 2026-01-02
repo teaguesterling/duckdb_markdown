@@ -10,17 +10,13 @@ public:
 	//! The MARKDOWN type used by DuckDB (implemented as VARCHAR)
 	static LogicalType MarkdownType();
 
-	//! The markdown_doc_block STRUCT type for block-level document representation
-	//! STRUCT(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR,
-	//!        attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)
-	static LogicalType MarkdownDocBlockType();
-
-	//! The doc_element STRUCT type for unified block/inline element representation
+	//! The duck_block STRUCT type for unified block/inline element representation
 	//! STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
 	//!        encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)
 	//! kind: 'block' or 'inline'
 	//! element_type: 'heading', 'paragraph', 'bold', 'link', etc.
-	static LogicalType DocElementType();
+	//! Note: Type is defined by duck_block_utils extension; we just use the shape
+	static LogicalType DuckBlockType();
 
 	//! Register the MARKDOWN type and conversion functions
 	static void Register(ExtensionLoader &loader);

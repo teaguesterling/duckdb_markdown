@@ -6,59 +6,60 @@ require markdown
 
 # =============================================================================
 # Test: duck_block_to_md - Single block conversion
+# Uses duck_block shape: STRUCT(kind, element_type, content, level, encoding, attributes, element_order)
 # =============================================================================
 
 # Heading
 query I
-SELECT duck_block_to_md({block_type: 'heading', content: 'Test Heading', level: 2, encoding: 'text', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE '## Test Heading%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'Test Heading', level: 2, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE '## Test Heading%';
 ----
 true
 
 # Paragraph
 query I
-SELECT duck_block_to_md({block_type: 'paragraph', content: 'This is a paragraph.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE 'This is a paragraph.%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'paragraph', content: 'This is a paragraph.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE 'This is a paragraph.%';
 ----
 true
 
 # Code block
 query I
-SELECT duck_block_to_md({block_type: 'code', content: 'print("hello")', level: NULL, encoding: 'text', attributes: MAP{'language': 'python'}, block_order: 0}::markdown_doc_block) LIKE '%```python%print("hello")%```%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'code', content: 'print("hello")', level: NULL, encoding: 'text', attributes: MAP{'language': 'python'}, element_order: 0}) LIKE '%```python%print("hello")%```%';
 ----
 true
 
 # Blockquote
 query I
-SELECT duck_block_to_md({block_type: 'blockquote', content: 'A quote', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE '%> A quote%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: 'A quote', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE '%> A quote%';
 ----
 true
 
 # List (unordered)
 query I
-SELECT duck_block_to_md({block_type: 'list', content: '["Item 1", "Item 2"]', level: 1, encoding: 'json', attributes: MAP{'ordered': 'false'}, block_order: 0}::markdown_doc_block) LIKE '%- Item 1%- Item 2%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '["Item 1", "Item 2"]', level: 1, encoding: 'json', attributes: MAP{'ordered': 'false'}, element_order: 0}) LIKE '%- Item 1%- Item 2%';
 ----
 true
 
 # List (ordered)
 query I
-SELECT duck_block_to_md({block_type: 'list', content: '["First", "Second"]', level: 1, encoding: 'json', attributes: MAP{'ordered': 'true'}, block_order: 0}::markdown_doc_block) LIKE '%1. First%2. Second%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '["First", "Second"]', level: 1, encoding: 'json', attributes: MAP{'ordered': 'true'}, element_order: 0}) LIKE '%1. First%2. Second%';
 ----
 true
 
 # Horizontal rule
 query I
-SELECT duck_block_to_md({block_type: 'hr', content: '', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE '%---%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'hr', content: '', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE '%---%';
 ----
 true
 
 # Image
 query I
-SELECT duck_block_to_md({block_type: 'image', content: '', level: NULL, encoding: 'text', attributes: MAP{'src': 'image.png', 'alt': 'My Image'}, block_order: 0}::markdown_doc_block) LIKE '%![My Image](image.png)%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'image', content: '', level: NULL, encoding: 'text', attributes: MAP{'src': 'image.png', 'alt': 'My Image'}, element_order: 0}) LIKE '%![My Image](image.png)%';
 ----
 true
 
 # Metadata/frontmatter
 query I
-SELECT duck_block_to_md({block_type: 'metadata', content: 'title: Test', level: 0, encoding: 'yaml', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE '%---%title: Test%---%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'metadata', content: 'title: Test', level: 0, encoding: 'yaml', attributes: MAP{}, element_order: 0}) LIKE '%---%title: Test%---%';
 ----
 true
 
@@ -68,21 +69,21 @@ true
 
 query I
 SELECT duck_blocks_to_md([
-    {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
-    {block_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
-]::markdown_doc_block[]) LIKE '%# Title%Body text.%';
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]) LIKE '%# Title%Body text.%';
 ----
 true
 
 # Empty list
 query I
-SELECT duck_blocks_to_md([]::markdown_doc_block[]);
+SELECT duck_blocks_to_md([]);
 ----
 (empty)
 
 # NULL handling
 query I
-SELECT duck_blocks_to_md(NULL::markdown_doc_block[]) IS NULL;
+SELECT duck_blocks_to_md(NULL) IS NULL;
 ----
 true
 
@@ -92,10 +93,10 @@ true
 
 query I
 SELECT len(duck_blocks_to_sections([
-    {block_type: 'heading', content: 'Section One', level: 1, encoding: 'text', attributes: MAP{'id': 'section-one'}, block_order: 0},
-    {block_type: 'paragraph', content: 'Content here.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1},
-    {block_type: 'heading', content: 'Section Two', level: 1, encoding: 'text', attributes: MAP{}, block_order: 2}
-]::markdown_doc_block[]));
+    {kind: 'block', element_type: 'heading', content: 'Section One', level: 1, encoding: 'text', attributes: MAP{'id': 'section-one'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Content here.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Section Two', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+]));
 ----
 2
 
@@ -108,9 +109,9 @@ SELECT
     length(s.content) > 0 as has_content
 FROM (
     SELECT unnest(duck_blocks_to_sections([
-        {block_type: 'heading', content: 'Introduction', level: 1, encoding: 'text', attributes: MAP{'id': 'intro'}, block_order: 0},
-        {block_type: 'paragraph', content: 'Welcome.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
-    ]::markdown_doc_block[])) as s
+        {kind: 'block', element_type: 'heading', content: 'Introduction', level: 1, encoding: 'text', attributes: MAP{'id': 'intro'}, element_order: 0},
+        {kind: 'block', element_type: 'paragraph', content: 'Welcome.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+    ])) as s
 );
 ----
 intro	1	Introduction	true
@@ -122,10 +123,10 @@ intro	1	Introduction	true
 statement ok
 CREATE TABLE test_blocks AS
 SELECT * FROM (VALUES
-    ('heading', 'My Document', 1, 'text', MAP{'id': 'my-document'}, 0),
-    ('paragraph', 'First paragraph.', NULL, 'text', MAP{}, 1),
-    ('code', 'SELECT 1;', NULL, 'text', MAP{'language': 'sql'}, 2)
-) AS t(block_type, content, level, encoding, attributes, block_order);
+    ('block', 'heading', 'My Document', 1, 'text', MAP{'id': 'my-document'}, 0),
+    ('block', 'paragraph', 'First paragraph.', NULL, 'text', MAP{}, 1),
+    ('block', 'code', 'SELECT 1;', NULL, 'text', MAP{'language': 'sql'}, 2)
+) AS t(kind, element_type, content, level, encoding, attributes, element_order);
 
 statement ok
 COPY test_blocks TO '__TEST_DIR__/duck_block_test.md' (FORMAT MARKDOWN, markdown_mode 'duck_block');
@@ -154,13 +155,14 @@ DROP TABLE test_blocks;
 
 query I
 SELECT duck_block_to_md({
-    block_type: 'table',
+    kind: 'block',
+    element_type: 'table',
     content: '{"headers": ["Name", "Age"], "rows": [["Alice", "30"], ["Bob", "25"]]}',
     level: NULL,
     encoding: 'json',
     attributes: MAP{},
-    block_order: 0
-}::markdown_doc_block) LIKE '%| Name | Age |%|---|---|%| Alice | 30 |%';
+    element_order: 0
+}) LIKE '%| Name | Age |%|---|---|%| Alice | 30 |%';
 ----
 true
 
@@ -170,31 +172,31 @@ true
 
 # heading_level attribute should be used when present
 query I
-SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, block_order: 0}::markdown_doc_block) LIKE '### Test%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, element_order: 0}) LIKE '### Test%';
 ----
 true
 
 # level field is fallback when heading_level attribute is missing
 query I
-SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: 2, encoding: 'text', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE '## Test%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'Test', level: 2, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE '## Test%';
 ----
 true
 
 # heading_level attribute with NULL level field
 query I
-SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '4'}, block_order: 0}::markdown_doc_block) LIKE '#### Test%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '4'}, element_order: 0}) LIKE '#### Test%';
 ----
 true
 
 # Level clamping: heading_level > 6 should clamp to 6
 query I
-SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '10'}, block_order: 0}::markdown_doc_block) LIKE '###### Test%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '10'}, element_order: 0}) LIKE '###### Test%';
 ----
 true
 
 # Level clamping: heading_level < 1 should clamp to 1
 query I
-SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '0'}, block_order: 0}::markdown_doc_block) LIKE '# Test%';
+SELECT duck_block_to_md({kind: 'block', element_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '0'}, element_order: 0}) LIKE '# Test%';
 ----
 true
 
@@ -206,10 +208,183 @@ query II
 SELECT s.level, s.title
 FROM (
     SELECT unnest(duck_blocks_to_sections([
-        {block_type: 'heading', content: 'Top Level', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, block_order: 0},
-        {block_type: 'heading', content: 'Subsection', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '2'}, block_order: 1}
-    ]::markdown_doc_block[])) as s
+        {kind: 'block', element_type: 'heading', content: 'Top Level', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+        {kind: 'block', element_type: 'heading', content: 'Subsection', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 1}
+    ])) as s
 );
 ----
 1	Top Level
 2	Subsection
+
+# =============================================================================
+# Test: Raw/HTML block rendering
+# =============================================================================
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'raw', content: '<div class="custom">Content</div>', level: NULL, encoding: 'html', attributes: MAP{}, element_order: 0}) LIKE '%<div class="custom">Content</div>%';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'html', content: '<p>HTML paragraph</p>', level: NULL, encoding: 'html', attributes: MAP{}, element_order: 0}) LIKE '%<p>HTML paragraph</p>%';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'md:html_block', content: '<script>alert("hi")</script>', level: NULL, encoding: 'html', attributes: MAP{}, element_order: 0}) LIKE '%<script>alert("hi")</script>%';
+----
+true
+
+# =============================================================================
+# Test: Multi-line blockquote
+# =============================================================================
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: 'Line one
+Line two
+Line three', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE '%> Line one%> Line two%> Line three%';
+----
+true
+
+# =============================================================================
+# Test: Image with title attribute
+# =============================================================================
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'image', content: '', level: NULL, encoding: 'text', attributes: MAP{'src': 'photo.jpg', 'alt': 'A photo', 'title': 'My vacation photo'}, element_order: 0}) LIKE '%![A photo](photo.jpg "My vacation photo")%';
+----
+true
+
+# Image with alt in content (fallback)
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'image', content: 'Alt from content', level: NULL, encoding: 'text', attributes: MAP{'src': 'img.png'}, element_order: 0}) LIKE '%![Alt from content](img.png)%';
+----
+true
+
+# =============================================================================
+# Test: Ordered list with start attribute
+# =============================================================================
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'list', content: '["First", "Second", "Third"]', level: 1, encoding: 'json', attributes: MAP{'ordered': 'true', 'start': '5'}, element_order: 0}) LIKE '%5. First%6. Second%7. Third%';
+----
+true
+
+# =============================================================================
+# Test: Code block without language
+# =============================================================================
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'code', content: 'plain code here', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}) LIKE '%```%plain code here%```%';
+----
+true
+
+# =============================================================================
+# Test: Frontmatter (alias for metadata)
+# =============================================================================
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'frontmatter', content: 'title: My Doc
+author: Jane', level: 0, encoding: 'yaml', attributes: MAP{}, element_order: 0}) LIKE '%---%title: My Doc%author: Jane%---%';
+----
+true
+
+# =============================================================================
+# Test: Cast LIST(duck_block shape) to markdown
+# =============================================================================
+
+# Cast using explicit type (MAP(VARCHAR, VARCHAR) required for proper type matching)
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'id': 'title'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Hello world.', level: NULL, encoding: 'text', attributes: MAP{'id': 'p1'}, element_order: 1}
+]) LIKE '%# Title%Hello world.%';
+----
+true
+
+# Empty list with explicit duck_block type
+query I
+SELECT duck_blocks_to_md([]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[]);
+----
+(empty)
+
+# =============================================================================
+# Test: Inline elements (kind = 'inline')
+# =============================================================================
+
+# Bold/strong
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'bold', content: 'important', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0});
+----
+**important**
+
+# Italic/emphasis
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'italic', content: 'emphasized', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0});
+----
+*emphasized*
+
+# Inline code
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'code', content: 'code_here', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0});
+----
+`code_here`
+
+# Link
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'link', content: 'Click here', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 0});
+----
+[Click here](https://example.com)
+
+# Link with title
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'link', content: 'Example', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com', 'title': 'Visit Example'}, element_order: 0});
+----
+[Example](https://example.com "Visit Example")
+
+# Inline image
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'image', content: 'Logo', level: 1, encoding: 'text', attributes: MAP{'src': 'logo.png'}, element_order: 0});
+----
+![Logo](logo.png)
+
+# Strikethrough
+query I
+SELECT duck_block_to_md({kind: 'inline', element_type: 'strikethrough', content: 'deleted', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0});
+----
+~~deleted~~
+
+# =============================================================================
+# Test: Multiple inline elements (duck_blocks_to_md)
+# =============================================================================
+
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
+]);
+----
+Check out [our docs](https://docs.example.com) for **more info**
+
+# =============================================================================
+# Test: read_markdown_blocks returns duck_block shape
+# =============================================================================
+
+# Verify that read_markdown_blocks returns the new column names
+query I
+SELECT kind FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') LIMIT 1;
+----
+block
+
+query I
+SELECT element_type FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') WHERE element_type = 'heading' LIMIT 1;
+----
+heading
+
+# element_order is 1-indexed from the markdown parser
+query I
+SELECT element_order FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') WHERE element_order = 1 LIMIT 1;
+----
+1

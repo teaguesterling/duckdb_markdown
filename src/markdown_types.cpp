@@ -1,5 +1,6 @@
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
+#include "duck_block_functions.hpp"
 
 namespace duckdb {
 
@@ -15,34 +16,14 @@ LogicalType MarkdownTypes::MarkdownType() {
 }
 
 //===--------------------------------------------------------------------===//
-// Markdown Document Block Type Definition
+// Duck Block Type Definition (Unified Block/Inline)
 //===--------------------------------------------------------------------===//
 
-LogicalType MarkdownTypes::MarkdownDocBlockType() {
-	// Create the STRUCT type for markdown_doc_block
-	// STRUCT(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR,
-	//        attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)
-	child_list_t<LogicalType> struct_children;
-	struct_children.push_back(make_pair("block_type", LogicalType::VARCHAR));
-	struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
-	struct_children.push_back(make_pair("level", LogicalType::INTEGER));
-	struct_children.push_back(make_pair("encoding", LogicalType::VARCHAR));
-	struct_children.push_back(make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)));
-	struct_children.push_back(make_pair("block_order", LogicalType::INTEGER));
-
-	// Note: We intentionally don't use SetAlias() here because it breaks struct_extract()
-	// The type is registered with the name "markdown_doc_block" in Register() instead
-	return LogicalType::STRUCT(std::move(struct_children));
-}
-
-//===--------------------------------------------------------------------===//
-// Doc Element Type Definition (Unified Block/Inline)
-//===--------------------------------------------------------------------===//
-
-LogicalType MarkdownTypes::DocElementType() {
-	// Create the STRUCT type for doc_element - unified block/inline representation
+LogicalType MarkdownTypes::DuckBlockType() {
+	// Create the STRUCT type for duck_block - unified block/inline representation
 	// STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
 	//        encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)
+	// Note: This type is defined by duck_block_utils extension; we just use the shape
 	child_list_t<LogicalType> struct_children;
 	struct_children.push_back(make_pair("kind", LogicalType::VARCHAR));           // 'block' or 'inline'
 	struct_children.push_back(make_pair("element_type", LogicalType::VARCHAR));   // 'heading', 'bold', etc.
@@ -116,6 +97,28 @@ static bool MarkdownToVarcharCast(Vector &source, Vector &result, idx_t count, C
 }
 
 //===--------------------------------------------------------------------===//
+// List-to-Markdown Cast Functions
+//===--------------------------------------------------------------------===//
+
+static bool DuckBlockListToMarkdownCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	// Cast LIST(duck_block) to markdown
+	// duck_block struct: kind, element_type, content, level, encoding, attributes, element_order
+	for (idx_t i = 0; i < count; i++) {
+		auto list_value = source.GetValue(i);
+
+		if (list_value.IsNull()) {
+			result.SetValue(i, Value());
+			continue;
+		}
+
+		string markdown = DuckBlockFunctions::RenderDuckBlocksToMarkdown(list_value);
+		result.SetValue(i, Value(markdown));
+	}
+
+	return true;
+}
+
+//===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
 
@@ -133,13 +136,13 @@ void MarkdownTypes::Register(ExtensionLoader &loader) {
 	loader.RegisterCastFunction(markdown_type, LogicalType(LogicalTypeId::VARCHAR), MarkdownToVarcharCast,
 	                            0); // Implicit cast cost 0
 
-	// Register the markdown_doc_block STRUCT type
-	const auto doc_block_type = MarkdownDocBlockType();
-	loader.RegisterType("markdown_doc_block", doc_block_type);
+	// Note: duck_block type is owned by duck_block_utils extension
+	// We use the shape but don't register the type name
 
-	// Register the doc_element STRUCT type (unified block/inline)
-	const auto doc_element_type = DocElementType();
-	loader.RegisterType("doc_element", doc_element_type);
+	// Register LIST(duck_block shape) -> markdown cast
+	const auto duck_block_type = DuckBlockType();
+	const auto duck_block_list_type = LogicalType::LIST(duck_block_type);
+	loader.RegisterCastFunction(duck_block_list_type, markdown_type, DuckBlockListToMarkdownCast, 1);
 }
 
 } // namespace duckdb

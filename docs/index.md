@@ -7,7 +7,6 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 - [Document Block Specification](doc_block_spec.md) - Format-agnostic specification for representing documents as blocks
 - [Markdown Implementation](markdown_doc_block.md) - Markdown-specific implementation details
 - [Ecosystem Integration](ecosystem.md) - Using with webbed (HTML/XML) and duck_block_utils
-- [Updating](UPDATING.md) - Guide for updating the extension
 
 ## Quick Start
 
@@ -19,7 +18,7 @@ LOAD markdown;
 -- Read Markdown files
 SELECT * FROM read_markdown('docs/**/*.md');
 
--- Parse markdown into blocks
+-- Parse markdown into blocks (duck_block shape)
 SELECT * FROM read_markdown_blocks('README.md');
 ```
 
@@ -32,33 +31,33 @@ Convert blocks back to Markdown without writing to files:
 SELECT duck_block_to_md(block) FROM read_markdown_blocks('doc.md');
 
 -- Convert a list of blocks to a complete document
-SELECT duck_blocks_to_md(list(b ORDER BY block_order))
+SELECT duck_blocks_to_md(list(b ORDER BY element_order))
 FROM read_markdown_blocks('doc.md') b;
 
 -- Convert blocks to hierarchical sections
-SELECT unnest(duck_blocks_to_sections(list(b ORDER BY block_order)))
+SELECT unnest(duck_blocks_to_sections(list(b ORDER BY element_order)))
 FROM read_markdown_blocks('doc.md') b;
 ```
 
 See [Markdown Implementation](markdown_doc_block.md#duck-block-conversion-functions) for details.
 
-## Unified Element Functions
+## Inline Elements
 
-Build rich text content with the unified `doc_element` type that supports both block and inline elements:
+Build rich text content with the unified `duck_block` type that supports both block and inline elements:
 
 ```sql
 -- Convert inline elements to markdown
-SELECT doc_elements_to_md([
+SELECT duck_blocks_to_md([
     {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
     {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 1},
     {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
     {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
-]::doc_element[]);
+]);
 -- Returns: 'Check out [our docs](https://example.com) for **more info**'
 ```
 
 Supported inline types: `link`, `image`, `bold`, `italic`, `code`, `text`, `strikethrough`, `linebreak`, `math`, `superscript`, `subscript`
 
-See [Unified Element Functions](markdown_doc_block.md#unified-element-functions) for details.
+See [Inline Elements in Blocks](markdown_doc_block.md#inline-elements-in-blocks) for details.
 
 For full usage details, see the [main README](https://github.com/teaguesterling/duckdb_markdown).

@@ -24,13 +24,13 @@ unique_ptr<FunctionData> WriteMarkdownBindData::Copy() const {
 	result->level_column = level_column;
 	result->content_mode = content_mode;
 	result->blank_lines = blank_lines;
-	result->block_type_column = block_type_column;
+	result->element_type_column = element_type_column;
 	result->encoding_column = encoding_column;
 	result->attributes_column = attributes_column;
 	result->level_col_idx = level_col_idx;
 	result->title_col_idx = title_col_idx;
 	result->content_col_idx = content_col_idx;
-	result->block_type_col_idx = block_type_col_idx;
+	result->element_type_col_idx = element_type_col_idx;
 	result->encoding_col_idx = encoding_col_idx;
 	result->attributes_col_idx = attributes_col_idx;
 	result->alignments = alignments;
@@ -89,8 +89,8 @@ void MarkdownCopyFunction::CopyOptions(ClientContext &context, CopyOptionsInput 
 	input.options["content_mode"] = CopyOption(LogicalType::VARCHAR);
 	input.options["blank_lines"] = CopyOption(LogicalType::INTEGER);
 
-	// Blocks mode options
-	input.options["block_type_column"] = CopyOption(LogicalType::VARCHAR);
+	// Blocks mode options (uses duck_block naming)
+	input.options["element_type_column"] = CopyOption(LogicalType::VARCHAR);
 	input.options["encoding_column"] = CopyOption(LogicalType::VARCHAR);
 	input.options["attributes_column"] = CopyOption(LogicalType::VARCHAR);
 }
@@ -145,8 +145,8 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 			result->content_mode = StringUtil::Lower(StringValue::Get(value[0]));
 		} else if (loption == "blank_lines") {
 			result->blank_lines = IntegerValue::Get(value[0]);
-		} else if (loption == "block_type_column") {
-			result->block_type_column = StringValue::Get(value[0]);
+		} else if (loption == "element_type_column") {
+			result->element_type_column = StringValue::Get(value[0]);
 		} else if (loption == "encoding_column") {
 			result->encoding_column = StringValue::Get(value[0]);
 		} else if (loption == "attributes_column") {
@@ -184,12 +184,12 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 		// content_column is optional - sections can have empty content
 	}
 
-	// For blocks mode, resolve column indices
+	// For blocks mode, resolve column indices (uses duck_block naming)
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::BLOCKS) {
 		for (idx_t i = 0; i < names.size(); i++) {
 			auto lower_name = StringUtil::Lower(names[i]);
-			if (lower_name == StringUtil::Lower(result->block_type_column)) {
-				result->block_type_col_idx = i;
+			if (lower_name == StringUtil::Lower(result->element_type_column)) {
+				result->element_type_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->content_column)) {
 				result->content_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->level_column)) {
@@ -202,8 +202,8 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 		}
 
 		// Validate required columns for blocks mode
-		if (result->block_type_col_idx == DConstants::INVALID_INDEX) {
-			throw InvalidInputException("Blocks mode requires a '%s' column", result->block_type_column);
+		if (result->element_type_col_idx == DConstants::INVALID_INDEX) {
+			throw InvalidInputException("Blocks mode requires a '%s' column", result->element_type_column);
 		}
 		if (result->content_col_idx == DConstants::INVALID_INDEX) {
 			throw InvalidInputException("Blocks mode requires a '%s' column", result->content_column);
@@ -289,11 +289,11 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 	} else {
 		// Blocks mode: render individual blocks
 		for (idx_t row_idx = 0; row_idx < input.size(); row_idx++) {
-			// Get block_type (required)
-			string block_type;
-			auto block_type_val = input.data[bind_data.block_type_col_idx].GetValue(row_idx);
-			if (!block_type_val.IsNull()) {
-				block_type = block_type_val.ToString();
+			// Get element_type (required)
+			string element_type;
+			auto element_type_val = input.data[bind_data.element_type_col_idx].GetValue(row_idx);
+			if (!element_type_val.IsNull()) {
+				element_type = element_type_val.ToString();
 			}
 
 			// Get content (required)
@@ -327,7 +327,7 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 				attributes = input.data[bind_data.attributes_col_idx].GetValue(row_idx);
 			}
 
-			lstate.buffer += RenderBlock(block_type, content, level, encoding, attributes, bind_data);
+			lstate.buffer += RenderBlock(element_type, content, level, encoding, attributes, bind_data);
 		}
 	}
 }
@@ -529,7 +529,7 @@ string MarkdownCopyFunction::RenderSection(int32_t level, const string &title, c
 // Blocks Mode Helpers
 //===--------------------------------------------------------------------===//
 
-string MarkdownCopyFunction::RenderBlock(const string &block_type, const string &content, int32_t level,
+string MarkdownCopyFunction::RenderBlock(const string &element_type, const string &content, int32_t level,
                                          const string &encoding, const Value &attributes,
                                          const WriteMarkdownBindData &bind_data) {
 	string result;
@@ -551,21 +551,21 @@ string MarkdownCopyFunction::RenderBlock(const string &block_type, const string 
 		return "";
 	};
 
-	if (block_type == "frontmatter") {
+	if (element_type == "frontmatter" || element_type == "metadata") {
 		// YAML frontmatter
 		result = "---\n" + content + "\n---\n\n";
-	} else if (block_type == "heading") {
+	} else if (element_type == "heading") {
 		// ATX heading with level
 		int32_t heading_level = level > 0 && level <= 6 ? level : 1;
 		result = string(heading_level, '#') + " " + content + "\n\n";
-	} else if (block_type == "paragraph") {
+	} else if (element_type == "paragraph") {
 		// Plain paragraph
 		result = content + "\n\n";
-	} else if (block_type == "code") {
+	} else if (element_type == "code") {
 		// Fenced code block
 		string language = get_attr("language");
 		result = "```" + language + "\n" + content + "\n```\n\n";
-	} else if (block_type == "blockquote") {
+	} else if (element_type == "blockquote") {
 		// Block quote - add > prefix to each line
 		string quoted;
 		std::istringstream iss(content);
@@ -574,7 +574,7 @@ string MarkdownCopyFunction::RenderBlock(const string &block_type, const string 
 			quoted += "> " + line + "\n";
 		}
 		result = quoted + "\n";
-	} else if (block_type == "list") {
+	} else if (element_type == "list") {
 		// List - content is JSON encoded, need to decode
 		// For now, output as-is if not JSON or parse if JSON
 		if (encoding == "json" && content.length() > 2 && content[0] == '[') {
@@ -636,7 +636,7 @@ string MarkdownCopyFunction::RenderBlock(const string &block_type, const string 
 			// Fallback: output content directly
 			result = content + "\n\n";
 		}
-	} else if (block_type == "table") {
+	} else if (element_type == "table") {
 		// Table - content is JSON encoded as {"headers": [...], "rows": [[...], ...]}
 		if (encoding == "json" && content.find("\"headers\"") != string::npos) {
 			// Parse JSON table format
@@ -743,10 +743,10 @@ string MarkdownCopyFunction::RenderBlock(const string &block_type, const string 
 		} else {
 			result = content + "\n\n";
 		}
-	} else if (block_type == "hr") {
+	} else if (element_type == "hr") {
 		// Horizontal rule
 		result = "---\n\n";
-	} else if (block_type == "html") {
+	} else if (element_type == "html" || element_type == "raw" || element_type == "md:html_block") {
 		// Raw HTML
 		result = content + "\n\n";
 	} else {

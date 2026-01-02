@@ -466,12 +466,16 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 	}
 
 	// Define return columns (flattened - one row per block)
+	// Uses duck_block shape: kind, element_type, content, level, encoding, attributes, element_order
 	if (result->options.include_filepath) {
 		names.emplace_back("file_path");
 		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
 	}
 
-	names.emplace_back("block_type");
+	names.emplace_back("kind");
+	return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+
+	names.emplace_back("element_type");
 	return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
 
 	names.emplace_back("content");
@@ -487,7 +491,7 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 	return_types.emplace_back(
 	    LogicalType::MAP(LogicalType(LogicalTypeId::VARCHAR), LogicalType(LogicalTypeId::VARCHAR)));
 
-	names.emplace_back("block_order");
+	names.emplace_back("element_order");
 	return_types.emplace_back(LogicalType(LogicalTypeId::INTEGER));
 
 	return std::move(result);
@@ -514,7 +518,11 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 			column_idx++;
 		}
 
-		// block_type
+		// kind (always 'block' for read_markdown_blocks)
+		output.data[column_idx].SetValue(output_idx, Value("block"));
+		column_idx++;
+
+		// element_type (was block_type)
 		output.data[column_idx].SetValue(output_idx, Value(block.block_type));
 		column_idx++;
 
@@ -542,7 +550,7 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 		output.data[column_idx].SetValue(output_idx, attributes_map);
 		column_idx++;
 
-		// block_order
+		// element_order (was block_order)
 		output.data[column_idx].SetValue(output_idx, Value::INTEGER(block.block_order));
 
 		output_idx++;
