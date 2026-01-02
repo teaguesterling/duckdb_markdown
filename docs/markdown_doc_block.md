@@ -15,6 +15,8 @@ The markdown extension implements the doc_block spec for CommonMark and GitHub F
 - `duck_block_to_md()` - Convert single block to markdown string
 - `duck_blocks_to_md()` - Convert list of blocks to markdown string
 - `duck_blocks_to_sections()` - Convert blocks to hierarchical sections
+- `doc_inline_to_md()` - Convert single inline element to markdown string
+- `doc_inlines_to_md()` - Convert list of inline elements to markdown string
 
 ## Supported Block Types
 
@@ -218,6 +220,110 @@ FROM (
 );
 ```
 
+## Inline Element Functions
+
+Convert structured inline elements to Markdown. These functions enable format-agnostic document construction with rich text formatting.
+
+### doc_inline Type
+
+```sql
+STRUCT(
+    inline_type VARCHAR,              -- 'link', 'image', 'bold', 'italic', 'code', 'text'
+    content VARCHAR,                  -- Text content or alt text
+    attributes MAP(VARCHAR, VARCHAR)  -- href, src, title, etc.
+)
+```
+
+### Supported Inline Types
+
+| Type | Markdown Output | Attributes |
+|------|-----------------|------------|
+| `link` | `[text](href "title")` | `href`, `title` |
+| `image` | `![alt](src "title")` | `src`, `title` |
+| `bold` / `strong` | `**text**` | - |
+| `italic` / `em` | `*text*` | - |
+| `code` | `` `text` `` | - |
+| `text` | plain text | - |
+| `strikethrough` / `del` | `~~text~~` | - |
+| `linebreak` / `br` | hard break | - |
+
+### doc_inline_to_md(inline)
+
+Converts a single `doc_inline` struct to a Markdown string.
+
+```sql
+-- Link
+SELECT doc_inline_to_md({
+    inline_type: 'link',
+    content: 'Click here',
+    attributes: MAP{'href': 'https://example.com', 'title': 'Example'}
+}::doc_inline);
+-- Returns: '[Click here](https://example.com "Example")'
+
+-- Bold text
+SELECT doc_inline_to_md({
+    inline_type: 'bold',
+    content: 'important',
+    attributes: MAP{}
+}::doc_inline);
+-- Returns: '**important**'
+```
+
+### doc_inlines_to_md(inlines[])
+
+Converts a list of inline elements to a concatenated Markdown string.
+
+```sql
+-- Compose rich text content
+SELECT doc_inlines_to_md([
+    {inline_type: 'text', content: 'Check out ', attributes: MAP{}},
+    {inline_type: 'link', content: 'our docs', attributes: MAP{'href': 'https://docs.example.com'}},
+    {inline_type: 'text', content: ' for ', attributes: MAP{}},
+    {inline_type: 'bold', content: 'more info', attributes: MAP{}},
+    {inline_type: 'text', content: '.', attributes: MAP{}}
+]::doc_inline[]);
+-- Returns: 'Check out [our docs](https://docs.example.com) for **more info**.'
+```
+
+### Using Inlines in Blocks
+
+Combine inline functions with block functions for rich document generation:
+
+```sql
+-- Paragraph with formatted content
+SELECT duck_block_to_md({
+    block_type: 'paragraph',
+    content: doc_inlines_to_md([
+        {inline_type: 'text', content: 'Visit ', attributes: MAP{}},
+        {inline_type: 'link', content: 'GitHub', attributes: MAP{'href': 'https://github.com'}},
+        {inline_type: 'text', content: ' for ', attributes: MAP{}},
+        {inline_type: 'code', content: 'open source', attributes: MAP{}},
+        {inline_type: 'text', content: ' projects.', attributes: MAP{}}
+    ]::doc_inline[]),
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{},
+    block_order: 0
+}::markdown_doc_block);
+-- Returns: 'Visit [GitHub](https://github.com) for `open source` projects.\n\n'
+
+-- Complete document with inline formatting
+SELECT duck_blocks_to_md([
+    {block_type: 'heading', content: 'Welcome', level: 1,
+     encoding: 'text', attributes: MAP{}, block_order: 0},
+    {block_type: 'paragraph',
+     content: doc_inlines_to_md([
+         {inline_type: 'text', content: 'This is ', attributes: MAP{}},
+         {inline_type: 'bold', content: 'important', attributes: MAP{}},
+         {inline_type: 'text', content: ' and ', attributes: MAP{}},
+         {inline_type: 'italic', content: 'emphasized', attributes: MAP{}},
+         {inline_type: 'text', content: '.', attributes: MAP{}}
+     ]::doc_inline[]),
+     level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
+]::markdown_doc_block[]);
+-- Returns: '# Welcome\n\nThis is **important** and *emphasized*.\n\n'
+```
+
 ## Round-Trip Fidelity
 
 ### Preserved
@@ -293,6 +399,7 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3 | 2025-01 | Added `doc_inline` type and inline-to-markdown functions |
 | 1.2 | 2024-12 | Added duck_block conversion functions, `duck_block` COPY mode alias |
 | 1.1 | 2024-12 | Aligned with doc_block_spec v1.0, added metadata type |
 | 1.0 | 2024 | Initial implementation |
