@@ -34,6 +34,7 @@ struct WriteMarkdownBindData : public FunctionData {
 	int32_t blank_lines = 1;
 
 	// Blocks mode column names (configurable) - uses duck_block naming
+	string kind_column = "kind";
 	string element_type_column = "element_type";
 	string encoding_column = "encoding";
 	string attributes_column = "attributes";
@@ -43,6 +44,7 @@ struct WriteMarkdownBindData : public FunctionData {
 	idx_t title_col_idx = DConstants::INVALID_INDEX;
 	idx_t content_col_idx = DConstants::INVALID_INDEX;
 	// Blocks mode column indices
+	idx_t kind_col_idx = DConstants::INVALID_INDEX;
 	idx_t element_type_col_idx = DConstants::INVALID_INDEX;
 	idx_t encoding_col_idx = DConstants::INVALID_INDEX;
 	idx_t attributes_col_idx = DConstants::INVALID_INDEX;
@@ -148,9 +150,19 @@ private:
 	// Blocks Mode Helpers
 	//===--------------------------------------------------------------------===//
 
-	//! Render a single block from flattened duck_block representation
-	static string RenderBlock(const string &element_type, const string &content, int32_t level, const string &encoding,
-	                          const Value &attributes, const WriteMarkdownBindData &bind_data);
+	//! Render a single element from flattened duck_block representation
+	//! Dispatches to RenderBlockElement or RenderInlineElement based on kind
+	static string RenderElement(const string &kind, const string &element_type, const string &content, int32_t level,
+	                            const string &encoding, const Value &attributes, const WriteMarkdownBindData &bind_data);
+
+	//! Render a block element (with trailing newlines)
+	static string RenderBlockElement(const string &element_type, const string &content, int32_t level,
+	                                 const string &encoding, const Value &attributes,
+	                                 const WriteMarkdownBindData &bind_data);
+
+	//! Render an inline element (no trailing newlines)
+	static string RenderInlineElement(const string &element_type, const string &content, const Value &attributes,
+	                                  const WriteMarkdownBindData &bind_data);
 };
 
 } // namespace duckdb

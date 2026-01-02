@@ -602,6 +602,286 @@ SELECT content LIKE '%## Custom%' FROM read_text('__TEST_DIR__/custom_cols.md');
 true
 
 # =============================================================================
+# Test: Blocks Mode - Inline elements render without trailing newlines
+# =============================================================================
+
+# Create a table with inline elements
+statement ok
+CREATE TABLE inline_test (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+# Insert inline elements that should concatenate together
+statement ok
+INSERT INTO inline_test VALUES
+    ('inline', 'text', 'This has ', 1, 'text', MAP{}, 0),
+    ('inline', 'bold', 'bold', 1, 'text', MAP{}, 1),
+    ('inline', 'text', ' and ', 1, 'text', MAP{}, 2),
+    ('inline', 'italic', 'italic', 1, 'text', MAP{}, 3),
+    ('inline', 'text', ' text.', 1, 'text', MAP{}, 4);
+
+statement ok
+COPY inline_test TO '__TEST_DIR__/inline_basic.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify inline elements are concatenated without newlines between them
+query I
+SELECT content = 'This has **bold** and *italic* text.' FROM read_text('__TEST_DIR__/inline_basic.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline link element
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_link (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_link VALUES
+    ('inline', 'text', 'Check out ', 1, 'text', MAP{}, 0),
+    ('inline', 'link', 'our docs', 1, 'text', MAP{'href': 'https://example.com'}, 1),
+    ('inline', 'text', ' for more.', 1, 'text', MAP{}, 2);
+
+statement ok
+COPY inline_link TO '__TEST_DIR__/inline_link.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify link is rendered correctly inline
+query I
+SELECT content = 'Check out [our docs](https://example.com) for more.' FROM read_text('__TEST_DIR__/inline_link.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline link with title
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_link_title (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_link_title VALUES
+    ('inline', 'link', 'Click here', 1, 'text', MAP{'href': 'https://example.com', 'title': 'Example Site'}, 0);
+
+statement ok
+COPY inline_link_title TO '__TEST_DIR__/inline_link_title.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = '[Click here](https://example.com "Example Site")' FROM read_text('__TEST_DIR__/inline_link_title.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Mixed block and inline elements
+# =============================================================================
+
+statement ok
+CREATE TABLE mixed_elements (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO mixed_elements VALUES
+    ('block', 'heading', 'Document with Rich Content', 1, 'text', MAP{}, 0),
+    ('inline', 'text', 'This has ', 1, 'text', MAP{}, 1),
+    ('inline', 'bold', 'bold', 1, 'text', MAP{}, 2),
+    ('inline', 'text', ' and ', 1, 'text', MAP{}, 3),
+    ('inline', 'italic', 'italic', 1, 'text', MAP{}, 4),
+    ('inline', 'text', ' text.', 1, 'text', MAP{}, 5),
+    ('block', 'paragraph', 'A regular paragraph.', 1, 'text', MAP{}, 6);
+
+statement ok
+COPY mixed_elements TO '__TEST_DIR__/mixed_elements.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify heading is a block (has trailing newlines)
+query I
+SELECT content LIKE E'# Document with Rich Content\n\n%' FROM read_text('__TEST_DIR__/mixed_elements.md');
+----
+true
+
+# Verify inline elements are concatenated
+query I
+SELECT content LIKE '%This has **bold** and *italic* text.A regular paragraph.%' FROM read_text('__TEST_DIR__/mixed_elements.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline code element
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_code (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_code VALUES
+    ('inline', 'text', 'Use the ', 1, 'text', MAP{}, 0),
+    ('inline', 'code', 'print()', 1, 'text', MAP{}, 1),
+    ('inline', 'text', ' function.', 1, 'text', MAP{}, 2);
+
+statement ok
+COPY inline_code TO '__TEST_DIR__/inline_code.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = 'Use the `print()` function.' FROM read_text('__TEST_DIR__/inline_code.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline strikethrough
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_strike (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_strike VALUES
+    ('inline', 'text', 'This is ', 1, 'text', MAP{}, 0),
+    ('inline', 'strikethrough', 'wrong', 1, 'text', MAP{}, 1),
+    ('inline', 'text', ' correct.', 1, 'text', MAP{}, 2);
+
+statement ok
+COPY inline_strike TO '__TEST_DIR__/inline_strike.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = 'This is ~~wrong~~ correct.' FROM read_text('__TEST_DIR__/inline_strike.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline image
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_image (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_image VALUES
+    ('inline', 'image', 'alt text', 1, 'text', MAP{'src': 'image.png'}, 0);
+
+statement ok
+COPY inline_image TO '__TEST_DIR__/inline_image.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = '![alt text](image.png)' FROM read_text('__TEST_DIR__/inline_image.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline math
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_math (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_math VALUES
+    ('inline', 'text', 'The formula ', 1, 'text', MAP{}, 0),
+    ('inline', 'math', 'E=mc^2', 1, 'text', MAP{}, 1),
+    ('inline', 'text', ' is famous.', 1, 'text', MAP{}, 2);
+
+statement ok
+COPY inline_math TO '__TEST_DIR__/inline_math.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = 'The formula $E=mc^2$ is famous.' FROM read_text('__TEST_DIR__/inline_math.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Block math (display mode)
+# =============================================================================
+
+statement ok
+CREATE TABLE block_math (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO block_math VALUES
+    ('inline', 'math', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', 1, 'text', MAP{'display': 'block'}, 0);
+
+statement ok
+COPY block_math TO '__TEST_DIR__/block_math.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = '$$x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$$' FROM read_text('__TEST_DIR__/block_math.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline superscript and subscript
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_super_sub (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_super_sub VALUES
+    ('inline', 'text', 'H', 1, 'text', MAP{}, 0),
+    ('inline', 'subscript', '2', 1, 'text', MAP{}, 1),
+    ('inline', 'text', 'O and x', 1, 'text', MAP{}, 2),
+    ('inline', 'superscript', '2', 1, 'text', MAP{}, 3);
+
+statement ok
+COPY inline_super_sub TO '__TEST_DIR__/inline_super_sub.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = 'H~2~O and x^2^' FROM read_text('__TEST_DIR__/inline_super_sub.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline without kind column (defaults to block)
+# =============================================================================
+
+statement ok
+CREATE TABLE no_kind (element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO no_kind VALUES
+    ('heading', 'Title', 1, 'text', MAP{}, 0),
+    ('paragraph', 'Content here.', 1, 'text', MAP{}, 1);
+
+statement ok
+COPY no_kind TO '__TEST_DIR__/no_kind.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Without kind column, defaults to block behavior
+query I
+SELECT content LIKE E'# Title\n\nContent here.\n\n' FROM read_text('__TEST_DIR__/no_kind.md');
+----
+true
+
+# =============================================================================
+# Test: Clean up inline test tables
+# =============================================================================
+
+statement ok
+DROP TABLE inline_test;
+
+statement ok
+DROP TABLE inline_link;
+
+statement ok
+DROP TABLE inline_link_title;
+
+statement ok
+DROP TABLE mixed_elements;
+
+statement ok
+DROP TABLE inline_code;
+
+statement ok
+DROP TABLE inline_strike;
+
+statement ok
+DROP TABLE inline_image;
+
+statement ok
+DROP TABLE inline_math;
+
+statement ok
+DROP TABLE block_math;
+
+statement ok
+DROP TABLE inline_super_sub;
+
+statement ok
+DROP TABLE no_kind;
+
+# =============================================================================
 # Test: Clean up
 # =============================================================================
 
