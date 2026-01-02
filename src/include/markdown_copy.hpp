@@ -79,6 +79,8 @@ struct WriteMarkdownGlobalState : public GlobalFunctionData {
 struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! Local buffer for accumulating output
 	string buffer;
+	//! Track if the last element was inline (for proper block/inline transitions)
+	bool last_was_inline = false;
 };
 
 //===--------------------------------------------------------------------===//

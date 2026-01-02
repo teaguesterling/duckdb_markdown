@@ -132,6 +132,7 @@ COPY query TO 'output.md' (
     FORMAT MARKDOWN,
     markdown_mode 'blocks',  -- or 'duck_block'
     -- Column mapping (defaults shown)
+    kind_column 'kind',                -- 'block' or 'inline' (default: 'kind')
     element_type_column 'element_type',
     content_column 'content',
     level_column 'level',
@@ -139,6 +140,12 @@ COPY query TO 'output.md' (
     attributes_column 'attributes'
 );
 ```
+
+The `kind` column determines how elements are rendered:
+- `'block'` - Element is rendered with trailing newlines (paragraphs, headings, code blocks, etc.)
+- `'inline'` - Element is rendered without trailing newlines (bold, italic, links, etc.)
+
+When transitioning from inline to block elements, a paragraph break (`\n\n`) is automatically inserted.
 
 ### Rendering Rules
 

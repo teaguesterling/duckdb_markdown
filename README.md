@@ -121,26 +121,26 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 - `files` (required) - File path, glob pattern, or list of patterns
 - `include_filepath := false` - Include file_path column in output
 
-**Returns:** `(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)`
+**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`
 
-**Block Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `frontmatter`
+**Element Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `frontmatter`
 
 **Encoding:** `text` for plain content, `json` for structured content (lists, tables), `yaml` for frontmatter
 
 ```sql
 -- Parse document into blocks
-SELECT block_type, content, level
+SELECT element_type, content, level
 FROM read_markdown_blocks('README.md')
-ORDER BY block_order;
+ORDER BY element_order;
 
 -- Extract all code blocks with their languages
 SELECT content, attributes['language'] as lang
 FROM read_markdown_blocks('docs/**/*.md')
-WHERE block_type = 'code';
+WHERE element_type = 'code';
 
 -- Round-trip: read blocks, modify, write back
 COPY (
-  SELECT block_type, content, level, encoding, attributes
+  SELECT kind, element_type, content, level, encoding, attributes
   FROM read_markdown_blocks('doc.md')
 ) TO 'copy.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```
@@ -199,7 +199,7 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 
 Convert document blocks back to Markdown. These functions complement `read_markdown_blocks()` for in-memory document transformations:
 
-- **`duck_block_to_md(block)`** - Convert a single `markdown_doc_block` to Markdown string
+- **`duck_block_to_md(block)`** - Convert a single duck_block to Markdown string
 - **`duck_blocks_to_md(blocks[])`** - Convert a list of blocks to a complete Markdown document
 - **`duck_blocks_to_sections(blocks[])`** - Convert blocks to a list of sections with hierarchy
 
@@ -208,58 +208,56 @@ Convert document blocks back to Markdown. These functions complement `read_markd
 ```sql
 -- Convert single block to markdown
 SELECT duck_block_to_md({
-    block_type: 'heading',
+    kind: 'block',
+    element_type: 'heading',
     content: 'Hello World',
     level: NULL,
     encoding: 'text',
     attributes: MAP{'heading_level': '1'},
-    block_order: 0
-}::markdown_doc_block);
+    element_order: 0
+});
 -- Returns: '# Hello World\n\n'
 
--- Legacy style using level field still works
+-- Using level field (alternative)
 SELECT duck_block_to_md({
-    block_type: 'heading',
+    kind: 'block',
+    element_type: 'heading',
     content: 'Hello World',
     level: 1,
     encoding: 'text',
     attributes: MAP{},
-    block_order: 0
-}::markdown_doc_block);
+    element_order: 0
+});
 -- Returns: '# Hello World\n\n'
 
 -- Convert list of blocks to markdown document
-SELECT duck_blocks_to_md(list(b ORDER BY block_order))
-FROM read_markdown_blocks('source.md') b;
-
--- Or use the cast syntax for block lists
-SELECT (list(b ORDER BY block_order)::markdown_doc_block[])::markdown
+SELECT duck_blocks_to_md(list(b ORDER BY element_order))
 FROM read_markdown_blocks('source.md') b;
 
 -- Transform blocks in-memory and get markdown back
 SELECT duck_blocks_to_md([
-    {block_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
-    {block_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
-]::markdown_doc_block[]);
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]);
 
 -- Convert blocks to sections format for hierarchical processing
 SELECT s.section_id, s.level, s.title, length(s.content) as content_len
 FROM (
-    SELECT unnest(duck_blocks_to_sections(list(b ORDER BY block_order))) as s
+    SELECT unnest(duck_blocks_to_sections(list(b ORDER BY element_order))) as s
     FROM read_markdown_blocks('doc.md') b
 );
 ```
 
 ### Unified Element Functions
 
-Build rich text content with the unified `doc_element` structure. These functions enable format-agnostic document construction for both block and inline elements:
+Build rich text content with the unified `duck_block` structure. These functions enable format-agnostic document construction for both block and inline elements:
 
-- **`doc_element_to_md(element)`** - Convert a single element struct to Markdown
-- **`doc_elements_to_md(elements[])`** - Convert a list of elements to Markdown string
+- **`duck_block_to_md(block)`** - Convert a single block or inline element to Markdown
+- **`duck_blocks_to_md(blocks[])`** - Convert a list of elements to Markdown string
 
-**Note:** The `doc_element` type is defined by the `duck_block_utils` extension. These functions work with any struct matching the expected shape:
+**Note:** The `duck_block` type is defined by the `duck_block_utils` extension. These functions work with any struct matching the expected shape:
 
-**doc_element structure:**
+**duck_block structure:**
 ```sql
 STRUCT(
     kind          VARCHAR,              -- 'block' or 'inline'
@@ -292,7 +290,7 @@ STRUCT(
 
 ```sql
 -- Convert a single inline element
-SELECT doc_element_to_md({
+SELECT duck_block_to_md({
     kind: 'inline',
     element_type: 'link',
     content: 'Click here',
@@ -300,31 +298,31 @@ SELECT doc_element_to_md({
     encoding: 'text',
     attributes: MAP{'href': 'https://example.com', 'title': 'Example'},
     element_order: 0
-}::doc_element);
+});
 -- Returns: '[Click here](https://example.com "Example")'
 
 -- Compose rich text from multiple elements
-SELECT doc_elements_to_md([
+SELECT duck_blocks_to_md([
     {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
     {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
     {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
     {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
     {kind: 'inline', element_type: 'text', content: '.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4}
-]::doc_element[]);
+]);
 -- Returns: 'Check out [our docs](https://docs.example.com) for **more info**.'
 
 -- Use elements in blocks for rich document generation
 SELECT duck_blocks_to_md([
-    {block_type: 'heading', content: 'Welcome', level: 1,
-     encoding: 'text', attributes: MAP{}, block_order: 0},
-    {block_type: 'paragraph',
-     content: doc_elements_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Welcome', level: 1,
+     encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph',
+     content: duck_blocks_to_md([
          {kind: 'inline', element_type: 'text', content: 'Visit ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
          {kind: 'inline', element_type: 'link', content: 'GitHub', level: 1, encoding: 'text', attributes: MAP{'href': 'https://github.com'}, element_order: 1},
          {kind: 'inline', element_type: 'text', content: ' for projects.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
-     ]::doc_element[]),
-     level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
-]::markdown_doc_block[]);
+     ])::VARCHAR,
+     level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]);
 -- Returns: '# Welcome\n\nVisit [GitHub](https://github.com) for projects.\n\n'
 ```
 
@@ -405,7 +403,7 @@ Export query results to Markdown files. Three modes support different use cases:
 |------|----------|---------------|
 | `table` (default) | Export any query as a markdown table | Any columns |
 | `document` | Reconstruct markdown from sections | `level`, `title`, `content` |
-| `blocks` / `duck_block` | Round-trip block-level representation | `block_type`, `content`, `level`, `encoding`, `attributes` |
+| `blocks` / `duck_block` | Round-trip block-level representation | `kind`, `element_type`, `content`, `level`, `encoding`, `attributes` |
 
 ### Table Mode (Default)
 
@@ -500,16 +498,16 @@ Main content
 
 ### Blocks Mode
 
-Export block-level document representation for full-fidelity round-trips. This mode complements `read_markdown_blocks()`:
+Export block-level document representation for full-fidelity round-trips. This mode complements `read_markdown_blocks()` and supports both block and inline elements:
 
 ```sql
 -- Read blocks from a file
 CREATE TABLE blocks AS
-SELECT block_type, content, level, encoding, attributes
+SELECT kind, element_type, content, level, encoding, attributes
 FROM read_markdown_blocks('source.md');
 
 -- Modify blocks
-UPDATE blocks SET content = upper(content) WHERE block_type = 'heading';
+UPDATE blocks SET content = upper(content) WHERE element_type = 'heading';
 
 -- Write back to markdown
 COPY blocks TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
@@ -519,15 +517,16 @@ COPY blocks TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```sql
 COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
     markdown_mode 'blocks',
-    block_type_column 'block_type',  -- Column with block type (default: 'block_type')
-    content_column 'content',         -- Column with block content (default: 'content')
-    level_column 'level',             -- Column with level/depth (default: 'level')
-    encoding_column 'encoding',       -- Column with encoding type (default: 'encoding')
-    attributes_column 'attributes'    -- Column with attributes map (default: 'attributes')
+    kind_column 'kind',               -- Column with kind ('block' or 'inline', default: 'kind')
+    element_type_column 'element_type',-- Column with element type (default: 'element_type')
+    content_column 'content',          -- Column with block content (default: 'content')
+    level_column 'level',              -- Column with level/depth (default: 'level')
+    encoding_column 'encoding',        -- Column with encoding type (default: 'encoding')
+    attributes_column 'attributes'     -- Column with attributes map (default: 'attributes')
 );
 ```
 
-**Block Rendering:**
+**Block Rendering (`kind = 'block'`):**
 - `heading` - Rendered as `# Title` (level determines # count)
 - `paragraph` - Plain text with blank lines
 - `code` - Fenced code blocks with language from `attributes['language']`
@@ -536,6 +535,16 @@ COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
 - `table` - JSON object rendered as markdown table
 - `hr` - Horizontal rule `---`
 - `frontmatter` - YAML block between `---` delimiters
+
+**Inline Rendering (`kind = 'inline'`):**
+- `bold` / `strong` - `**text**`
+- `italic` / `em` - `*text*`
+- `code` - `` `text` ``
+- `link` - `[text](href "title")`
+- `text` - Plain text (no formatting)
+- Plus: `strikethrough`, `superscript`, `subscript`, `math`, etc.
+
+Inline elements are concatenated without trailing newlines. When transitioning from inline to block elements, proper paragraph breaks are automatically inserted.
 
 ### Round-Trip Workflow Example
 
@@ -555,7 +564,7 @@ COPY my_sections TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'document');
 
 -- Or use blocks for full-fidelity round-trip
 COPY (
-    SELECT block_type, content, level, encoding, attributes
+    SELECT kind, element_type, content, level, encoding, attributes
     FROM read_markdown_blocks('source.md')
 ) TO 'copy.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```
@@ -665,7 +674,7 @@ LIST<STRUCT(table_index BIGINT, row_type VARCHAR, row_index BIGINT, column_index
 LIST<STRUCT(table_index BIGINT, line_number BIGINT, num_columns BIGINT, num_rows BIGINT, headers VARCHAR[], table_data VARCHAR[][])>
 
 -- Blocks (from read_markdown_blocks)
-(block_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)
+(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)
 ```
 
 Use with `UNNEST()` to flatten into rows or `len()` to count elements.
@@ -703,14 +712,14 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.3.0):**
+**✅ Available (v1.3.2):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`, `read_markdown_blocks`) with full parameter support
-- **COPY TO markdown** with table, document, and blocks modes
+- **COPY TO markdown** with table, document, and blocks modes (including inline element support)
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`, `md_section_breadcrumb`)
 - **Block-level document representation** with `read_markdown_blocks()` and `markdown_mode 'blocks'` / `'duck_block'`
 - **Duck block conversion functions** (`duck_block_to_md`, `duck_blocks_to_md`, `duck_blocks_to_sections`)
-- **Unified element functions** (`doc_element_to_md`, `doc_elements_to_md`) for rich text composition with block and inline elements
+- **Unified duck_block shape** with `kind` field for block/inline differentiation
 - **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
 - **Fragment syntax** for filtering sections: `'file.md#section-id'`
 - **Section hierarchy** with `section_path` column for navigation
@@ -723,7 +732,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 832 passing assertions across 18 test files
+- Full test suite with 949 passing assertions across 18 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)
@@ -752,10 +761,10 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 810 passing assertions across 18 test files:
+Comprehensive test suite with 949 passing assertions across 18 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
-- **Block-level tests**: Round-trip parsing and rendering
+- **Block-level tests**: Round-trip parsing and rendering with inline element support
 - **Performance tests**: Large-scale document processing
 - **Cross-platform tests**: File system compatibility scenarios
 - **Integration tests**: Complex queries and real-world usage patterns

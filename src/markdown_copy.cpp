@@ -343,7 +343,19 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 				attributes = input.data[bind_data.attributes_col_idx].GetValue(row_idx);
 			}
 
+			// Determine if this element is inline
+			bool is_inline = (kind == "inline");
+
+			// Handle transitions between inline and block elements
+			if (lstate.last_was_inline && !is_inline) {
+				// Transitioning from inline to block: add paragraph break
+				lstate.buffer += "\n\n";
+			}
+
 			lstate.buffer += RenderElement(kind, element_type, content, level, encoding, attributes, bind_data);
+
+			// Track state for next element
+			lstate.last_was_inline = is_inline;
 		}
 	}
 }

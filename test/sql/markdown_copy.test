@@ -694,11 +694,276 @@ SELECT content LIKE E'# Document with Rich Content\n\n%' FROM read_text('__TEST_
 ----
 true
 
-# Verify inline elements are concatenated
+# Verify inline elements are concatenated and properly separated from next block
 query I
-SELECT content LIKE '%This has **bold** and *italic* text.A regular paragraph.%' FROM read_text('__TEST_DIR__/mixed_elements.md');
+SELECT content LIKE E'%This has **bold** and *italic* text.\n\nA regular paragraph.\n\n' FROM read_text('__TEST_DIR__/mixed_elements.md');
 ----
 true
+
+# =============================================================================
+# Test: Blocks Mode - Block to inline to block transitions
+# =============================================================================
+
+statement ok
+CREATE TABLE block_inline_block (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO block_inline_block VALUES
+    ('block', 'heading', 'Section Title', 1, 'text', MAP{}, 0),
+    ('inline', 'text', 'Some ', 1, 'text', MAP{}, 1),
+    ('inline', 'bold', 'important', 1, 'text', MAP{}, 2),
+    ('inline', 'text', ' text here.', 1, 'text', MAP{}, 3),
+    ('block', 'code', 'print("hello")', 1, 'text', MAP{'language': 'python'}, 4),
+    ('inline', 'text', 'More ', 1, 'text', MAP{}, 5),
+    ('inline', 'italic', 'styled', 1, 'text', MAP{}, 6),
+    ('inline', 'text', ' content.', 1, 'text', MAP{}, 7),
+    ('block', 'paragraph', 'Final paragraph.', 1, 'text', MAP{}, 8);
+
+statement ok
+COPY block_inline_block TO '__TEST_DIR__/block_inline_block.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify the full structure with proper transitions
+query I
+SELECT content = E'# Section Title\n\nSome **important** text here.\n\n```python\nprint("hello")\n```\n\nMore *styled* content.\n\nFinal paragraph.\n\n' FROM read_text('__TEST_DIR__/block_inline_block.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Multiple consecutive blocks
+# =============================================================================
+
+statement ok
+CREATE TABLE consecutive_blocks (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO consecutive_blocks VALUES
+    ('block', 'heading', 'First Heading', 1, 'text', MAP{}, 0),
+    ('block', 'paragraph', 'First paragraph.', 1, 'text', MAP{}, 1),
+    ('block', 'heading', 'Second Heading', 2, 'text', MAP{}, 2),
+    ('block', 'paragraph', 'Second paragraph.', 1, 'text', MAP{}, 3);
+
+statement ok
+COPY consecutive_blocks TO '__TEST_DIR__/consecutive_blocks.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify blocks are properly separated
+query I
+SELECT content = E'# First Heading\n\nFirst paragraph.\n\n## Second Heading\n\nSecond paragraph.\n\n' FROM read_text('__TEST_DIR__/consecutive_blocks.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline only document (no trailing block)
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_only (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_only VALUES
+    ('inline', 'text', 'Just ', 1, 'text', MAP{}, 0),
+    ('inline', 'bold', 'inline', 1, 'text', MAP{}, 1),
+    ('inline', 'text', ' content.', 1, 'text', MAP{}, 2);
+
+statement ok
+COPY inline_only TO '__TEST_DIR__/inline_only.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Inline-only content should concatenate without trailing newlines
+query I
+SELECT content = 'Just **inline** content.' FROM read_text('__TEST_DIR__/inline_only.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Block only document
+# =============================================================================
+
+statement ok
+CREATE TABLE block_only (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO block_only VALUES
+    ('block', 'heading', 'Title', 1, 'text', MAP{}, 0),
+    ('block', 'paragraph', 'Content.', 1, 'text', MAP{}, 1);
+
+statement ok
+COPY block_only TO '__TEST_DIR__/block_only.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = E'# Title\n\nContent.\n\n' FROM read_text('__TEST_DIR__/block_only.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Inline to block with list
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_to_list (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_to_list VALUES
+    ('block', 'heading', 'Shopping List', 1, 'text', MAP{}, 0),
+    ('inline', 'text', 'Here are the ', 1, 'text', MAP{}, 1),
+    ('inline', 'bold', 'items', 1, 'text', MAP{}, 2),
+    ('inline', 'text', ' we need:', 1, 'text', MAP{}, 3),
+    ('block', 'list', '["Apples", "Bananas", "Oranges"]', 1, 'json', MAP{'ordered': 'false'}, 4);
+
+statement ok
+COPY inline_to_list TO '__TEST_DIR__/inline_to_list.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify proper separation between inline and list
+query I
+SELECT content = E'# Shopping List\n\nHere are the **items** we need:\n\n- Apples\n- Bananas\n- Oranges\n\n' FROM read_text('__TEST_DIR__/inline_to_list.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Complex document with all element types
+# =============================================================================
+
+statement ok
+CREATE TABLE complex_doc (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO complex_doc VALUES
+    ('block', 'heading', 'My Document', 1, 'text', MAP{}, 0),
+    ('inline', 'text', 'This is an ', 1, 'text', MAP{}, 1),
+    ('inline', 'bold', 'introduction', 1, 'text', MAP{}, 2),
+    ('inline', 'text', ' with a ', 1, 'text', MAP{}, 3),
+    ('inline', 'link', 'link', 1, 'text', MAP{'href': 'https://example.com'}, 4),
+    ('inline', 'text', '.', 1, 'text', MAP{}, 5),
+    ('block', 'heading', 'Code Example', 2, 'text', MAP{}, 6),
+    ('block', 'code', 'x = 1', 1, 'text', MAP{'language': 'python'}, 7),
+    ('block', 'heading', 'Conclusion', 2, 'text', MAP{}, 8),
+    ('inline', 'text', 'The ', 1, 'text', MAP{}, 9),
+    ('inline', 'italic', 'end', 1, 'text', MAP{}, 10),
+    ('inline', 'text', '.', 1, 'text', MAP{}, 11);
+
+statement ok
+COPY complex_doc TO '__TEST_DIR__/complex_doc.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify heading
+query I
+SELECT content LIKE E'# My Document\n\n%' FROM read_text('__TEST_DIR__/complex_doc.md');
+----
+true
+
+# Verify inline with link followed by heading
+query I
+SELECT content LIKE E'%This is an **introduction** with a [link](https://example.com).\n\n## Code Example\n\n%' FROM read_text('__TEST_DIR__/complex_doc.md');
+----
+true
+
+# Verify code block followed by heading
+query I
+SELECT content LIKE E'%```python\nx = 1\n```\n\n## Conclusion\n\n%' FROM read_text('__TEST_DIR__/complex_doc.md');
+----
+true
+
+# Verify final inline content (no trailing block means no trailing newlines)
+query I
+SELECT content LIKE '%The *end*.' FROM read_text('__TEST_DIR__/complex_doc.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Blockquote after inline
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_to_quote (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_to_quote VALUES
+    ('inline', 'text', 'As someone once said:', 1, 'text', MAP{}, 0),
+    ('block', 'blockquote', 'To be or not to be.', 1, 'text', MAP{}, 1);
+
+statement ok
+COPY inline_to_quote TO '__TEST_DIR__/inline_to_quote.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = E'As someone once said:\n\n> To be or not to be.\n\n' FROM read_text('__TEST_DIR__/inline_to_quote.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - HR between inline sections
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_hr_inline (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_hr_inline VALUES
+    ('inline', 'text', 'Section one ', 1, 'text', MAP{}, 0),
+    ('inline', 'bold', 'content', 1, 'text', MAP{}, 1),
+    ('inline', 'text', '.', 1, 'text', MAP{}, 2),
+    ('block', 'hr', '', 1, 'text', MAP{}, 3),
+    ('inline', 'text', 'Section two ', 1, 'text', MAP{}, 4),
+    ('inline', 'italic', 'content', 1, 'text', MAP{}, 5),
+    ('inline', 'text', '.', 1, 'text', MAP{}, 6);
+
+statement ok
+COPY inline_hr_inline TO '__TEST_DIR__/inline_hr_inline.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+query I
+SELECT content = E'Section one **content**.\n\n---\n\nSection two *content*.' FROM read_text('__TEST_DIR__/inline_hr_inline.md');
+----
+true
+
+# =============================================================================
+# Test: Blocks Mode - Table after inline
+# =============================================================================
+
+statement ok
+CREATE TABLE inline_to_table (kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER);
+
+statement ok
+INSERT INTO inline_to_table VALUES
+    ('inline', 'text', 'Here is the ', 1, 'text', MAP{}, 0),
+    ('inline', 'bold', 'data', 1, 'text', MAP{}, 1),
+    ('inline', 'text', ':', 1, 'text', MAP{}, 2),
+    ('block', 'table', '{"headers": ["Name", "Value"], "rows": [["A", "1"], ["B", "2"]]}', 1, 'json', MAP{}, 3);
+
+statement ok
+COPY inline_to_table TO '__TEST_DIR__/inline_to_table.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+
+# Verify inline followed by table with proper separation
+query I
+SELECT content LIKE E'Here is the **data**:\n\n| Name | Value |\n|---|---|\n| A | 1 |\n| B | 2 |\n\n' FROM read_text('__TEST_DIR__/inline_to_table.md');
+----
+true
+
+# =============================================================================
+# Test: Clean up new transition test tables
+# =============================================================================
+
+statement ok
+DROP TABLE block_inline_block;
+
+statement ok
+DROP TABLE consecutive_blocks;
+
+statement ok
+DROP TABLE inline_only;
+
+statement ok
+DROP TABLE block_only;
+
+statement ok
+DROP TABLE inline_to_list;
+
+statement ok
+DROP TABLE complex_doc;
+
+statement ok
+DROP TABLE inline_to_quote;
+
+statement ok
+DROP TABLE inline_hr_inline;
+
+statement ok
+DROP TABLE inline_to_table;
 
 # =============================================================================
 # Test: Blocks Mode - Inline code element
