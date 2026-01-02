@@ -251,11 +251,11 @@ SELECT md_extract_metadata(E'---\ntitle: "Quoted Value"\n---\nContent'::markdown
 ----
 Quoted Value
 
-# Test document with frontmatter-like content in body (--- becomes setext headings in cmark)
-# Note: cmark parses "text\n---" as setext h2 headings, which is valid markdown
+# Test document with horizontal rules in body (--- not at start is NOT frontmatter)
+# This verifies that --- in document body is treated as horizontal rule, not frontmatter
 query I
 SELECT count(*)
-FROM (SELECT UNNEST(md_extract_sections(E'# Doc\nSome text\n---\nThis is not frontmatter\n---\nMore text')) as section);
+FROM (SELECT UNNEST(md_extract_sections(E'# Doc\nSome text\n\n---\n\n## Section Two\nThis is not frontmatter\n\n---\n\n## Section Three\nMore text')) as section);
 ----
 3
 
