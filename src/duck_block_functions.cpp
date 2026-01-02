@@ -140,6 +140,92 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 }
 
 //===--------------------------------------------------------------------===//
+// RenderInlineToMarkdown
+//===--------------------------------------------------------------------===//
+
+string DuckBlockFunctions::RenderInlineToMarkdown(const string &inline_type, const string &content,
+                                                   const Value &attributes) {
+	if (inline_type == "link") {
+		// [text](href "title")
+		string href = GetAttribute(attributes, "href");
+		string title = GetAttribute(attributes, "title");
+		string result = "[" + content + "](" + href;
+		if (!title.empty()) {
+			result += " \"" + title + "\"";
+		}
+		result += ")";
+		return result;
+	} else if (inline_type == "image") {
+		// ![alt](src "title")
+		string src = GetAttribute(attributes, "src");
+		string title = GetAttribute(attributes, "title");
+		string result = "![" + content + "](" + src;
+		if (!title.empty()) {
+			result += " \"" + title + "\"";
+		}
+		result += ")";
+		return result;
+	} else if (inline_type == "bold" || inline_type == "strong") {
+		// **text**
+		return "**" + content + "**";
+	} else if (inline_type == "italic" || inline_type == "emphasis" || inline_type == "em") {
+		// *text*
+		return "*" + content + "*";
+	} else if (inline_type == "code") {
+		// `text`
+		// Handle content containing backticks
+		if (content.find('`') != string::npos) {
+			return "`` " + content + " ``";
+		}
+		return "`" + content + "`";
+	} else if (inline_type == "text") {
+		// Plain text
+		return content;
+	} else if (inline_type == "linebreak" || inline_type == "br") {
+		// Hard line break
+		return "  \n";
+	} else if (inline_type == "strikethrough" || inline_type == "del") {
+		// ~~text~~
+		return "~~" + content + "~~";
+	} else {
+		// Unknown inline type - output as plain text
+		return content;
+	}
+}
+
+//===--------------------------------------------------------------------===//
+// RenderInlinesToMarkdown
+//===--------------------------------------------------------------------===//
+
+string DuckBlockFunctions::RenderInlinesToMarkdown(const Value &inlines_value) {
+	if (inlines_value.IsNull() || inlines_value.type().id() != LogicalTypeId::LIST) {
+		return "";
+	}
+
+	auto &list_children = ListValue::GetChildren(inlines_value);
+	string result;
+
+	for (const auto &inline_value : list_children) {
+		if (inline_value.IsNull()) {
+			continue;
+		}
+
+		auto &struct_children = StructValue::GetChildren(inline_value);
+		if (struct_children.size() < 3) {
+			continue;
+		}
+
+		string inline_type = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
+		string content = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
+		Value attributes = struct_children[2];
+
+		result += RenderInlineToMarkdown(inline_type, content, attributes);
+	}
+
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
 // RenderBlockToMarkdown
 //===--------------------------------------------------------------------===//
 
@@ -486,6 +572,78 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 }
 
 //===--------------------------------------------------------------------===//
+// doc_inline_to_md - Single inline to Markdown
+//===--------------------------------------------------------------------===//
+
+void DuckBlockFunctions::RegisterInlineToMdFunction(ExtensionLoader &loader) {
+	auto doc_inline_type = MarkdownTypes::DocInlineType();
+	auto markdown_type = MarkdownTypes::MarkdownType();
+
+	// doc_inline_to_md(inline) -> MARKDOWN
+	ScalarFunction doc_inline_to_md(
+	    "doc_inline_to_md", {doc_inline_type}, markdown_type,
+	    [](DataChunk &args, ExpressionState &state, Vector &result) {
+		    auto &inline_vector = args.data[0];
+
+		    for (idx_t i = 0; i < args.size(); i++) {
+			    auto inline_value = inline_vector.GetValue(i);
+
+			    if (inline_value.IsNull()) {
+				    result.SetValue(i, Value());
+				    continue;
+			    }
+
+			    // Extract fields from the struct
+			    auto &struct_children = StructValue::GetChildren(inline_value);
+			    if (struct_children.size() < 3) {
+				    result.SetValue(i, Value(""));
+				    continue;
+			    }
+
+			    string inline_type = struct_children[0].IsNull() ? "" : struct_children[0].ToString();
+			    string content = struct_children[1].IsNull() ? "" : struct_children[1].ToString();
+			    Value attributes = struct_children[2];
+
+			    string markdown = RenderInlineToMarkdown(inline_type, content, attributes);
+			    result.SetValue(i, Value(markdown));
+		    }
+	    });
+
+	loader.RegisterFunction(doc_inline_to_md);
+}
+
+//===--------------------------------------------------------------------===//
+// doc_inlines_to_md - List of inlines to Markdown
+//===--------------------------------------------------------------------===//
+
+void DuckBlockFunctions::RegisterInlinesToMdFunction(ExtensionLoader &loader) {
+	auto doc_inline_type = MarkdownTypes::DocInlineType();
+	auto doc_inline_list_type = LogicalType::LIST(doc_inline_type);
+	auto markdown_type = MarkdownTypes::MarkdownType();
+
+	// doc_inlines_to_md(inlines LIST) -> MARKDOWN
+	ScalarFunction doc_inlines_to_md(
+	    "doc_inlines_to_md", {doc_inline_list_type}, markdown_type,
+	    [](DataChunk &args, ExpressionState &state, Vector &result) {
+		    auto &inlines_vector = args.data[0];
+
+		    for (idx_t i = 0; i < args.size(); i++) {
+			    auto inlines_value = inlines_vector.GetValue(i);
+
+			    if (inlines_value.IsNull()) {
+				    result.SetValue(i, Value());
+				    continue;
+			    }
+
+			    string markdown = RenderInlinesToMarkdown(inlines_value);
+			    result.SetValue(i, Value(markdown));
+		    }
+	    });
+
+	loader.RegisterFunction(doc_inlines_to_md);
+}
+
+//===--------------------------------------------------------------------===//
 // Register All Functions
 //===--------------------------------------------------------------------===//
 
@@ -493,6 +651,8 @@ void DuckBlockFunctions::Register(ExtensionLoader &loader) {
 	RegisterBlockToMdFunction(loader);
 	RegisterBlocksToMdFunction(loader);
 	RegisterBlocksToSectionsFunction(loader);
+	RegisterInlineToMdFunction(loader);
+	RegisterInlinesToMdFunction(loader);
 }
 
 } // namespace duckdb

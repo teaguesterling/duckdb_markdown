@@ -35,6 +35,22 @@ LogicalType MarkdownTypes::MarkdownDocBlockType() {
 	return LogicalType::STRUCT(std::move(struct_children));
 }
 
+//===--------------------------------------------------------------------===//
+// Doc Inline Type Definition
+//===--------------------------------------------------------------------===//
+
+LogicalType MarkdownTypes::DocInlineType() {
+	// Create the STRUCT type for doc_inline
+	// STRUCT(inline_type VARCHAR, content VARCHAR, attributes MAP(VARCHAR, VARCHAR))
+	// Supports inline types: link, image, bold, italic, code, text
+	child_list_t<LogicalType> struct_children;
+	struct_children.push_back(make_pair("inline_type", LogicalType::VARCHAR));
+	struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
+	struct_children.push_back(make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)));
+
+	return LogicalType::STRUCT(std::move(struct_children));
+}
+
 static bool IsMarkdownType(const LogicalType &t) {
 	return t.id() == LogicalTypeId::VARCHAR && t.HasAlias() && (t.GetAlias() == "markdown" || t.GetAlias() == "md");
 }
@@ -116,6 +132,10 @@ void MarkdownTypes::Register(ExtensionLoader &loader) {
 	// Register the markdown_doc_block STRUCT type
 	const auto doc_block_type = MarkdownDocBlockType();
 	loader.RegisterType("markdown_doc_block", doc_block_type);
+
+	// Register the doc_inline STRUCT type
+	const auto doc_inline_type = DocInlineType();
+	loader.RegisterType("doc_inline", doc_inline_type);
 }
 
 } // namespace duckdb
