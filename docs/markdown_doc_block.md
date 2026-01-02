@@ -24,7 +24,7 @@ The markdown extension implements the doc_block spec for CommonMark and GitHub F
 
 | Type | Markdown Element | Notes |
 |------|------------------|-------|
-| `heading` | `#`, `##`, etc. (ATX style) | Setext headings converted to ATX |
+| `heading` | `#`, `##`, etc. (ATX style) | Level in `attributes['heading_level']` (1-6), falls back to `level` field |
 | `paragraph` | Text blocks | Inline formatting preserved |
 | `code` | Fenced code blocks | Language in `attributes['language']` |
 | `blockquote` | `>` quoted blocks | Level = nesting depth |
@@ -259,6 +259,8 @@ STRUCT(
 | `strikethrough` / `del` | `~~text~~` | - |
 | `superscript` / `sup` | `^text^` | - |
 | `subscript` / `sub` | `~text~` | - |
+| `underline` | `<u>text</u>` | HTML fallback |
+| `smallcaps` | `<span style="...">` | HTML fallback |
 | `math` | `$text$` or `$$text$$` | `display`: inline/block |
 | `quoted` | `"text"` or `'text'` | `quote_type`: single/double |
 | `cite` | `[@key]` | `key` |

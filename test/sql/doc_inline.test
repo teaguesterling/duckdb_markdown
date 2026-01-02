@@ -150,6 +150,15 @@ SELECT doc_element_to_md({kind: 'inline', element_type: 'math', content: 'E=mc^2
 $$E=mc^2$$
 
 # =============================================================================
+# Test: doc_element_to_md - Smallcaps
+# =============================================================================
+
+query I
+SELECT doc_element_to_md({kind: 'inline', element_type: 'smallcaps', content: 'Small Caps', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
+----
+<span style="font-variant: small-caps">Small Caps</span>
+
+# =============================================================================
 # Test: doc_element_to_md - Block element (heading)
 # =============================================================================
 

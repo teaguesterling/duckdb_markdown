@@ -202,6 +202,9 @@ string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_t
 	} else if (element_type == "underline") {
 		// <u>text</u> (no standard markdown, use HTML)
 		return "<u>" + content + "</u>";
+	} else if (element_type == "smallcaps") {
+		// No standard markdown for small caps, use span with style
+		return "<span style=\"font-variant: small-caps\">" + content + "</span>";
 	} else if (element_type == "math") {
 		// $text$ for inline, $$text$$ for display
 		string display = GetAttribute(attributes, "display");
@@ -313,7 +316,21 @@ string DuckBlockFunctions::RenderBlockToMarkdown(const string &block_type, const
 		result = "---\n" + content + "\n---\n\n";
 	} else if (block_type == "heading") {
 		// ATX heading with level
-		int32_t heading_level = level > 0 && level <= 6 ? level : 1;
+		// Per spec: heading_level attribute takes priority, fall back to level field
+		int32_t heading_level = 1;
+		string heading_level_attr = GetAttribute(attributes, "heading_level");
+		if (!heading_level_attr.empty()) {
+			try {
+				heading_level = std::stoi(heading_level_attr);
+			} catch (...) {
+				heading_level = 1;
+			}
+		} else if (level > 0 && level <= 6) {
+			heading_level = level;
+		}
+		// Clamp to valid range
+		if (heading_level < 1) heading_level = 1;
+		if (heading_level > 6) heading_level = 6;
 		result = string(heading_level, '#') + " " + content + "\n\n";
 	} else if (block_type == "paragraph") {
 		// Plain paragraph
@@ -595,15 +612,31 @@ void DuckBlockFunctions::RegisterBlocksToSectionsFunction(ExtensionLoader &loade
 					    // Flush previous section
 					    flush_section();
 
+					    // Get heading level: attribute takes priority, fall back to level field
+					    int32_t heading_level = 1;
+					    string heading_level_attr = GetAttribute(attributes, "heading_level");
+					    if (!heading_level_attr.empty()) {
+						    try {
+							    heading_level = std::stoi(heading_level_attr);
+						    } catch (...) {
+							    heading_level = 1;
+						    }
+					    } else if (level > 0 && level <= 6) {
+						    heading_level = level;
+					    }
+					    // Clamp to valid range
+					    if (heading_level < 1) heading_level = 1;
+					    if (heading_level > 6) heading_level = 6;
+
 					    // Update section path for new heading
-					    while (section_path_parts.size() >= (size_t)level) {
+					    while (section_path_parts.size() >= (size_t)heading_level) {
 						    section_path_parts.pop_back();
 					    }
 					    section_path_parts.push_back(content);
 
 					    // Start new section
 					    current_title = content;
-					    current_level = level;
+					    current_level = heading_level;
 					    current_section_id = GetAttribute(attributes, "id");
 					    if (current_section_id.empty()) {
 						    // Generate ID from title

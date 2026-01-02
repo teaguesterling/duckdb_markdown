@@ -203,8 +203,21 @@ Convert document blocks back to Markdown. These functions complement `read_markd
 - **`duck_blocks_to_md(blocks[])`** - Convert a list of blocks to a complete Markdown document
 - **`duck_blocks_to_sections(blocks[])`** - Convert blocks to a list of sections with hierarchy
 
+**Note:** For headings, the level can be specified via `attributes['heading_level']` (preferred) or the `level` field (fallback). The attribute takes priority when both are present.
+
 ```sql
 -- Convert single block to markdown
+SELECT duck_block_to_md({
+    block_type: 'heading',
+    content: 'Hello World',
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{'heading_level': '1'},
+    block_order: 0
+}::markdown_doc_block);
+-- Returns: '# Hello World\n\n'
+
+-- Legacy style using level field still works
 SELECT duck_block_to_md({
     block_type: 'heading',
     content: 'Hello World',
@@ -268,6 +281,8 @@ STRUCT(
 | `math` | `$text$` or `$$text$$` | `display`: inline/block |
 | `superscript` / `sup` | `^text^` | - |
 | `subscript` / `sub` | `~text~` | - |
+| `underline` | `<u>text</u>` | HTML fallback |
+| `smallcaps` | `<span style="...">` | HTML fallback |
 
 ```sql
 -- Convert a single inline element
@@ -702,7 +717,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 814 passing assertions across 19 test files
+- Full test suite with 824 passing assertions across 18 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)

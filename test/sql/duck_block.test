@@ -163,3 +163,53 @@ SELECT duck_block_to_md({
 }::markdown_doc_block) LIKE '%| Name | Age |%|---|---|%| Alice | 30 |%';
 ----
 true
+
+# =============================================================================
+# Test: heading_level attribute takes priority over level field
+# =============================================================================
+
+# heading_level attribute should be used when present
+query I
+SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, block_order: 0}::markdown_doc_block) LIKE '### Test%';
+----
+true
+
+# level field is fallback when heading_level attribute is missing
+query I
+SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: 2, encoding: 'text', attributes: MAP{}, block_order: 0}::markdown_doc_block) LIKE '## Test%';
+----
+true
+
+# heading_level attribute with NULL level field
+query I
+SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '4'}, block_order: 0}::markdown_doc_block) LIKE '#### Test%';
+----
+true
+
+# Level clamping: heading_level > 6 should clamp to 6
+query I
+SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '10'}, block_order: 0}::markdown_doc_block) LIKE '###### Test%';
+----
+true
+
+# Level clamping: heading_level < 1 should clamp to 1
+query I
+SELECT duck_block_to_md({block_type: 'heading', content: 'Test', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '0'}, block_order: 0}::markdown_doc_block) LIKE '# Test%';
+----
+true
+
+# =============================================================================
+# Test: duck_blocks_to_sections with heading_level attribute
+# =============================================================================
+
+query II
+SELECT s.level, s.title
+FROM (
+    SELECT unnest(duck_blocks_to_sections([
+        {block_type: 'heading', content: 'Top Level', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, block_order: 0},
+        {block_type: 'heading', content: 'Subsection', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '2'}, block_order: 1}
+    ]::markdown_doc_block[])) as s
+);
+----
+1	Top Level
+2	Subsection
