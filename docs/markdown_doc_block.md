@@ -15,8 +15,8 @@ The markdown extension implements the doc_block spec for CommonMark and GitHub F
 - `duck_block_to_md()` - Convert single block to markdown string
 - `duck_blocks_to_md()` - Convert list of blocks to markdown string
 - `duck_blocks_to_sections()` - Convert blocks to hierarchical sections
-- `doc_inline_to_md()` - Convert single inline element to markdown string
-- `doc_inlines_to_md()` - Convert list of inline elements to markdown string
+- `doc_element_to_md()` - Convert single doc_element (block or inline) to markdown
+- `doc_elements_to_md()` - Convert list of doc_elements to markdown string
 
 ## Supported Block Types
 
@@ -220,21 +220,30 @@ FROM (
 );
 ```
 
-## Inline Element Functions
+## Unified Element Functions
 
-Convert structured inline elements to Markdown. These functions enable format-agnostic document construction with rich text formatting.
+The `doc_element` type provides a unified representation for both block and inline elements, enabling format-agnostic document construction.
 
-### doc_inline Type
+### doc_element Type
 
 ```sql
 STRUCT(
-    inline_type VARCHAR,              -- 'link', 'image', 'bold', 'italic', 'code', 'text'
-    content VARCHAR,                  -- Text content or alt text
-    attributes MAP(VARCHAR, VARCHAR)  -- href, src, title, etc.
+    kind          VARCHAR,              -- 'block' or 'inline'
+    element_type  VARCHAR,              -- 'heading', 'bold', 'link', etc.
+    content       VARCHAR,              -- Text content
+    level         INTEGER,              -- Heading level or nesting depth
+    encoding      VARCHAR,              -- 'text', 'json', etc.
+    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata
+    element_order INTEGER               -- Position in sequence
 )
 ```
 
-### Supported Inline Types
+### Supported Element Types
+
+**Block types** (kind = 'block'):
+`heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `metadata`, `image`
+
+**Inline types** (kind = 'inline'):
 
 | Type | Markdown Output | Attributes |
 |------|-----------------|------------|
@@ -244,84 +253,81 @@ STRUCT(
 | `italic` / `em` | `*text*` | - |
 | `code` | `` `text` `` | - |
 | `text` | plain text | - |
-| `strikethrough` / `del` | `~~text~~` | - |
+| `space` | word separator | - |
+| `softbreak` | soft line break | - |
 | `linebreak` / `br` | hard break | - |
+| `strikethrough` / `del` | `~~text~~` | - |
+| `superscript` / `sup` | `^text^` | - |
+| `subscript` / `sub` | `~text~` | - |
+| `math` | `$text$` or `$$text$$` | `display`: inline/block |
+| `quoted` | `"text"` or `'text'` | `quote_type`: single/double |
+| `cite` | `[@key]` | `key` |
+| `note` | `[^note]` | - |
 
-### doc_inline_to_md(inline)
+### doc_element_to_md(element)
 
-Converts a single `doc_inline` struct to a Markdown string.
+Converts a single `doc_element` struct to a Markdown string.
 
 ```sql
--- Link
-SELECT doc_inline_to_md({
-    inline_type: 'link',
+-- Inline link
+SELECT doc_element_to_md({
+    kind: 'inline',
+    element_type: 'link',
     content: 'Click here',
-    attributes: MAP{'href': 'https://example.com', 'title': 'Example'}
-}::doc_inline);
--- Returns: '[Click here](https://example.com "Example")'
+    level: 1,
+    encoding: 'text',
+    attributes: MAP{'href': 'https://example.com'},
+    element_order: 0
+}::doc_element);
+-- Returns: '[Click here](https://example.com)'
 
--- Bold text
-SELECT doc_inline_to_md({
-    inline_type: 'bold',
-    content: 'important',
-    attributes: MAP{}
-}::doc_inline);
--- Returns: '**important**'
+-- Block heading
+SELECT doc_element_to_md({
+    kind: 'block',
+    element_type: 'heading',
+    content: 'Title',
+    level: 2,
+    encoding: 'text',
+    attributes: MAP{},
+    element_order: 0
+}::doc_element);
+-- Returns: '## Title\n\n'
 ```
 
-### doc_inlines_to_md(inlines[])
+### doc_elements_to_md(elements[])
 
-Converts a list of inline elements to a concatenated Markdown string.
+Converts a list of elements to a concatenated Markdown string.
 
 ```sql
--- Compose rich text content
-SELECT doc_inlines_to_md([
-    {inline_type: 'text', content: 'Check out ', attributes: MAP{}},
-    {inline_type: 'link', content: 'our docs', attributes: MAP{'href': 'https://docs.example.com'}},
-    {inline_type: 'text', content: ' for ', attributes: MAP{}},
-    {inline_type: 'bold', content: 'more info', attributes: MAP{}},
-    {inline_type: 'text', content: '.', attributes: MAP{}}
-]::doc_inline[]);
--- Returns: 'Check out [our docs](https://docs.example.com) for **more info**.'
+-- Compose rich inline content
+SELECT doc_elements_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
+]::doc_element[]);
+-- Returns: 'Check out [our docs](https://docs.example.com) for **more info**'
 ```
 
-### Using Inlines in Blocks
+### Using Elements in Blocks
 
-Combine inline functions with block functions for rich document generation:
+Combine element functions with block functions for rich document generation:
 
 ```sql
 -- Paragraph with formatted content
 SELECT duck_block_to_md({
     block_type: 'paragraph',
-    content: doc_inlines_to_md([
-        {inline_type: 'text', content: 'Visit ', attributes: MAP{}},
-        {inline_type: 'link', content: 'GitHub', attributes: MAP{'href': 'https://github.com'}},
-        {inline_type: 'text', content: ' for ', attributes: MAP{}},
-        {inline_type: 'code', content: 'open source', attributes: MAP{}},
-        {inline_type: 'text', content: ' projects.', attributes: MAP{}}
-    ]::doc_inline[]),
+    content: doc_elements_to_md([
+        {kind: 'inline', element_type: 'text', content: 'Visit ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+        {kind: 'inline', element_type: 'link', content: 'GitHub', level: 1, encoding: 'text', attributes: MAP{'href': 'https://github.com'}, element_order: 1},
+        {kind: 'inline', element_type: 'text', content: ' for projects.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+    ]::doc_element[]),
     level: NULL,
     encoding: 'text',
     attributes: MAP{},
     block_order: 0
 }::markdown_doc_block);
--- Returns: 'Visit [GitHub](https://github.com) for `open source` projects.\n\n'
-
--- Complete document with inline formatting
-SELECT duck_blocks_to_md([
-    {block_type: 'heading', content: 'Welcome', level: 1,
-     encoding: 'text', attributes: MAP{}, block_order: 0},
-    {block_type: 'paragraph',
-     content: doc_inlines_to_md([
-         {inline_type: 'text', content: 'This is ', attributes: MAP{}},
-         {inline_type: 'bold', content: 'important', attributes: MAP{}},
-         {inline_type: 'text', content: ' and ', attributes: MAP{}},
-         {inline_type: 'italic', content: 'emphasized', attributes: MAP{}},
-         {inline_type: 'text', content: '.', attributes: MAP{}}
-     ]::doc_inline[]),
-     level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
-]::markdown_doc_block[]);
--- Returns: '# Welcome\n\nThis is **important** and *emphasized*.\n\n'
+-- Returns: 'Visit [GitHub](https://github.com) for projects.\n\n'
 ```
 
 ## Round-Trip Fidelity
@@ -399,7 +405,7 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.3 | 2025-01 | Added `doc_inline` type and inline-to-markdown functions |
+| 1.3 | 2025-01 | Added unified `doc_element` type with `doc_element_to_md()` and `doc_elements_to_md()` functions |
 | 1.2 | 2024-12 | Added duck_block conversion functions, `duck_block` COPY mode alias |
 | 1.1 | 2024-12 | Aligned with doc_block_spec v1.0, added metadata type |
 | 1.0 | 2024 | Initial implementation |

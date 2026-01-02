@@ -37,29 +37,37 @@ public:
 	                                    const string &encoding, const Value &attributes);
 
 	/**
-	 * @brief Render a single doc_inline element to Markdown string
+	 * @brief Render a single doc_element to Markdown string
 	 *
-	 * @param inline_type The type of inline (link, image, bold, italic, code, text)
-	 * @param content The inline content or alt text
-	 * @param attributes The inline attributes as a MAP value (href, src, title, etc.)
+	 * @param kind 'block' or 'inline'
+	 * @param element_type The type (heading, paragraph, bold, link, etc.)
+	 * @param content The element content
+	 * @param level The level (heading level, nesting depth)
+	 * @param encoding The content encoding
+	 * @param attributes The element attributes as a MAP value
 	 * @return The rendered Markdown string
 	 */
-	static string RenderInlineToMarkdown(const string &inline_type, const string &content, const Value &attributes);
+	static string RenderElementToMarkdown(const string &kind, const string &element_type, const string &content,
+	                                      int32_t level, const string &encoding, const Value &attributes);
 
 	/**
-	 * @brief Render a list of doc_inline elements to Markdown string
+	 * @brief Render a list of doc_element structs to Markdown string
 	 *
-	 * @param inlines_value A LIST of doc_inline structs
+	 * @param elements_value A LIST of doc_element structs
 	 * @return The concatenated Markdown string
 	 */
-	static string RenderInlinesToMarkdown(const Value &inlines_value);
+	static string RenderElementsToMarkdown(const Value &elements_value);
 
 private:
 	static void RegisterBlockToMdFunction(ExtensionLoader &loader);
 	static void RegisterBlocksToMdFunction(ExtensionLoader &loader);
 	static void RegisterBlocksToSectionsFunction(ExtensionLoader &loader);
-	static void RegisterInlineToMdFunction(ExtensionLoader &loader);
-	static void RegisterInlinesToMdFunction(ExtensionLoader &loader);
+	static void RegisterElementToMdFunction(ExtensionLoader &loader);
+	static void RegisterElementsToMdFunction(ExtensionLoader &loader);
+
+	// Helper for inline element rendering (used by RenderElementToMarkdown)
+	static string RenderInlineElementToMarkdown(const string &element_type, const string &content,
+	                                            const Value &attributes);
 
 	// Helper to extract attribute from MAP value
 	static string GetAttribute(const Value &attributes, const string &key);

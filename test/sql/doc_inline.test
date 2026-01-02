@@ -1,216 +1,241 @@
 # name: test/sql/doc_inline.test
-# description: Test doc_inline type and inline-to-markdown functions
+# description: Test doc_element type and element-to-markdown functions
 # group: [sql]
 
 require markdown
 
 # =============================================================================
-# Test: doc_inline type registration
+# Test: doc_element type registration
 # =============================================================================
 
 query I
-SELECT typeof({inline_type: 'text', content: 'hello', attributes: MAP{}}::doc_inline) LIKE '%inline_type%content%attributes%';
+SELECT typeof({kind: 'inline', element_type: 'text', content: 'hello', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element) LIKE '%kind%element_type%content%level%';
 ----
 true
 
 # =============================================================================
-# Test: doc_inline_to_md - Link
+# Test: doc_element_to_md - Inline Link
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'link', content: 'Click here', attributes: MAP{'href': 'https://example.com'}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'link', content: 'Click here', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 0}::doc_element);
 ----
 [Click here](https://example.com)
 
 query I
-SELECT doc_inline_to_md({inline_type: 'link', content: 'Click here', attributes: MAP{'href': 'https://example.com', 'title': 'Example Site'}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'link', content: 'Click here', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com', 'title': 'Example Site'}, element_order: 0}::doc_element);
 ----
 [Click here](https://example.com "Example Site")
 
 # =============================================================================
-# Test: doc_inline_to_md - Image
+# Test: doc_element_to_md - Inline Image
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'image', content: 'Alt text', attributes: MAP{'src': 'image.png'}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'image', content: 'Alt text', level: 1, encoding: 'text', attributes: MAP{'src': 'image.png'}, element_order: 0}::doc_element);
 ----
 ![Alt text](image.png)
 
 query I
-SELECT doc_inline_to_md({inline_type: 'image', content: 'Alt text', attributes: MAP{'src': 'image.png', 'title': 'My Image'}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'image', content: 'Alt text', level: 1, encoding: 'text', attributes: MAP{'src': 'image.png', 'title': 'My Image'}, element_order: 0}::doc_element);
 ----
 ![Alt text](image.png "My Image")
 
 # =============================================================================
-# Test: doc_inline_to_md - Bold
+# Test: doc_element_to_md - Bold
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'bold', content: 'important', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'bold', content: 'important', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 **important**
 
 query I
-SELECT doc_inline_to_md({inline_type: 'strong', content: 'also bold', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'strong', content: 'also bold', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 **also bold**
 
 # =============================================================================
-# Test: doc_inline_to_md - Italic
+# Test: doc_element_to_md - Italic
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'italic', content: 'emphasis', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'italic', content: 'emphasis', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 *emphasis*
 
 query I
-SELECT doc_inline_to_md({inline_type: 'em', content: 'also italic', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'em', content: 'also italic', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 *also italic*
 
-query I
-SELECT doc_inline_to_md({inline_type: 'emphasis', content: 'emphasis too', attributes: MAP{}}::doc_inline);
-----
-*emphasis too*
-
 # =============================================================================
-# Test: doc_inline_to_md - Code
+# Test: doc_element_to_md - Inline Code
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'code', content: 'variable', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'code', content: 'variable', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 `variable`
 
 # Code with backticks uses double backtick syntax
 query I
-SELECT doc_inline_to_md({inline_type: 'code', content: 'use `backticks`', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'code', content: 'use `backticks`', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 `` use `backticks` ``
 
 # =============================================================================
-# Test: doc_inline_to_md - Text
+# Test: doc_element_to_md - Text
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'text', content: 'plain text', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'text', content: 'plain text', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 plain text
 
 # =============================================================================
-# Test: doc_inline_to_md - Strikethrough
+# Test: doc_element_to_md - Space and breaks
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'strikethrough', content: 'deleted', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'space', content: '', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element) = ' ';
+----
+true
+
+query I
+SELECT doc_element_to_md({kind: 'inline', element_type: 'linebreak', content: '', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element) LIKE '%  %';
+----
+true
+
+# =============================================================================
+# Test: doc_element_to_md - Strikethrough
+# =============================================================================
+
+query I
+SELECT doc_element_to_md({kind: 'inline', element_type: 'strikethrough', content: 'deleted', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 ~~deleted~~
 
 query I
-SELECT doc_inline_to_md({inline_type: 'del', content: 'also deleted', attributes: MAP{}}::doc_inline);
+SELECT doc_element_to_md({kind: 'inline', element_type: 'del', content: 'also deleted', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
 ----
 ~~also deleted~~
 
 # =============================================================================
-# Test: doc_inline_to_md - Linebreak
+# Test: doc_element_to_md - Superscript/Subscript
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'linebreak', content: '', attributes: MAP{}}::doc_inline) LIKE '%  %';
+SELECT doc_element_to_md({kind: 'inline', element_type: 'superscript', content: '2', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
+----
+^2^
+
+query I
+SELECT doc_element_to_md({kind: 'inline', element_type: 'subscript', content: 'i', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
+----
+~i~
+
+# =============================================================================
+# Test: doc_element_to_md - Math
+# =============================================================================
+
+query I
+SELECT doc_element_to_md({kind: 'inline', element_type: 'math', content: 'x^2', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element);
+----
+$x^2$
+
+query I
+SELECT doc_element_to_md({kind: 'inline', element_type: 'math', content: 'E=mc^2', level: 1, encoding: 'text', attributes: MAP{'display': 'block'}, element_order: 0}::doc_element);
+----
+$$E=mc^2$$
+
+# =============================================================================
+# Test: doc_element_to_md - Block element (heading)
+# =============================================================================
+
+query I
+SELECT doc_element_to_md({kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element) LIKE '# Title%';
 ----
 true
 
 query I
-SELECT doc_inline_to_md({inline_type: 'br', content: '', attributes: MAP{}}::doc_inline) LIKE '%  %';
+SELECT doc_element_to_md({kind: 'block', element_type: 'paragraph', content: 'Some text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}::doc_element) LIKE 'Some text.%';
 ----
 true
 
 # =============================================================================
-# Test: doc_inline_to_md - Unknown type falls back to text
+# Test: doc_element_to_md - NULL handling
 # =============================================================================
 
 query I
-SELECT doc_inline_to_md({inline_type: 'unknown', content: 'fallback', attributes: MAP{}}::doc_inline);
-----
-fallback
-
-# =============================================================================
-# Test: doc_inline_to_md - NULL handling
-# =============================================================================
-
-query I
-SELECT doc_inline_to_md(NULL::doc_inline) IS NULL;
+SELECT doc_element_to_md(NULL::doc_element) IS NULL;
 ----
 true
 
 # =============================================================================
-# Test: doc_inlines_to_md - List of inlines
+# Test: doc_elements_to_md - List of inline elements
 # =============================================================================
 
 query I
-SELECT doc_inlines_to_md([
-    {inline_type: 'text', content: 'Hello ', attributes: MAP{}},
-    {inline_type: 'bold', content: 'world', attributes: MAP{}}
-]::doc_inline[]);
+SELECT doc_elements_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Hello ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'bold', content: 'world', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}
+]::doc_element[]);
 ----
 Hello **world**
 
 query I
-SELECT doc_inlines_to_md([
-    {inline_type: 'text', content: 'Check out ', attributes: MAP{}},
-    {inline_type: 'link', content: 'our docs', attributes: MAP{'href': 'https://docs.example.com'}},
-    {inline_type: 'text', content: ' for ', attributes: MAP{}},
-    {inline_type: 'bold', content: 'more info', attributes: MAP{}},
-    {inline_type: 'text', content: '.', attributes: MAP{}}
-]::doc_inline[]);
+SELECT doc_elements_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'inline', element_type: 'text', content: '.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4}
+]::doc_element[]);
 ----
 Check out [our docs](https://docs.example.com) for **more info**.
 
 # =============================================================================
-# Test: doc_inlines_to_md - Empty list
+# Test: doc_elements_to_md - Empty list
 # =============================================================================
 
 query I
-SELECT doc_inlines_to_md([]::doc_inline[]);
+SELECT doc_elements_to_md([]::doc_element[]);
 ----
 (empty)
 
 # =============================================================================
-# Test: doc_inlines_to_md - NULL handling
+# Test: doc_elements_to_md - NULL handling
 # =============================================================================
 
 query I
-SELECT doc_inlines_to_md(NULL::doc_inline[]) IS NULL;
+SELECT doc_elements_to_md(NULL::doc_element[]) IS NULL;
 ----
 true
 
 # =============================================================================
-# Test: doc_inlines_to_md - Complex composition
+# Test: doc_elements_to_md - Mixed block and inline
 # =============================================================================
 
 query I
-SELECT doc_inlines_to_md([
-    {inline_type: 'text', content: 'Visit ', attributes: MAP{}},
-    {inline_type: 'link', content: 'GitHub', attributes: MAP{'href': 'https://github.com'}},
-    {inline_type: 'text', content: ' and try ', attributes: MAP{}},
-    {inline_type: 'code', content: 'git clone', attributes: MAP{}},
-    {inline_type: 'text', content: ' to get started.', attributes: MAP{}}
-]::doc_inline[]);
+SELECT doc_elements_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Some text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]::doc_element[]) LIKE '%# Title%Some text.%';
 ----
-Visit [GitHub](https://github.com) and try `git clone` to get started.
+true
 
 # =============================================================================
-# Test: Using inlines in blocks
+# Test: Using elements with duck_block functions
 # =============================================================================
 
 query I
 SELECT duck_block_to_md({
     block_type: 'paragraph',
-    content: doc_inlines_to_md([
-        {inline_type: 'text', content: 'This is ', attributes: MAP{}},
-        {inline_type: 'bold', content: 'important', attributes: MAP{}}
-    ]::doc_inline[]),
+    content: doc_elements_to_md([
+        {kind: 'inline', element_type: 'text', content: 'This is ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+        {kind: 'inline', element_type: 'bold', content: 'important', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}
+    ]::doc_element[]),
     level: NULL,
     encoding: 'text',
     attributes: MAP{},
@@ -220,18 +245,18 @@ SELECT duck_block_to_md({
 true
 
 # =============================================================================
-# Test: Full document with inline content
+# Test: Full document with inline content via elements
 # =============================================================================
 
 query I
 SELECT duck_blocks_to_md([
     {block_type: 'heading', content: 'Welcome', level: 1, encoding: 'text', attributes: MAP{}, block_order: 0},
     {block_type: 'paragraph',
-     content: doc_inlines_to_md([
-         {inline_type: 'text', content: 'Read the ', attributes: MAP{}},
-         {inline_type: 'link', content: 'documentation', attributes: MAP{'href': 'https://docs.example.com'}},
-         {inline_type: 'text', content: '.', attributes: MAP{}}
-     ]::doc_inline[]),
+     content: doc_elements_to_md([
+         {kind: 'inline', element_type: 'text', content: 'Read the ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+         {kind: 'inline', element_type: 'link', content: 'documentation', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
+         {kind: 'inline', element_type: 'text', content: '.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+     ]::doc_element[]),
      level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
 ]::markdown_doc_block[]) LIKE '%# Welcome%Read the [documentation](https://docs.example.com).%';
 ----

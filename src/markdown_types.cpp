@@ -36,17 +36,21 @@ LogicalType MarkdownTypes::MarkdownDocBlockType() {
 }
 
 //===--------------------------------------------------------------------===//
-// Doc Inline Type Definition
+// Doc Element Type Definition (Unified Block/Inline)
 //===--------------------------------------------------------------------===//
 
-LogicalType MarkdownTypes::DocInlineType() {
-	// Create the STRUCT type for doc_inline
-	// STRUCT(inline_type VARCHAR, content VARCHAR, attributes MAP(VARCHAR, VARCHAR))
-	// Supports inline types: link, image, bold, italic, code, text
+LogicalType MarkdownTypes::DocElementType() {
+	// Create the STRUCT type for doc_element - unified block/inline representation
+	// STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+	//        encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)
 	child_list_t<LogicalType> struct_children;
-	struct_children.push_back(make_pair("inline_type", LogicalType::VARCHAR));
+	struct_children.push_back(make_pair("kind", LogicalType::VARCHAR));           // 'block' or 'inline'
+	struct_children.push_back(make_pair("element_type", LogicalType::VARCHAR));   // 'heading', 'bold', etc.
 	struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
+	struct_children.push_back(make_pair("level", LogicalType::INTEGER));
+	struct_children.push_back(make_pair("encoding", LogicalType::VARCHAR));
 	struct_children.push_back(make_pair("attributes", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)));
+	struct_children.push_back(make_pair("element_order", LogicalType::INTEGER));
 
 	return LogicalType::STRUCT(std::move(struct_children));
 }
@@ -133,9 +137,9 @@ void MarkdownTypes::Register(ExtensionLoader &loader) {
 	const auto doc_block_type = MarkdownDocBlockType();
 	loader.RegisterType("markdown_doc_block", doc_block_type);
 
-	// Register the doc_inline STRUCT type
-	const auto doc_inline_type = DocInlineType();
-	loader.RegisterType("doc_inline", doc_inline_type);
+	// Register the doc_element STRUCT type (unified block/inline)
+	const auto doc_element_type = DocElementType();
+	loader.RegisterType("doc_element", doc_element_type);
 }
 
 } // namespace duckdb

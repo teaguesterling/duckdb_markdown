@@ -42,23 +42,23 @@ FROM read_markdown_blocks('doc.md') b;
 
 See [Markdown Implementation](markdown_doc_block.md#duck-block-conversion-functions) for details.
 
-## Inline Element Functions
+## Unified Element Functions
 
-Build rich text content with structured inline elements:
+Build rich text content with the unified `doc_element` type that supports both block and inline elements:
 
 ```sql
 -- Convert inline elements to markdown
-SELECT doc_inlines_to_md([
-    {inline_type: 'text', content: 'Check out ', attributes: MAP{}},
-    {inline_type: 'link', content: 'our docs', attributes: MAP{'href': 'https://example.com'}},
-    {inline_type: 'text', content: ' for ', attributes: MAP{}},
-    {inline_type: 'bold', content: 'more info', attributes: MAP{}}
-]::doc_inline[]);
+SELECT doc_elements_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
+]::doc_element[]);
 -- Returns: 'Check out [our docs](https://example.com) for **more info**'
 ```
 
-Supported types: `link`, `image`, `bold`, `italic`, `code`, `text`, `strikethrough`, `linebreak`
+Supported inline types: `link`, `image`, `bold`, `italic`, `code`, `text`, `strikethrough`, `linebreak`, `math`, `superscript`, `subscript`
 
-See [Inline Element Functions](markdown_doc_block.md#inline-element-functions) for details.
+See [Unified Element Functions](markdown_doc_block.md#unified-element-functions) for details.
 
 For full usage details, see the [main README](https://github.com/teaguesterling/duckdb_markdown).

@@ -233,12 +233,25 @@ FROM (
 );
 ```
 
-### Inline Element Functions
+### Unified Element Functions
 
-Build rich text content with structured inline elements. These functions enable format-agnostic document construction:
+Build rich text content with the unified `doc_element` type. These functions enable format-agnostic document construction for both block and inline elements:
 
-- **`doc_inline_to_md(inline)`** - Convert a single `doc_inline` struct to Markdown
-- **`doc_inlines_to_md(inlines[])`** - Convert a list of inline elements to Markdown string
+- **`doc_element_to_md(element)`** - Convert a single `doc_element` struct to Markdown
+- **`doc_elements_to_md(elements[])`** - Convert a list of elements to Markdown string
+
+**doc_element type:**
+```sql
+STRUCT(
+    kind          VARCHAR,              -- 'block' or 'inline'
+    element_type  VARCHAR,              -- 'heading', 'bold', 'link', etc.
+    content       VARCHAR,              -- Text content
+    level         INTEGER,              -- Heading level or nesting depth
+    encoding      VARCHAR,              -- 'text', 'json', etc.
+    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata
+    element_order INTEGER               -- Position in sequence
+)
+```
 
 **Supported inline types:**
 
@@ -252,36 +265,43 @@ Build rich text content with structured inline elements. These functions enable 
 | `text` | plain text | - |
 | `strikethrough` / `del` | `~~text~~` | - |
 | `linebreak` / `br` | hard break | - |
+| `math` | `$text$` or `$$text$$` | `display`: inline/block |
+| `superscript` / `sup` | `^text^` | - |
+| `subscript` / `sub` | `~text~` | - |
 
 ```sql
 -- Convert a single inline element
-SELECT doc_inline_to_md({
-    inline_type: 'link',
+SELECT doc_element_to_md({
+    kind: 'inline',
+    element_type: 'link',
     content: 'Click here',
-    attributes: MAP{'href': 'https://example.com', 'title': 'Example'}
-}::doc_inline);
+    level: 1,
+    encoding: 'text',
+    attributes: MAP{'href': 'https://example.com', 'title': 'Example'},
+    element_order: 0
+}::doc_element);
 -- Returns: '[Click here](https://example.com "Example")'
 
--- Compose rich text from multiple inlines
-SELECT doc_inlines_to_md([
-    {inline_type: 'text', content: 'Check out ', attributes: MAP{}},
-    {inline_type: 'link', content: 'our docs', attributes: MAP{'href': 'https://docs.example.com'}},
-    {inline_type: 'text', content: ' for ', attributes: MAP{}},
-    {inline_type: 'bold', content: 'more info', attributes: MAP{}},
-    {inline_type: 'text', content: '.', attributes: MAP{}}
-]::doc_inline[]);
+-- Compose rich text from multiple elements
+SELECT doc_elements_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'inline', element_type: 'text', content: '.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4}
+]::doc_element[]);
 -- Returns: 'Check out [our docs](https://docs.example.com) for **more info**.'
 
--- Use inlines in blocks for rich document generation
+-- Use elements in blocks for rich document generation
 SELECT duck_blocks_to_md([
     {block_type: 'heading', content: 'Welcome', level: 1,
      encoding: 'text', attributes: MAP{}, block_order: 0},
     {block_type: 'paragraph',
-     content: doc_inlines_to_md([
-         {inline_type: 'text', content: 'Visit ', attributes: MAP{}},
-         {inline_type: 'link', content: 'GitHub', attributes: MAP{'href': 'https://github.com'}},
-         {inline_type: 'text', content: ' for projects.', attributes: MAP{}}
-     ]::doc_inline[]),
+     content: doc_elements_to_md([
+         {kind: 'inline', element_type: 'text', content: 'Visit ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+         {kind: 'inline', element_type: 'link', content: 'GitHub', level: 1, encoding: 'text', attributes: MAP{'href': 'https://github.com'}, element_order: 1},
+         {kind: 'inline', element_type: 'text', content: ' for projects.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+     ]::doc_element[]),
      level: NULL, encoding: 'text', attributes: MAP{}, block_order: 1}
 ]::markdown_doc_block[]);
 -- Returns: '# Welcome\n\nVisit [GitHub](https://github.com) for projects.\n\n'
@@ -669,7 +689,7 @@ The extension is designed for high-performance document processing:
 - Document processing functions (`md_to_html`, `md_to_text`, `md_valid`, `md_stats`, `md_extract_metadata`, `md_extract_section`, `md_section_breadcrumb`)
 - **Block-level document representation** with `read_markdown_blocks()` and `markdown_mode 'blocks'` / `'duck_block'`
 - **Duck block conversion functions** (`duck_block_to_md`, `duck_blocks_to_md`, `duck_blocks_to_sections`)
-- **Inline element functions** (`doc_inline_to_md`, `doc_inlines_to_md`) for rich text composition
+- **Unified element functions** (`doc_element_to_md`, `doc_elements_to_md`) for rich text composition with block and inline elements
 - **Content modes** for flexible section extraction: `'minimal'` (default), `'full'`, `'smart'`
 - **Fragment syntax** for filtering sections: `'file.md#section-id'`
 - **Section hierarchy** with `section_path` column for navigation
@@ -682,7 +702,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 810 passing assertions across 18 test files
+- Full test suite with 814 passing assertions across 19 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)

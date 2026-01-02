@@ -15,10 +15,12 @@ public:
 	//!        attributes MAP(VARCHAR, VARCHAR), block_order INTEGER)
 	static LogicalType MarkdownDocBlockType();
 
-	//! The doc_inline STRUCT type for inline element representation
-	//! STRUCT(inline_type VARCHAR, content VARCHAR, attributes MAP(VARCHAR, VARCHAR))
-	//! Supports: link, image, bold, italic, code, text
-	static LogicalType DocInlineType();
+	//! The doc_element STRUCT type for unified block/inline element representation
+	//! STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER,
+	//!        encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)
+	//! kind: 'block' or 'inline'
+	//! element_type: 'heading', 'paragraph', 'bold', 'link', etc.
+	static LogicalType DocElementType();
 
 	//! Register the MARKDOWN type and conversion functions
 	static void Register(ExtensionLoader &loader);
