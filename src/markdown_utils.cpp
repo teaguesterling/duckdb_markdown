@@ -941,13 +941,17 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str) {
 	// Pre-scan for reference link definitions to detect reference-style links
 	// Reference definitions look like: [id]: url "optional title"
 	// Pattern matches: [id]: followed by URL (optionally in angle brackets)
+	// Process line-by-line for MSVC compatibility (no std::regex::multiline)
 	std::set<std::string> reference_urls;
-	std::regex ref_pattern(R"(^\s*\[([^\]]+)\]:\s+<?([^\s>]+)>?)", std::regex::multiline);
-	std::sregex_iterator ref_begin(markdown_str.begin(), markdown_str.end(), ref_pattern);
-	std::sregex_iterator ref_end;
-	for (auto it = ref_begin; it != ref_end; ++it) {
-		std::string url = (*it)[2].str();
-		reference_urls.insert(url);
+	std::regex ref_pattern(R"(^\s*\[([^\]]+)\]:\s+<?([^\s>]+)>?)");
+	std::istringstream stream(markdown_str);
+	std::string line;
+	while (std::getline(stream, line)) {
+		std::smatch match;
+		if (std::regex_search(line, match, ref_pattern)) {
+			std::string url = match[2].str();
+			reference_urls.insert(url);
+		}
 	}
 
 	// Parse with cmark-gfm
