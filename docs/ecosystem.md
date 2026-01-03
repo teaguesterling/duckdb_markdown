@@ -1,219 +1,139 @@
 # Ecosystem Integration
 
-The DuckDB Markdown extension is part of a document processing ecosystem. This page shows how to use related extensions for cross-format conversion and advanced block manipulation.
+The DuckDB Markdown extension is part of a planned document processing ecosystem. This page describes related extensions and cross-format workflows.
 
-## Related Extensions
+## Extension Status
 
-| Extension | Purpose | Install |
-|-----------|---------|---------|
-| [webbed](https://github.com/teaguesterling/duckdb_webbed) | HTML/XML processing | `INSTALL webbed FROM community` |
-| [duck_block_utils](https://github.com/teaguesterling/duckdb_duck_block_utils) | Block manipulation utilities | `INSTALL duck_block_utils FROM community` |
+| Extension | Purpose | Status |
+|-----------|---------|--------|
+| [duckdb_markdown](https://github.com/teaguesterling/duckdb_markdown) | Markdown processing | **Released** |
+| [duckdb_webbed](https://github.com/teaguesterling/duckdb_webbed) | HTML/XML processing | *Planned* |
+| [duckdb_duck_block_utils](https://github.com/teaguesterling/duckdb_duck_block_utils) | Block manipulation utilities | *Planned* |
 
-## Converting Markdown to HTML
+## Current Capabilities (duckdb_markdown)
 
-Use the `webbed` extension to convert markdown blocks to HTML:
+The markdown extension provides complete block-level document processing:
 
 ```sql
 LOAD markdown;
+
+-- Read markdown into duck_block rows
+SELECT * FROM read_markdown_blocks('README.md');
+
+-- Convert blocks back to markdown
+SELECT duck_blocks_to_md(list(b ORDER BY element_order))
+FROM read_markdown_blocks('doc.md') b;
+
+-- Convert blocks to hierarchical sections
+SELECT unnest(duck_blocks_to_sections(list(b ORDER BY element_order)))
+FROM read_markdown_blocks('doc.md') b;
+```
+
+### Block-Level Transformations
+
+```sql
+-- Filter and transform blocks
+SELECT duck_blocks_to_md(list(b ORDER BY element_order))
+FROM read_markdown_blocks('doc.md') b
+WHERE element_type IN ('heading', 'paragraph', 'code');
+
+-- Extract code blocks with language
+SELECT content, attributes['language'] as lang
+FROM read_markdown_blocks('tutorial.md')
+WHERE element_type = 'code';
+
+-- Round-trip with modifications
+COPY (
+    SELECT kind, element_type,
+           CASE WHEN element_type = 'heading' THEN upper(content) ELSE content END as content,
+           level, encoding, attributes
+    FROM read_markdown_blocks('input.md')
+    ORDER BY element_order
+) TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
+```
+
+## Planned: Cross-Format Conversion
+
+When `webbed` and `duck_block_utils` are available, cross-format workflows will be possible:
+
+### Markdown to HTML (Planned)
+
+```sql
+-- Future: Convert markdown blocks to HTML
+LOAD markdown;
 LOAD webbed;
 
--- Read markdown and convert to HTML
-SELECT doc_blocks_to_html(
+SELECT duck_blocks_to_html(
     list(b ORDER BY element_order)
 )
 FROM read_markdown_blocks('README.md') b;
 ```
 
-### Cross-Format Pipeline
+### HTML to Markdown (Planned)
 
 ```sql
--- Markdown -> doc_blocks -> HTML
-WITH blocks AS (
-    SELECT list(b ORDER BY element_order) as doc_blocks
-    FROM read_markdown_blocks('input.md') b
-)
-SELECT doc_blocks_to_html(doc_blocks) as html
-FROM blocks;
-```
-
-## Converting HTML to Markdown
-
-Convert HTML documents to markdown using the doc_block intermediate format:
-
-```sql
+-- Future: Convert HTML to markdown via duck_block
 LOAD markdown;
 LOAD webbed;
 
--- HTML -> doc_blocks -> Markdown
 SELECT duck_blocks_to_md(
-    html_to_doc_blocks('<h1>Title</h1><p>Some paragraph text.</p>')
+    html_to_duck_blocks('<h1>Title</h1><p>Content</p>')
 );
--- Result: # Title
---
--- Some paragraph text.
 ```
 
-### Batch HTML to Markdown Conversion
+## Planned: Block Utilities
 
-```sql
--- Convert multiple HTML files to markdown
-COPY (
-    SELECT duck_blocks_to_md(html_to_doc_blocks(content))
-    FROM read_html_objects('pages/*.html')
-) TO 'output.md';
-```
+The `duck_block_utils` extension will provide format-agnostic block manipulation:
 
-## Block Utilities with duck_block_utils
+### Planned Functions
 
-The `duck_block_utils` extension provides format-agnostic utilities for working with document blocks.
+| Function | Description |
+|----------|-------------|
+| `duck_blocks_filter(blocks, types[])` | Keep only specified element types |
+| `duck_blocks_exclude(blocks, types[])` | Remove specified element types |
+| `duck_blocks_to_text(blocks)` | Extract plain text content |
+| `duck_blocks_toc(blocks)` | Generate table of contents |
+| `duck_blocks_validate(blocks)` | Check schema compliance |
+| `duck_blocks_stats(blocks)` | Block type statistics |
 
-### Setup
+### Example Usage (Planned)
 
 ```sql
 LOAD markdown;
 LOAD duck_block_utils;
-```
 
-### Generate Table of Contents
-
-```sql
--- Extract headings as a TOC
-SELECT * FROM doc_blocks_toc(
+-- Generate table of contents
+SELECT * FROM duck_blocks_toc(
     (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('README.md') b)
 );
 
--- Format as indented list
-SELECT
-    repeat('  ', level - 1) || '- ' || title as toc_line,
-    id
-FROM doc_blocks_toc(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('docs/**/*.md') b)
-);
-```
-
-### Extract Plain Text
-
-```sql
--- Get plain text content (strips formatting)
-SELECT doc_blocks_to_text(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b)
-);
-```
-
-### Filter Blocks by Type
-
-```sql
--- Keep only headings and code blocks
-SELECT unnest(doc_blocks_filter(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b),
-    ['heading', 'code']
-));
-
--- Exclude metadata and raw HTML
-SELECT unnest(doc_blocks_exclude(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b),
-    ['metadata', 'md:html_block']
-));
-```
-
-### Extract Code Blocks
-
-```sql
--- Get all code blocks with language metadata
-SELECT
-    language,
-    content as code,
-    file_path
-FROM doc_blocks_code_blocks(
-    (SELECT list(b ORDER BY element_order)
-     FROM read_markdown_blocks('tutorial/*.md', include_filepath := true) b)
-)
-WHERE language = 'python';
-```
-
-### Validate Document Structure
-
-```sql
--- Check for schema compliance
-SELECT doc_blocks_validate(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b)
-);
-
--- Lint for common issues
-SELECT * FROM doc_blocks_lint(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b)
-)
-WHERE severity = 'error';
-```
-
-### Block Statistics
-
-```sql
 -- Get block type distribution
-SELECT * FROM doc_blocks_stats(
+SELECT * FROM duck_blocks_stats(
     (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('docs/**/*.md') b)
 );
 ```
 
-## Complete Conversion Pipeline
+## The duck_block Specification
 
-Combine all extensions for powerful document processing:
+All ecosystem extensions share the common `duck_block` structure:
 
 ```sql
-LOAD markdown;
-LOAD webbed;
-LOAD duck_block_utils;
-
--- Read markdown, filter content, convert to HTML
-SELECT doc_blocks_to_html(
-    doc_blocks_filter(
-        (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('doc.md') b),
-        ['heading', 'paragraph', 'code']
-    )
-);
-
--- HTML to cleaned markdown
-SELECT duck_blocks_to_md(
-    doc_blocks_exclude(
-        html_to_doc_blocks(html_content),
-        ['md:html_block', 'raw']
-    )
+STRUCT(
+    kind          VARCHAR,              -- 'block' or 'inline'
+    element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', etc.
+    content       VARCHAR,              -- Text content
+    level         INTEGER,              -- Heading level or nesting depth
+    encoding      VARCHAR,              -- 'text', 'json', 'yaml'
+    attributes    MAP(VARCHAR, VARCHAR),-- Element metadata
+    element_order INTEGER               -- Position in sequence
 )
-FROM web_pages;
-
--- Generate markdown report from multiple sources
-WITH all_headings AS (
-    SELECT doc_blocks_headings(
-        (SELECT list(b ORDER BY element_order)
-         FROM read_markdown_blocks('docs/**/*.md') b)
-    ) as headings
-)
-SELECT duck_blocks_to_md(headings) FROM all_headings;
 ```
 
-## Function Reference
+This shared structure enables:
 
-### webbed (HTML/XML)
+- **Format conversion**: Read one format, write another
+- **Cross-format queries**: Analyze structure across document types
+- **Unified tooling**: Common utilities work with any format
+- **SQL-based transformation**: Filter, aggregate, and manipulate documents
 
-| Function | Description |
-|----------|-------------|
-| `html_to_doc_blocks(html)` | Convert HTML to doc_block list |
-| `doc_blocks_to_html(blocks)` | Convert doc_blocks to HTML |
-| `xml_to_json(xml)` | Convert XML to JSON |
-| `json_to_xml(json)` | Convert JSON to XML |
-| `to_xml(value)` | Convert any value to XML |
-
-### duck_block_utils
-
-| Function | Description |
-|----------|-------------|
-| `doc_blocks_filter(blocks, types[])` | Keep only specified block types |
-| `doc_blocks_exclude(blocks, types[])` | Remove specified block types |
-| `doc_blocks_to_text(blocks)` | Extract plain text content |
-| `doc_blocks_toc(blocks)` | Generate table of contents |
-| `doc_blocks_headings(blocks)` | Extract heading hierarchy |
-| `doc_blocks_code_blocks(blocks)` | Extract code blocks with metadata |
-| `doc_blocks_validate(blocks)` | Check schema compliance |
-| `doc_blocks_lint(blocks)` | Check for common issues |
-| `doc_blocks_stats(blocks)` | Block type statistics |
-| `doc_blocks_merge(blocks1, blocks2)` | Merge two block sequences |
+See [Duck Block Specification](doc_block_spec.md) for complete details.

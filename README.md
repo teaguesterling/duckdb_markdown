@@ -9,7 +9,7 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 - **Markdown Content Extraction**: Extract code blocks, links, images, and tables from Markdown text
 - **COPY TO Markdown**: Export query results as Markdown tables or reconstruct documents from sections
 - **Documentation Analysis**: Analyze large documentation repositories with SQL queries
-- **Cross-Platform Support**: Works on Linux, macOS, and WebAssembly (Windows support in development)
+- **Cross-Platform Support**: Works on Linux, macOS, Windows, and WebAssembly
 - **GitHub Flavored Markdown**: Uses cmark-gfm for accurate parsing of modern Markdown
 - **High Performance**: Process thousands of documents efficiently with robust glob pattern support
 
@@ -195,135 +195,54 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
 - **`value_to_md(value)`** - Convert any value to markdown representation
 
-### Duck Block Conversion Functions
+### Duck Block Functions
 
-Convert document blocks back to Markdown. These functions complement `read_markdown_blocks()` for in-memory document transformations:
+Convert document blocks to/from Markdown. These functions work with the `duck_block` structure for in-memory document transformations:
 
-- **`duck_block_to_md(block)`** - Convert a single duck_block to Markdown string
+- **`duck_block_to_md(block)`** - Convert a single block or inline element to Markdown string
 - **`duck_blocks_to_md(blocks[])`** - Convert a list of blocks to a complete Markdown document
 - **`duck_blocks_to_sections(blocks[])`** - Convert blocks to a list of sections with hierarchy
-
-**Note:** For headings, the level can be specified via `attributes['heading_level']` (preferred) or the `level` field (fallback). The attribute takes priority when both are present.
-
-```sql
--- Convert single block to markdown
-SELECT duck_block_to_md({
-    kind: 'block',
-    element_type: 'heading',
-    content: 'Hello World',
-    level: NULL,
-    encoding: 'text',
-    attributes: MAP{'heading_level': '1'},
-    element_order: 0
-});
--- Returns: '# Hello World\n\n'
-
--- Using level field (alternative)
-SELECT duck_block_to_md({
-    kind: 'block',
-    element_type: 'heading',
-    content: 'Hello World',
-    level: 1,
-    encoding: 'text',
-    attributes: MAP{},
-    element_order: 0
-});
--- Returns: '# Hello World\n\n'
-
--- Convert list of blocks to markdown document
-SELECT duck_blocks_to_md(list(b ORDER BY element_order))
-FROM read_markdown_blocks('source.md') b;
-
--- Transform blocks in-memory and get markdown back
-SELECT duck_blocks_to_md([
-    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
-    {kind: 'block', element_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
-]);
-
--- Convert blocks to sections format for hierarchical processing
-SELECT s.section_id, s.level, s.title, length(s.content) as content_len
-FROM (
-    SELECT unnest(duck_blocks_to_sections(list(b ORDER BY element_order))) as s
-    FROM read_markdown_blocks('doc.md') b
-);
-```
-
-### Unified Element Functions
-
-Build rich text content with the unified `duck_block` structure. These functions enable format-agnostic document construction for both block and inline elements:
-
-- **`duck_block_to_md(block)`** - Convert a single block or inline element to Markdown
-- **`duck_blocks_to_md(blocks[])`** - Convert a list of elements to Markdown string
-
-**Note:** The `duck_block` type is defined by the `duck_block_utils` extension. These functions work with any struct matching the expected shape:
 
 **duck_block structure:**
 ```sql
 STRUCT(
     kind          VARCHAR,              -- 'block' or 'inline'
-    element_type  VARCHAR,              -- 'heading', 'bold', 'link', etc.
+    element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
-    level         INTEGER,              -- Heading level or nesting depth
-    encoding      VARCHAR,              -- 'text', 'json', etc.
-    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata
+    level         INTEGER,              -- Heading level (1-6) or nesting depth
+    encoding      VARCHAR,              -- 'text', 'json', 'yaml'
+    attributes    MAP(VARCHAR, VARCHAR),-- Element metadata (language, href, etc.)
     element_order INTEGER               -- Position in sequence
 )
 ```
 
-**Supported inline types:**
-
-| Type | Output | Attributes |
-|------|--------|------------|
-| `link` | `[text](href "title")` | `href`, `title` |
-| `image` | `![alt](src "title")` | `src`, `title` |
-| `bold` / `strong` | `**text**` | - |
-| `italic` / `em` | `*text*` | - |
-| `code` | `` `text` `` | - |
-| `text` | plain text | - |
-| `strikethrough` / `del` | `~~text~~` | - |
-| `linebreak` / `br` | hard break | - |
-| `math` | `$text$` or `$$text$$` | `display`: inline/block |
-| `superscript` / `sup` | `^text^` | - |
-| `subscript` / `sub` | `~text~` | - |
-| `underline` | `<u>text</u>` | HTML fallback |
-| `smallcaps` | `<span style="...">` | HTML fallback |
+**Supported inline types:** `text`, `bold`/`strong`, `italic`/`em`, `code`, `link`, `image`, `strikethrough`/`del`, `linebreak`/`br`, `math`, `superscript`/`sup`, `subscript`/`sub`
 
 ```sql
--- Convert a single inline element
-SELECT duck_block_to_md({
-    kind: 'inline',
-    element_type: 'link',
-    content: 'Click here',
-    level: 1,
-    encoding: 'text',
-    attributes: MAP{'href': 'https://example.com', 'title': 'Example'},
-    element_order: 0
-});
--- Returns: '[Click here](https://example.com "Example")'
+-- Convert blocks back to markdown
+SELECT duck_blocks_to_md(list(b ORDER BY element_order))
+FROM read_markdown_blocks('source.md') b;
 
--- Compose rich text from multiple elements
+-- Build document programmatically
 SELECT duck_blocks_to_md([
-    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
-    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://docs.example.com'}, element_order: 1},
-    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
-    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
-    {kind: 'inline', element_type: 'text', content: '.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4}
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Body text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
 ]);
--- Returns: 'Check out [our docs](https://docs.example.com) for **more info**.'
 
--- Use elements in blocks for rich document generation
+-- Compose inline elements
 SELECT duck_blocks_to_md([
-    {kind: 'block', element_type: 'heading', content: 'Welcome', level: 1,
-     encoding: 'text', attributes: MAP{}, element_order: 0},
-    {kind: 'block', element_type: 'paragraph',
-     content: duck_blocks_to_md([
-         {kind: 'inline', element_type: 'text', content: 'Visit ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
-         {kind: 'inline', element_type: 'link', content: 'GitHub', level: 1, encoding: 'text', attributes: MAP{'href': 'https://github.com'}, element_order: 1},
-         {kind: 'inline', element_type: 'text', content: ' for projects.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
-     ])::VARCHAR,
-     level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: NULL, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for details.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2}
 ]);
--- Returns: '# Welcome\n\nVisit [GitHub](https://github.com) for projects.\n\n'
+-- Returns: 'Check out [our docs](https://example.com) for details.'
+
+-- Convert blocks to sections
+SELECT s.section_id, s.level, s.title
+FROM (
+    SELECT unnest(duck_blocks_to_sections(list(b ORDER BY element_order))) as s
+    FROM read_markdown_blocks('doc.md') b
+);
 ```
 
 ### Document Processing Examples
@@ -712,7 +631,7 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.3.2):**
+**✅ Available (v1.3.5):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`, `read_markdown_blocks`) with full parameter support
 - **COPY TO markdown** with table, document, and blocks modes (including inline element support)
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
@@ -728,7 +647,7 @@ The extension is designed for high-performance document processing:
 - Frontmatter metadata as `MAP(VARCHAR, VARCHAR)` for easy field access
 - Replacement scan support for table-like syntax (`FROM '*.md'`)
 - MARKDOWN type with automatic VARCHAR casting
-- Cross-platform support (Linux, macOS, WebAssembly, Windows)
+- Cross-platform support (Linux, macOS, Windows, WebAssembly)
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
@@ -776,7 +695,7 @@ Contributions welcome! The extension provides a solid foundation for Markdown an
 - **File reading functions**: Complete the table function implementations
 - **Metadata extraction**: Frontmatter parsing and document statistics  
 - **Performance optimizations**: Streaming improvements for very large documents
-- **Windows support**: Help resolve remaining platform compatibility issues
+- **Advanced features**: Custom renderer integration and streaming parser optimizations
 
 ## License
 

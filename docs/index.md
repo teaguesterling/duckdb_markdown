@@ -4,9 +4,9 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 
 ## Documentation
 
-- [Document Block Specification](doc_block_spec.md) - Format-agnostic specification for representing documents as blocks
+- [Duck Block Specification](doc_block_spec.md) - The duck_block structure for document representation
 - [Markdown Implementation](markdown_doc_block.md) - Markdown-specific implementation details
-- [Ecosystem Integration](ecosystem.md) - Using with webbed (HTML/XML) and duck_block_utils
+- [Ecosystem Integration](ecosystem.md) - Related extensions and cross-format workflows
 
 ## Quick Start
 
@@ -18,46 +18,48 @@ LOAD markdown;
 -- Read Markdown files
 SELECT * FROM read_markdown('docs/**/*.md');
 
--- Parse markdown into blocks (duck_block shape)
+-- Parse markdown into blocks
 SELECT * FROM read_markdown_blocks('README.md');
+
+-- Extract sections with hierarchy
+SELECT title, level, content
+FROM read_markdown_sections('README.md', content_mode := 'full');
 ```
 
 ## Duck Block Functions
 
-Convert blocks back to Markdown without writing to files:
+Convert blocks to/from Markdown:
 
 ```sql
--- Convert a single block to markdown
-SELECT duck_block_to_md(block) FROM read_markdown_blocks('doc.md');
-
--- Convert a list of blocks to a complete document
+-- Convert blocks back to markdown
 SELECT duck_blocks_to_md(list(b ORDER BY element_order))
 FROM read_markdown_blocks('doc.md') b;
 
--- Convert blocks to hierarchical sections
+-- Build inline content
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check out ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'our docs', level: NULL, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 1}
+]);
+-- Returns: 'Check out [our docs](https://example.com)'
+
+-- Convert blocks to sections
 SELECT unnest(duck_blocks_to_sections(list(b ORDER BY element_order)))
 FROM read_markdown_blocks('doc.md') b;
 ```
 
-See [Markdown Implementation](markdown_doc_block.md#duck-block-conversion-functions) for details.
+## COPY TO Markdown
 
-## Inline Elements
-
-Build rich text content with the unified `duck_block` type that supports both block and inline elements:
+Export query results in three modes:
 
 ```sql
--- Convert inline elements to markdown
-SELECT duck_blocks_to_md([
-    {kind: 'inline', element_type: 'text', content: 'Check out ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
-    {kind: 'inline', element_type: 'link', content: 'our docs', level: 1, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 1},
-    {kind: 'inline', element_type: 'text', content: ' for ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
-    {kind: 'inline', element_type: 'bold', content: 'more info', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
-]);
--- Returns: 'Check out [our docs](https://example.com) for **more info**'
+-- Table mode (default): markdown table
+COPY my_table TO 'output.md' (FORMAT MARKDOWN);
+
+-- Document mode: reconstruct from sections
+COPY sections TO 'doc.md' (FORMAT MARKDOWN, markdown_mode 'document');
+
+-- Blocks mode: full-fidelity round-trip
+COPY blocks TO 'copy.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```
 
-Supported inline types: `link`, `image`, `bold`, `italic`, `code`, `text`, `strikethrough`, `linebreak`, `math`, `superscript`, `subscript`
-
-See [Inline Elements in Blocks](markdown_doc_block.md#inline-elements-in-blocks) for details.
-
-For full usage details, see the [main README](https://github.com/teaguesterling/duckdb_markdown).
+For complete documentation, see the [README](https://github.com/teaguesterling/duckdb_markdown).
