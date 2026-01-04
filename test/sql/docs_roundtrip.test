@@ -1,0 +1,323 @@
+# name: test/sql/docs_roundtrip.test
+# description: Test round-trip: docs/*.md -> blocks -> markdown -> sections comparison
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Setup: Load original docs and create block representations
+# =============================================================================
+
+# Load original docs
+statement ok
+CREATE TEMPORARY TABLE original_docs AS
+SELECT
+    file_path,
+    content as md_content
+FROM read_markdown('docs/*.md', filename := true);
+
+# Verify we have docs to test (at least 1)
+query I
+SELECT count(*) >= 1 FROM original_docs;
+----
+true
+
+# Create blocks from original docs (excluding file_path from block struct)
+statement ok
+CREATE TEMPORARY TABLE doc_blocks AS
+SELECT
+    file_path,
+    list({
+        kind: b.kind,
+        element_type: b.element_type,
+        content: b.content,
+        level: b.level,
+        encoding: b.encoding,
+        attributes: b.attributes,
+        element_order: b.element_order
+    } ORDER BY b.element_order) as blocks
+FROM read_markdown_blocks('docs/*.md', filename := true) b
+GROUP BY file_path;
+
+# Verify blocks were created for all docs (same count as original_docs)
+query I
+SELECT (SELECT count(*) FROM doc_blocks) = (SELECT count(*) FROM original_docs);
+----
+true
+
+# Each doc should have at least 5 blocks
+query I
+SELECT bool_and(length(blocks) >= 5) FROM doc_blocks;
+----
+true
+
+# =============================================================================
+# Test: Convert blocks back to markdown
+# =============================================================================
+
+statement ok
+CREATE TEMPORARY TABLE regenerated_docs AS
+SELECT
+    file_path,
+    duck_blocks_to_md(blocks) as md_content
+FROM doc_blocks;
+
+# Verify all docs were regenerated (same count as original)
+query I
+SELECT (SELECT count(*) FROM regenerated_docs) = (SELECT count(*) FROM original_docs);
+----
+true
+
+# All regenerated docs should be valid markdown
+query I
+SELECT bool_and(md_valid(md_content)) FROM regenerated_docs;
+----
+true
+
+# Regenerated content should be non-empty
+query I
+SELECT bool_and(length(md_content) > 100) FROM regenerated_docs;
+----
+true
+
+# =============================================================================
+# Test: Write regenerated docs to temp files for section comparison
+# =============================================================================
+
+statement ok
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/doc_block_spec.md')
+TO '/tmp/regen_doc_block_spec.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+statement ok
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/ecosystem.md')
+TO '/tmp/regen_ecosystem.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+statement ok
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/index.md')
+TO '/tmp/regen_index.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+statement ok
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/markdown_doc_block.md')
+TO '/tmp/regen_markdown_doc_block.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# =============================================================================
+# Test: Compare sections - structure should be preserved
+# =============================================================================
+
+# Create section comparison tables
+statement ok
+CREATE TEMPORARY TABLE original_sections AS
+SELECT 'docs/doc_block_spec.md' as file_path, section_id, title, level
+FROM read_markdown_sections('docs/doc_block_spec.md')
+UNION ALL
+SELECT 'docs/ecosystem.md', section_id, title, level
+FROM read_markdown_sections('docs/ecosystem.md')
+UNION ALL
+SELECT 'docs/index.md', section_id, title, level
+FROM read_markdown_sections('docs/index.md')
+UNION ALL
+SELECT 'docs/markdown_doc_block.md', section_id, title, level
+FROM read_markdown_sections('docs/markdown_doc_block.md');
+
+statement ok
+CREATE TEMPORARY TABLE regen_sections AS
+SELECT 'docs/doc_block_spec.md' as file_path, section_id, title, level
+FROM read_markdown_sections('/tmp/regen_doc_block_spec.md')
+UNION ALL
+SELECT 'docs/ecosystem.md', section_id, title, level
+FROM read_markdown_sections('/tmp/regen_ecosystem.md')
+UNION ALL
+SELECT 'docs/index.md', section_id, title, level
+FROM read_markdown_sections('/tmp/regen_index.md')
+UNION ALL
+SELECT 'docs/markdown_doc_block.md', section_id, title, level
+FROM read_markdown_sections('/tmp/regen_markdown_doc_block.md');
+
+# Same number of sections in original and regenerated
+query I
+SELECT (SELECT count(*) FROM original_sections) = (SELECT count(*) FROM regen_sections);
+----
+true
+
+# Should have a reasonable number of sections (at least 10 total)
+query I
+SELECT count(*) >= 10 FROM original_sections;
+----
+true
+
+# All sections should match by file_path, section_id, title, and level
+query I
+SELECT count(*) = 0
+FROM original_sections o
+FULL OUTER JOIN regen_sections r
+    ON o.file_path = r.file_path
+    AND o.section_id = r.section_id
+WHERE o.section_id IS NULL OR r.section_id IS NULL;
+----
+true
+
+# All section titles should match
+query I
+SELECT count(*) = 0
+FROM original_sections o
+JOIN regen_sections r
+    ON o.file_path = r.file_path
+    AND o.section_id = r.section_id
+WHERE o.title != r.title;
+----
+true
+
+# All section levels should match
+query I
+SELECT count(*) = 0
+FROM original_sections o
+JOIN regen_sections r
+    ON o.file_path = r.file_path
+    AND o.section_id = r.section_id
+WHERE o.level != r.level;
+----
+true
+
+# =============================================================================
+# Test: Verify heading levels are preserved through round-trip
+# =============================================================================
+
+# Get heading levels from original blocks
+statement ok
+CREATE TEMPORARY TABLE original_headings AS
+SELECT
+    file_path,
+    content,
+    attributes['heading_level'] as heading_level
+FROM read_markdown_blocks('docs/*.md', filename := true)
+WHERE element_type = 'heading';
+
+# Get heading levels from regenerated docs
+statement ok
+CREATE TEMPORARY TABLE regen_headings AS
+SELECT
+    'docs/doc_block_spec.md' as file_path,
+    content,
+    attributes['heading_level'] as heading_level
+FROM read_markdown_blocks('/tmp/regen_doc_block_spec.md')
+WHERE element_type = 'heading'
+UNION ALL
+SELECT 'docs/ecosystem.md', content, attributes['heading_level']
+FROM read_markdown_blocks('/tmp/regen_ecosystem.md')
+WHERE element_type = 'heading'
+UNION ALL
+SELECT 'docs/index.md', content, attributes['heading_level']
+FROM read_markdown_blocks('/tmp/regen_index.md')
+WHERE element_type = 'heading'
+UNION ALL
+SELECT 'docs/markdown_doc_block.md', content, attributes['heading_level']
+FROM read_markdown_blocks('/tmp/regen_markdown_doc_block.md')
+WHERE element_type = 'heading';
+
+# Same number of headings
+query I
+SELECT (SELECT count(*) FROM original_headings) = (SELECT count(*) FROM regen_headings);
+----
+true
+
+# All heading levels should be preserved
+query I
+SELECT count(*) = 0
+FROM original_headings o
+JOIN regen_headings r
+    ON o.file_path = r.file_path
+    AND o.content = r.content
+WHERE o.heading_level != r.heading_level;
+----
+true
+
+# =============================================================================
+# Test: Block counts should be similar (may differ slightly due to normalization)
+# =============================================================================
+
+statement ok
+CREATE TEMPORARY TABLE original_block_counts AS
+SELECT
+    file_path,
+    element_type,
+    count(*) as cnt
+FROM read_markdown_blocks('docs/*.md', filename := true)
+GROUP BY file_path, element_type;
+
+statement ok
+CREATE TEMPORARY TABLE regen_block_counts AS
+SELECT
+    'docs/doc_block_spec.md' as file_path,
+    element_type,
+    count(*) as cnt
+FROM read_markdown_blocks('/tmp/regen_doc_block_spec.md')
+GROUP BY element_type
+UNION ALL
+SELECT 'docs/ecosystem.md', element_type, count(*)
+FROM read_markdown_blocks('/tmp/regen_ecosystem.md')
+GROUP BY element_type
+UNION ALL
+SELECT 'docs/index.md', element_type, count(*)
+FROM read_markdown_blocks('/tmp/regen_index.md')
+GROUP BY element_type
+UNION ALL
+SELECT 'docs/markdown_doc_block.md', element_type, count(*)
+FROM read_markdown_blocks('/tmp/regen_markdown_doc_block.md')
+GROUP BY element_type;
+
+# Heading counts should match exactly
+query I
+SELECT count(*) = 0
+FROM (
+    SELECT file_path, sum(cnt) as cnt FROM original_block_counts WHERE element_type = 'heading' GROUP BY file_path
+) o
+JOIN (
+    SELECT file_path, sum(cnt) as cnt FROM regen_block_counts WHERE element_type = 'heading' GROUP BY file_path
+) r ON o.file_path = r.file_path
+WHERE o.cnt != r.cnt;
+----
+true
+
+# Code block counts should match exactly
+query I
+SELECT count(*) = 0
+FROM (
+    SELECT file_path, sum(cnt) as cnt FROM original_block_counts WHERE element_type = 'code' GROUP BY file_path
+) o
+JOIN (
+    SELECT file_path, sum(cnt) as cnt FROM regen_block_counts WHERE element_type = 'code' GROUP BY file_path
+) r ON o.file_path = r.file_path
+WHERE o.cnt != r.cnt;
+----
+true
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+
+statement ok
+DROP TABLE original_docs;
+
+statement ok
+DROP TABLE doc_blocks;
+
+statement ok
+DROP TABLE regenerated_docs;
+
+statement ok
+DROP TABLE original_sections;
+
+statement ok
+DROP TABLE regen_sections;
+
+statement ok
+DROP TABLE original_headings;
+
+statement ok
+DROP TABLE regen_headings;
+
+statement ok
+DROP TABLE original_block_counts;
+
+statement ok
+DROP TABLE regen_block_counts;
