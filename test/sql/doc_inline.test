@@ -235,3 +235,161 @@ SELECT duck_blocks_to_md([
 ]) LIKE '%# Welcome%Read the [documentation](https://docs.example.com).%';
 ----
 true
+
+# =============================================================================
+# Test: Issue #11 - Inline-to-block transitions
+# =============================================================================
+
+# When inline elements are followed by block elements, a paragraph break is needed
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Inline text ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'bold', content: 'bold', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Next Section', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}
+]) LIKE 'Inline text **bold**%## Next Section%';
+----
+true
+
+# Verify the newline sequence is present between inline and block
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Text', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Paragraph', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]) LIKE E'Text\n\nParagraph%';
+----
+true
+
+# Block-to-block should also work correctly
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}
+]) LIKE E'# Title\n\nBody%';
+----
+true
+
+
+# =============================================================================
+# Test: Issue #10 - list_item element support
+# =============================================================================
+
+# Basic unordered list items
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'list_item', content: 'First', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'list_item', content: 'Second', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}
+]) LIKE E'- First\n- Second%';
+----
+true
+
+# Ordered list items with item_number attribute
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'list_item', content: 'First', level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'item_number': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'list_item', content: 'Second', level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'item_number': '2'}, element_order: 1}
+]) LIKE E'1. First\n2. Second%';
+----
+true
+
+# Mixed inline and list_item elements
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Items:', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'list_item', content: 'Item one', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'list_item', content: 'Item two', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+]) LIKE E'Items:\n\n- Item one\n- Item two%';
+----
+true
+
+# =============================================================================
+# Test: Verify generated markdown is valid
+# =============================================================================
+
+# Round-trip validation: generate markdown and verify it's valid
+query I
+SELECT md_valid(duck_blocks_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Content with **bold** text.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'list_item', content: 'Item 1', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'block', element_type: 'list_item', content: 'Item 2', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'code', content: 'print("hello")', level: NULL, encoding: 'text', attributes: MAP{'language': 'python'}, element_order: 4}
+]));
+----
+true
+
+# Inline-to-block transition produces valid markdown
+query I
+SELECT md_valid(duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Prefix: ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'bold', content: 'important', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Section', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}
+]));
+----
+true
+
+# Single block with duck_block_to_md produces valid markdown
+query I
+SELECT md_valid(duck_block_to_md({
+    kind: 'block', element_type: 'heading', content: 'Test Heading', level: 1,
+    encoding: 'text', attributes: MAP{}, element_order: 0
+}));
+----
+true
+
+query I
+SELECT md_valid(duck_block_to_md({
+    kind: 'block', element_type: 'code', content: 'SELECT * FROM table;', level: NULL,
+    encoding: 'text', attributes: MAP{'language': 'sql'}, element_order: 0
+}));
+----
+true
+
+query I
+SELECT md_valid(duck_block_to_md({
+    kind: 'block', element_type: 'blockquote', content: 'This is a quote.', level: 1,
+    encoding: 'text', attributes: MAP{}, element_order: 0
+}));
+----
+true
+
+# Complex document with many element types
+query I
+SELECT md_valid(duck_blocks_to_md([
+    {kind: 'block', element_type: 'frontmatter', content: 'title: Test Document', level: 0, encoding: 'yaml', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'heading', content: 'Introduction', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'paragraph', content: 'Welcome to the test.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'block', element_type: 'heading', content: 'Features', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'list_item', content: 'Feature one', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4},
+    {kind: 'block', element_type: 'list_item', content: 'Feature two', level: 1, encoding: 'text', attributes: MAP{}, element_order: 5},
+    {kind: 'block', element_type: 'blockquote', content: 'Important note here.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 6},
+    {kind: 'block', element_type: 'code', content: 'const x = 42;', level: NULL, encoding: 'text', attributes: MAP{'language': 'javascript'}, element_order: 7},
+    {kind: 'block', element_type: 'hr', content: '', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 8},
+    {kind: 'block', element_type: 'paragraph', content: 'Conclusion.', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 9}
+]));
+----
+true
+
+# Inline elements compose valid markdown
+query I
+SELECT md_valid(duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Check ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'link', content: 'docs', level: NULL, encoding: 'text', attributes: MAP{'href': 'https://example.com'}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: ' for ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'details', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'inline', element_type: 'text', content: ' and ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 4},
+    {kind: 'inline', element_type: 'code', content: 'examples', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 5}
+]));
+----
+true
+
+# Mixed block and inline with rich content
+query I
+SELECT md_valid(duck_blocks_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Links', level: 2, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'text', content: 'Visit ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'inline', element_type: 'link', content: 'GitHub', level: NULL, encoding: 'text', attributes: MAP{'href': 'https://github.com'}, element_order: 2},
+    {kind: 'block', element_type: 'heading', content: 'Code', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'code', content: 'echo "hello"', level: NULL, encoding: 'text', attributes: MAP{'language': 'bash'}, element_order: 4}
+]));
+----
+true

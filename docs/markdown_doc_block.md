@@ -25,9 +25,9 @@ STRUCT(
     kind          VARCHAR,              -- 'block' or 'inline'
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
-    level         INTEGER,              -- Heading level or nesting depth
+    level         INTEGER,              -- Document nesting depth (1 for top-level)
     encoding      VARCHAR,              -- 'text', 'json', 'yaml', 'html', 'xml'
-    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata
+    attributes    MAP(VARCHAR, VARCHAR),-- Key-value metadata (e.g., heading_level, language)
     element_order INTEGER               -- Position in sequence
 )
 ```
@@ -96,11 +96,13 @@ Returns rows with duck_block shape:
 | `kind` | VARCHAR | Always 'block' for this reader |
 | `element_type` | VARCHAR | Block type identifier |
 | `content` | VARCHAR | Block content |
-| `level` | INTEGER | Heading level or nesting depth |
+| `level` | INTEGER | Document nesting depth (1 for top-level, 0 for frontmatter) |
 | `encoding` | VARCHAR | 'text', 'json', or 'yaml' |
-| `attributes` | MAP(VARCHAR, VARCHAR) | Block metadata |
+| `attributes` | MAP(VARCHAR, VARCHAR) | Block metadata (heading_level, language, id, etc.) |
 | `element_order` | INTEGER | Position in document (1-indexed) |
 | `file_path` | VARCHAR | Source file (when enabled) |
+
+**Note on heading levels:** For headings, the actual H1-H6 level is stored in `attributes['heading_level']`, while `level` indicates document nesting depth (always 1 for top-level blocks). This matches the duck_block_utils convention.
 
 ### Examples
 
@@ -108,8 +110,8 @@ Returns rows with duck_block shape:
 -- Basic usage
 SELECT * FROM read_markdown_blocks('README.md');
 
--- Filter to headings only
-SELECT content, level
+-- Filter to headings with heading level
+SELECT content, attributes['heading_level'] as heading_level
 FROM read_markdown_blocks('doc.md')
 WHERE element_type = 'heading'
 ORDER BY element_order;
@@ -151,11 +153,12 @@ When transitioning from inline to block elements, a paragraph break (`\n\n`) is 
 
 | element_type | Markdown Output |
 |--------------|-----------------|
-| `heading` | `#` × level + space + content |
+| `heading` | `#` × heading_level + space + content (uses `attributes['heading_level']`, falls back to `level`) |
 | `paragraph` | content + blank line |
 | `code` | ` ``` ` + language + newline + content + ` ``` ` |
 | `blockquote` | `>` prefix per line |
 | `list` | `- ` or `N. ` per item |
+| `list_item` | `- ` for unordered, `N. ` for ordered (uses `attributes['ordered']` and `attributes['item_number']`) |
 | `table` | `\| cell \|` format with separator |
 | `hr` | `---` |
 | `metadata` | `---` + content + `---` |
@@ -346,6 +349,7 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.1 | 2025-01 | Fixed level/heading_level: `level` is now document depth (1 for top-level), heading H1-H6 stored in `attributes['heading_level']`. Added `list_item` element type support. Fixed inline-to-block transitions. |
 | 2.0 | 2025-01 | Unified on `duck_block` shape, removed `markdown_doc_block` type |
 | 1.3 | 2025-01 | Added unified `doc_element` type with conversion functions |
 | 1.2 | 2024-12 | Added duck_block conversion functions, `duck_block` COPY mode alias |

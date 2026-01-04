@@ -345,6 +345,16 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		}
 	} else if (element_type == "hr") {
 		result = "---\n\n";
+	} else if (element_type == "list_item") {
+		// List item - render with bullet prefix
+		// Check if ordered from attributes
+		bool ordered = GetAttribute(attributes, "ordered") == "true";
+		string item_num = GetAttribute(attributes, "item_number");
+		if (ordered && !item_num.empty()) {
+			result = item_num + ". " + content + "\n";
+		} else {
+			result = "- " + content + "\n";
+		}
 	} else if (element_type == "image") {
 		// Image: ![alt](src "title")
 		string src = GetAttribute(attributes, "src");
@@ -408,6 +418,7 @@ string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value)
 
 	auto &list_children = ListValue::GetChildren(blocks_value);
 	string result;
+	bool last_was_inline = false;
 
 	for (const auto &block_value : list_children) {
 		if (block_value.IsNull()) {
@@ -427,7 +438,15 @@ string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value)
 		string encoding = struct_children[4].IsNull() ? "text" : struct_children[4].ToString();
 		Value attributes = struct_children[5];
 
+		bool is_inline = (kind == "inline");
+
+		// Handle inline-to-block transition: add paragraph break
+		if (last_was_inline && !is_inline) {
+			result += "\n\n";
+		}
+
 		result += RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
+		last_was_inline = is_inline;
 	}
 
 	return result;

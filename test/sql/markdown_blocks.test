@@ -31,8 +31,8 @@ query II
 SELECT element_type, level FROM read_markdown_blocks('test/data/blocks_basic.md') ORDER BY element_order;
 ----
 heading	1
-paragraph	NULL
-code	NULL
+paragraph	1
+code	1
 blockquote	1
 
 # =============================================================================
@@ -167,13 +167,13 @@ SELECT count(DISTINCT element_type) FROM read_markdown_blocks('test/data/blocks_
 ----
 7
 
-# Check heading levels
-query II
-SELECT content, level FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE element_type = 'heading' ORDER BY element_order;
+# Check heading levels (heading_level attribute, all have level=1 as document-level blocks)
+query III
+SELECT content, level, attributes['heading_level'] as heading_level FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE element_type = 'heading' ORDER BY element_order;
 ----
-Main Heading	1
-Subheading	2
-Deep Heading	3
+Main Heading	1	1
+Subheading	1	2
+Deep Heading	1	3
 
 # =============================================================================
 # Test: Code blocks with and without language

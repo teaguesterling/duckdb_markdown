@@ -652,14 +652,17 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
 		cmark_node_type node_type = cmark_node_get_type(child);
 		MarkdownBlock block;
 		block.encoding = "text";
-		block.level = -1; // -1 = not applicable (will be NULL in output)
+		block.level = 1; // Document-level blocks have level=1
 		block.block_order = block_order++;
 
 		switch (node_type) {
 		case CMARK_NODE_HEADING: {
 			block.block_type = "heading";
-			block.level = cmark_node_get_heading_level(child);
+			int heading_level = cmark_node_get_heading_level(child);
 			block.content = GetInlineText(child);
+
+			// Store heading level as attribute (H1=1, H2=2, etc.)
+			block.attributes["heading_level"] = std::to_string(heading_level);
 
 			// Generate ID from heading text
 			std::unordered_map<std::string, int32_t> id_counts;

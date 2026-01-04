@@ -26,6 +26,7 @@ Tests are written as [SQLLogicTests](https://duckdb.org/dev/sqllogictest/intro.h
 | `markdown_extraction_*.test` | Content extraction functions |
 | `duck_block.test` | Duck block conversion functions |
 | `doc_inline.test` | Inline element rendering |
+| `duck_block_roundtrip.test` | Round-trip: blocks → markdown → blocks |
 
 ## Test Data
 
@@ -35,10 +36,12 @@ Tests are written as [SQLLogicTests](https://duckdb.org/dev/sqllogictest/intro.h
 
 ## Current Status
 
-**949 assertions** across **18 test files** covering:
+**1065 assertions** across **19 test files** covering:
 - File reading with glob patterns
 - Section extraction with content modes
 - Block parsing and round-trip
 - Inline element composition
 - COPY TO all three modes
 - Cross-platform compatibility (Linux, macOS, Windows)
+- level/heading_level attribute handling
+- Nested document structures (up to H4 depth)

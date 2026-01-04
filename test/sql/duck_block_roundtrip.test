@@ -1,0 +1,423 @@
+# name: test/sql/duck_block_roundtrip.test
+# description: Test duck_block round-trip: create blocks, render to markdown, parse back
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Setup: Create temporary tables with complex duck_block structures
+# =============================================================================
+
+statement ok
+CREATE TEMPORARY TABLE test_blocks AS
+SELECT 1 as doc_id, 'simple_doc' as doc_name, [
+    {kind: 'block', element_type: 'heading', content: 'Introduction', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Welcome to the documentation.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Details', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2},
+    {kind: 'block', element_type: 'paragraph', content: 'Here are the details.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks
+UNION ALL
+SELECT 2, 'with_code', [
+    {kind: 'block', element_type: 'heading', content: 'Code Example', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Here is some code:', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'code', content: 'SELECT * FROM users;', level: 1, encoding: 'text', attributes: MAP{'language': 'sql'}, element_order: 2},
+    {kind: 'block', element_type: 'blockquote', content: 'This is important.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks
+UNION ALL
+SELECT 3, 'with_lists', [
+    {kind: 'block', element_type: 'heading', content: 'Features', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 0},
+    {kind: 'block', element_type: 'list_item', content: 'Fast execution', level: 1, encoding: 'text', attributes: MAP{'ordered': 'false'}, element_order: 1},
+    {kind: 'block', element_type: 'list_item', content: 'Easy to use', level: 1, encoding: 'text', attributes: MAP{'ordered': 'false'}, element_order: 2},
+    {kind: 'block', element_type: 'list_item', content: 'Well documented', level: 1, encoding: 'text', attributes: MAP{'ordered': 'false'}, element_order: 3}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks
+UNION ALL
+SELECT 4, 'nested_sections', [
+    {kind: 'block', element_type: 'heading', content: 'Chapter 1', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Introduction to chapter 1.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Section 1.1', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2},
+    {kind: 'block', element_type: 'paragraph', content: 'Content of section 1.1.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'heading', content: 'Subsection 1.1.1', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, element_order: 4},
+    {kind: 'block', element_type: 'paragraph', content: 'Deep nested content.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 5},
+    {kind: 'block', element_type: 'heading', content: 'Sub-subsection 1.1.1.1', level: 1, encoding: 'text', attributes: MAP{'heading_level': '4'}, element_order: 6},
+    {kind: 'block', element_type: 'paragraph', content: 'Level 4 content.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 7},
+    {kind: 'block', element_type: 'heading', content: 'Section 1.2', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 8},
+    {kind: 'block', element_type: 'paragraph', content: 'Content of section 1.2.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 9}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks
+UNION ALL
+SELECT 5, 'deep_nesting_api', [
+    {kind: 'block', element_type: 'heading', content: 'API Reference', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Complete API documentation.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Authentication', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2},
+    {kind: 'block', element_type: 'paragraph', content: 'Authentication methods.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'heading', content: 'OAuth 2.0', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, element_order: 4},
+    {kind: 'block', element_type: 'paragraph', content: 'OAuth flow details.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 5},
+    {kind: 'block', element_type: 'heading', content: 'Token Refresh', level: 1, encoding: 'text', attributes: MAP{'heading_level': '4'}, element_order: 6},
+    {kind: 'block', element_type: 'code', content: 'POST /oauth/token\nContent-Type: application/json\n{"grant_type": "refresh_token"}', level: 1, encoding: 'text', attributes: MAP{'language': 'http'}, element_order: 7},
+    {kind: 'block', element_type: 'heading', content: 'JWT Tokens', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, element_order: 8},
+    {kind: 'block', element_type: 'paragraph', content: 'JWT authentication.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 9},
+    {kind: 'block', element_type: 'heading', content: 'Token Structure', level: 1, encoding: 'text', attributes: MAP{'heading_level': '4'}, element_order: 10},
+    {kind: 'block', element_type: 'code', content: '{"header": {}, "payload": {}, "signature": ""}', level: 1, encoding: 'text', attributes: MAP{'language': 'json'}, element_order: 11}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks
+UNION ALL
+SELECT 6, 'deep_nesting_tutorial', [
+    {kind: 'block', element_type: 'heading', content: 'Tutorial', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Step by step guide.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Getting Started', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2},
+    {kind: 'block', element_type: 'list_item', content: 'Install dependencies', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'list_item', content: 'Configure environment', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4},
+    {kind: 'block', element_type: 'heading', content: 'Installation', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, element_order: 5},
+    {kind: 'block', element_type: 'code', content: 'pip install mypackage', level: 1, encoding: 'text', attributes: MAP{'language': 'bash'}, element_order: 6},
+    {kind: 'block', element_type: 'heading', content: 'Windows Setup', level: 1, encoding: 'text', attributes: MAP{'heading_level': '4'}, element_order: 7},
+    {kind: 'block', element_type: 'paragraph', content: 'Windows-specific instructions.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 8},
+    {kind: 'block', element_type: 'blockquote', content: 'Requires Windows 10 or later.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 9},
+    {kind: 'block', element_type: 'heading', content: 'Linux Setup', level: 1, encoding: 'text', attributes: MAP{'heading_level': '4'}, element_order: 10},
+    {kind: 'block', element_type: 'paragraph', content: 'Linux-specific instructions.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 11},
+    {kind: 'block', element_type: 'heading', content: 'Configuration', level: 1, encoding: 'text', attributes: MAP{'heading_level': '3'}, element_order: 12},
+    {kind: 'block', element_type: 'paragraph', content: 'Configuration options.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 13}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks;
+
+# =============================================================================
+# Test: Verify test data created correctly
+# =============================================================================
+
+query II
+SELECT doc_id, doc_name FROM test_blocks ORDER BY doc_id;
+----
+1	simple_doc
+2	with_code
+3	with_lists
+4	nested_sections
+5	deep_nesting_api
+6	deep_nesting_tutorial
+
+# =============================================================================
+# Test: duck_blocks_to_md renders correctly
+# =============================================================================
+
+# Simple document renders with correct heading levels
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%# Introduction%## Details%'
+FROM test_blocks WHERE doc_id = 1;
+----
+true
+
+# Code blocks render with language
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%```sql%SELECT * FROM users;%```%'
+FROM test_blocks WHERE doc_id = 2;
+----
+true
+
+# Blockquotes render correctly
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%> This is important.%'
+FROM test_blocks WHERE doc_id = 2;
+----
+true
+
+# List items render as bullet points
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%- Fast execution%- Easy to use%- Well documented%'
+FROM test_blocks WHERE doc_id = 3;
+----
+true
+
+# Nested sections have correct heading levels (including level 4)
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%# Chapter 1%## Section 1.1%### Subsection 1.1.1%#### Sub-subsection 1.1.1.1%## Section 1.2%'
+FROM test_blocks WHERE doc_id = 4;
+----
+true
+
+# Deep nesting API doc has all 4 levels
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%# API Reference%## Authentication%### OAuth 2.0%#### Token Refresh%### JWT Tokens%#### Token Structure%'
+FROM test_blocks WHERE doc_id = 5;
+----
+true
+
+# Tutorial doc has all 4 levels with mixed content
+query I
+SELECT duck_blocks_to_md(blocks) LIKE '%# Tutorial%## Getting Started%### Installation%#### Windows Setup%#### Linux Setup%### Configuration%'
+FROM test_blocks WHERE doc_id = 6;
+----
+true
+
+# =============================================================================
+# Test: heading_level attribute takes priority over level field
+# =============================================================================
+
+# When heading_level attribute is set, it should be used
+query I
+SELECT duck_block_to_md({
+    kind: 'block', element_type: 'heading', content: 'Test',
+    level: 5,  -- This should be ignored
+    encoding: 'text',
+    attributes: MAP{'heading_level': '2'},  -- This should be used
+    element_order: 0
+}) LIKE '## Test%';
+----
+true
+
+# When heading_level is missing, level field is used as fallback
+query I
+SELECT duck_block_to_md({
+    kind: 'block', element_type: 'heading', content: 'Test',
+    level: 3,  -- This should be used as fallback
+    encoding: 'text',
+    attributes: MAP{},  -- No heading_level
+    element_order: 0
+}) LIKE '### Test%';
+----
+true
+
+# =============================================================================
+# Test: All document-level blocks have level=1 (using simple_doc)
+# =============================================================================
+
+# Write simple_doc to temp file and read back
+statement ok
+COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 1)
+TO '/tmp/test_simple_doc.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Parse back and verify levels
+query III
+SELECT element_type, level, attributes['heading_level'] as heading_level
+FROM read_markdown_blocks('/tmp/test_simple_doc.md')
+ORDER BY element_order;
+----
+heading	1	1
+paragraph	1	NULL
+heading	1	2
+paragraph	1	NULL
+
+# =============================================================================
+# Test: Nested sections document (doc_id=4) preserves heading levels
+# =============================================================================
+
+statement ok
+COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 4)
+TO '/tmp/test_nested_sections.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# All blocks should have level=1, headings should have heading_level attribute (including H4)
+query III
+SELECT element_type, level, attributes['heading_level'] as heading_level
+FROM read_markdown_blocks('/tmp/test_nested_sections.md')
+WHERE element_type = 'heading'
+ORDER BY element_order;
+----
+heading	1	1
+heading	1	2
+heading	1	3
+heading	1	4
+heading	1	2
+
+# =============================================================================
+# Test: Deep nesting API doc (doc_id=5) round-trip
+# =============================================================================
+
+statement ok
+COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 5)
+TO '/tmp/test_deep_api.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Verify all heading levels 1-4 are preserved
+query II
+SELECT content, attributes['heading_level'] as heading_level
+FROM read_markdown_blocks('/tmp/test_deep_api.md')
+WHERE element_type = 'heading'
+ORDER BY element_order;
+----
+API Reference	1
+Authentication	2
+OAuth 2.0	3
+Token Refresh	4
+JWT Tokens	3
+Token Structure	4
+
+# =============================================================================
+# Test: Deep nesting tutorial doc (doc_id=6) round-trip
+# =============================================================================
+
+statement ok
+COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 6)
+TO '/tmp/test_deep_tutorial.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Verify heading levels including two H4s at same level
+query II
+SELECT content, attributes['heading_level'] as heading_level
+FROM read_markdown_blocks('/tmp/test_deep_tutorial.md')
+WHERE element_type = 'heading'
+ORDER BY element_order;
+----
+Tutorial	1
+Getting Started	2
+Installation	3
+Windows Setup	4
+Linux Setup	4
+Configuration	3
+
+# =============================================================================
+# Test: Code document round-trip
+# =============================================================================
+
+statement ok
+COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 2)
+TO '/tmp/test_with_code.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query III
+SELECT element_type, level, attributes['language'] as language
+FROM read_markdown_blocks('/tmp/test_with_code.md')
+WHERE element_type IN ('code', 'blockquote')
+ORDER BY element_order;
+----
+code	1	sql
+blockquote	1	NULL
+
+# =============================================================================
+# Test: Inline-to-block transitions (Issue #11 fix)
+# =============================================================================
+
+# Inline followed by block should have paragraph break
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'Some text ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'bold', content: 'bold', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Next', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2}
+]) LIKE E'Some text **bold**\n\n## Next%';
+----
+true
+
+# Multiple transitions should all have breaks
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: 'First inline', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'First block', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: 'Second inline', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'block', element_type: 'paragraph', content: 'Second block', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3}
+]) LIKE E'First inline\n\nFirst block%Second inline\n\nSecond block%';
+----
+true
+
+# =============================================================================
+# Test: list_item rendering (Issue #10 fix)
+# =============================================================================
+
+# Unordered list items
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'list_item', content: 'Item A', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'list_item', content: 'Item B', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'list_item', content: 'Item C', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+]) LIKE E'- Item A\n- Item B\n- Item C%';
+----
+true
+
+# Ordered list items
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'list_item', content: 'First', level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'item_number': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'list_item', content: 'Second', level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'item_number': '2'}, element_order: 1},
+    {kind: 'block', element_type: 'list_item', content: 'Third', level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'item_number': '3'}, element_order: 2}
+]) LIKE E'1. First\n2. Second\n3. Third%';
+----
+true
+
+# Mixed ordered attribute (defaults to unordered when not 'true')
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'list_item', content: 'Unordered', level: 1, encoding: 'text', attributes: MAP{'ordered': 'false'}, element_order: 0}
+]) LIKE '- Unordered%';
+----
+true
+
+# =============================================================================
+# Test: Validity of generated markdown
+# =============================================================================
+
+# All test documents produce valid markdown
+query I
+SELECT bool_and(md_valid(duck_blocks_to_md(blocks))) FROM test_blocks;
+----
+true
+
+# Complex nested structure produces valid markdown
+query I
+SELECT md_valid(duck_blocks_to_md([
+    {kind: 'block', element_type: 'heading', content: 'Main Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph', content: 'Introduction paragraph.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'block', element_type: 'heading', content: 'Section A', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2},
+    {kind: 'block', element_type: 'list_item', content: 'Point 1', level: 1, encoding: 'text', attributes: MAP{}, element_order: 3},
+    {kind: 'block', element_type: 'list_item', content: 'Point 2', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4},
+    {kind: 'block', element_type: 'code', content: 'example()', level: 1, encoding: 'text', attributes: MAP{'language': 'python'}, element_order: 5},
+    {kind: 'block', element_type: 'blockquote', content: 'A notable quote.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 6},
+    {kind: 'block', element_type: 'heading', content: 'Section B', level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 7},
+    {kind: 'inline', element_type: 'text', content: 'Some ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 8},
+    {kind: 'inline', element_type: 'bold', content: 'formatted', level: 1, encoding: 'text', attributes: MAP{}, element_order: 9},
+    {kind: 'inline', element_type: 'text', content: ' text.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 10},
+    {kind: 'block', element_type: 'hr', content: '', level: 1, encoding: 'text', attributes: MAP{}, element_order: 11}
+]));
+----
+true
+
+# =============================================================================
+# Test: Frontmatter handling
+# =============================================================================
+
+statement ok
+CREATE TEMPORARY TABLE frontmatter_doc AS
+SELECT [
+    {kind: 'block', element_type: 'frontmatter', content: 'title: Test Document
+author: Test Author
+date: 2024-01-01', level: 0, encoding: 'yaml', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'heading', content: 'Content', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 1},
+    {kind: 'block', element_type: 'paragraph', content: 'Body text.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}
+]::STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[] as blocks;
+
+# Frontmatter renders with --- delimiters
+query I
+SELECT duck_blocks_to_md(blocks) LIKE E'---\ntitle: Test Document%---\n\n# Content%'
+FROM frontmatter_doc;
+----
+true
+
+# Frontmatter produces valid markdown
+query I
+SELECT md_valid(duck_blocks_to_md(blocks)) FROM frontmatter_doc;
+----
+true
+
+# =============================================================================
+# Test: Code block language preservation
+# =============================================================================
+
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'code', content: 'print("hello")', level: 1, encoding: 'text', attributes: MAP{'language': 'python'}, element_order: 0}
+]) LIKE E'```python\nprint("hello")\n```%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'code', content: 'SELECT 1;', level: 1, encoding: 'text', attributes: MAP{'language': 'sql'}, element_order: 0}
+]) LIKE E'```sql\nSELECT 1;\n```%';
+----
+true
+
+# Code block without language
+query I
+SELECT duck_blocks_to_md([
+    {kind: 'block', element_type: 'code', content: 'plain code', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}
+]) LIKE E'```\nplain code\n```%';
+----
+true
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+
+statement ok
+DROP TABLE test_blocks;
+
+statement ok
+DROP TABLE frontmatter_doc;
