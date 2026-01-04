@@ -64,11 +64,13 @@ The primary textual content of the element. Interpretation depends on `encoding`
 - For `xml`: XML fragment
 
 #### level
-Semantic level or nesting depth:
-- Headings: 1-6 (or use `attributes['heading_level']` for priority)
-- Nested structures: Depth from root (1+)
+Document nesting depth or heading level:
+- Top-level blocks: 1
+- Nested structures: Depth from root (2+)
 - Frontmatter/metadata: 0
 - Not applicable: NULL
+
+**Note:** For headings, the H1-H6 level should preferably be stored in `attributes['heading_level']`. If not present, the `level` field is used as a fallback.
 
 #### encoding
 Declares how `content` should be interpreted:
@@ -118,7 +120,7 @@ These element types MUST be recognized by all compliant extensions:
 ### Block Type Details
 
 #### heading
-Section or document headings. Level can be specified via `attributes['heading_level']` (preferred) or the `level` field.
+Section or document headings. The H1-H6 level is stored in `attributes['heading_level']` (preferred). If `heading_level` is not present, the `level` field can be used as a fallback.
 
 ```
 kind: 'block'

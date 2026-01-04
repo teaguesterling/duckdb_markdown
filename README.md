@@ -106,7 +106,7 @@ Reads Markdown files and returns one row per file.
 
 **Parameters:**
 - `files` (required) - File path, glob pattern, directory, or list of mixed patterns
-- `include_filepath := false` - Include file_path column in output
+- `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
 - `extract_metadata := true` - Extract frontmatter metadata
@@ -119,9 +119,11 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 
 **Parameters:**
 - `files` (required) - File path, glob pattern, or list of patterns
-- `include_filepath := false` - Include file_path column in output
+- `include_filepath := false` - Include file_path column in output (alias: `filename`)
 
 **Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`
+
+**Note on level vs heading_level:** For headings, the H1-H6 level is stored in `attributes['heading_level']` (preferred). If not present, the `level` field is used as a fallback.
 
 **Element Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `frontmatter`
 
@@ -157,7 +159,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - `max_depth := 6` - Maximum depth relative to min_level (e.g., `max_depth := 2` with `min_level := 1` includes h1 and h2 only)
 - `max_content_length := 0` - Maximum content length for 'smart' mode (0 = auto, uses 2000 chars)
 - `include_empty_sections := false` - Include sections without content
-- `include_filepath := false` - Include file_path column in output
+- `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `extract_metadata := true` - Include frontmatter as a special section (level=0)
 - Plus all `read_markdown` parameters
 
@@ -209,12 +211,14 @@ STRUCT(
     kind          VARCHAR,              -- 'block' or 'inline'
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
-    level         INTEGER,              -- Heading level (1-6) or nesting depth
+    level         INTEGER,              -- Document nesting depth (1 for top-level, 0 for frontmatter)
     encoding      VARCHAR,              -- 'text', 'json', 'yaml'
-    attributes    MAP(VARCHAR, VARCHAR),-- Element metadata (language, href, etc.)
+    attributes    MAP(VARCHAR, VARCHAR),-- Element metadata (heading_level, language, href, etc.)
     element_order INTEGER               -- Position in sequence
 )
 ```
+
+**Note:** For headings, the H1-H6 level is stored in `attributes['heading_level']` (preferred). If not present, the `level` field is used as a fallback.
 
 **Supported inline types:** `text`, `bold`/`strong`, `italic`/`em`, `code`, `link`, `image`, `strikethrough`/`del`, `linebreak`/`br`, `math`, `superscript`/`sup`, `subscript`/`sub`
 
@@ -651,7 +655,7 @@ The extension is designed for high-performance document processing:
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
-- Full test suite with 949 passing assertions across 18 test files
+- Full test suite with 1102 passing assertions across 20 test files
 
 **🗓️ Future Roadmap:**
 - Document interchange format for cross-extension compatibility (HTML, XML, etc.)
@@ -680,7 +684,7 @@ make test
 
 ## Testing
 
-Comprehensive test suite with 949 passing assertions across 18 test files:
+Comprehensive test suite with 1102 passing assertions across 20 test files:
 
 - **Functionality tests**: All extraction functions with edge cases
 - **Block-level tests**: Round-trip parsing and rendering with inline element support
