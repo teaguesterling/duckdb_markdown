@@ -178,12 +178,12 @@ true
 # Write simple_doc to temp file and read back
 statement ok
 COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 1)
-TO '/tmp/test_simple_doc.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/test_simple_doc.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Parse back and verify levels
 query III
 SELECT element_type, level, attributes['heading_level'] as heading_level
-FROM read_markdown_blocks('/tmp/test_simple_doc.md')
+FROM read_markdown_blocks('__TEST_DIR__/test_simple_doc.md')
 ORDER BY element_order;
 ----
 heading	1	1
@@ -197,12 +197,12 @@ paragraph	1	NULL
 
 statement ok
 COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 4)
-TO '/tmp/test_nested_sections.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/test_nested_sections.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # All blocks should have level=1, headings should have heading_level attribute (including H4)
 query III
 SELECT element_type, level, attributes['heading_level'] as heading_level
-FROM read_markdown_blocks('/tmp/test_nested_sections.md')
+FROM read_markdown_blocks('__TEST_DIR__/test_nested_sections.md')
 WHERE element_type = 'heading'
 ORDER BY element_order;
 ----
@@ -218,12 +218,12 @@ heading	1	2
 
 statement ok
 COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 5)
-TO '/tmp/test_deep_api.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/test_deep_api.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Verify all heading levels 1-4 are preserved
 query II
 SELECT content, attributes['heading_level'] as heading_level
-FROM read_markdown_blocks('/tmp/test_deep_api.md')
+FROM read_markdown_blocks('__TEST_DIR__/test_deep_api.md')
 WHERE element_type = 'heading'
 ORDER BY element_order;
 ----
@@ -240,12 +240,12 @@ Token Structure	4
 
 statement ok
 COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 6)
-TO '/tmp/test_deep_tutorial.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/test_deep_tutorial.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # Verify heading levels including two H4s at same level
 query II
 SELECT content, attributes['heading_level'] as heading_level
-FROM read_markdown_blocks('/tmp/test_deep_tutorial.md')
+FROM read_markdown_blocks('__TEST_DIR__/test_deep_tutorial.md')
 WHERE element_type = 'heading'
 ORDER BY element_order;
 ----
@@ -262,11 +262,11 @@ Configuration	3
 
 statement ok
 COPY (SELECT duck_blocks_to_md(blocks)::VARCHAR as content FROM test_blocks WHERE doc_id = 2)
-TO '/tmp/test_with_code.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/test_with_code.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 query III
 SELECT element_type, level, attributes['language'] as language
-FROM read_markdown_blocks('/tmp/test_with_code.md')
+FROM read_markdown_blocks('__TEST_DIR__/test_with_code.md')
 WHERE element_type IN ('code', 'blockquote')
 ORDER BY element_order;
 ----

@@ -86,19 +86,19 @@ true
 
 statement ok
 COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/doc_block_spec.md')
-TO '/tmp/regen_doc_block_spec.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/regen_doc_block_spec.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 statement ok
 COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/ecosystem.md')
-TO '/tmp/regen_ecosystem.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/regen_ecosystem.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 statement ok
 COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/index.md')
-TO '/tmp/regen_index.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/regen_index.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 statement ok
 COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/markdown_doc_block.md')
-TO '/tmp/regen_markdown_doc_block.md' (FORMAT CSV, HEADER false, QUOTE '');
+TO '__TEST_DIR__/regen_markdown_doc_block.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # =============================================================================
 # Test: Compare sections - structure should be preserved
@@ -122,16 +122,16 @@ FROM read_markdown_sections('docs/markdown_doc_block.md');
 statement ok
 CREATE TEMPORARY TABLE regen_sections AS
 SELECT 'docs/doc_block_spec.md' as file_path, section_id, title, level
-FROM read_markdown_sections('/tmp/regen_doc_block_spec.md')
+FROM read_markdown_sections('__TEST_DIR__/regen_doc_block_spec.md')
 UNION ALL
 SELECT 'docs/ecosystem.md', section_id, title, level
-FROM read_markdown_sections('/tmp/regen_ecosystem.md')
+FROM read_markdown_sections('__TEST_DIR__/regen_ecosystem.md')
 UNION ALL
 SELECT 'docs/index.md', section_id, title, level
-FROM read_markdown_sections('/tmp/regen_index.md')
+FROM read_markdown_sections('__TEST_DIR__/regen_index.md')
 UNION ALL
 SELECT 'docs/markdown_doc_block.md', section_id, title, level
-FROM read_markdown_sections('/tmp/regen_markdown_doc_block.md');
+FROM read_markdown_sections('__TEST_DIR__/regen_markdown_doc_block.md');
 
 # Same number of sections in original and regenerated
 query I
@@ -199,19 +199,19 @@ SELECT
     'docs/doc_block_spec.md' as file_path,
     content,
     attributes['heading_level'] as heading_level
-FROM read_markdown_blocks('/tmp/regen_doc_block_spec.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_doc_block_spec.md')
 WHERE element_type = 'heading'
 UNION ALL
 SELECT 'docs/ecosystem.md', content, attributes['heading_level']
-FROM read_markdown_blocks('/tmp/regen_ecosystem.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_ecosystem.md')
 WHERE element_type = 'heading'
 UNION ALL
 SELECT 'docs/index.md', content, attributes['heading_level']
-FROM read_markdown_blocks('/tmp/regen_index.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_index.md')
 WHERE element_type = 'heading'
 UNION ALL
 SELECT 'docs/markdown_doc_block.md', content, attributes['heading_level']
-FROM read_markdown_blocks('/tmp/regen_markdown_doc_block.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_markdown_doc_block.md')
 WHERE element_type = 'heading';
 
 # Same number of headings
@@ -250,19 +250,19 @@ SELECT
     'docs/doc_block_spec.md' as file_path,
     element_type,
     count(*) as cnt
-FROM read_markdown_blocks('/tmp/regen_doc_block_spec.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_doc_block_spec.md')
 GROUP BY element_type
 UNION ALL
 SELECT 'docs/ecosystem.md', element_type, count(*)
-FROM read_markdown_blocks('/tmp/regen_ecosystem.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_ecosystem.md')
 GROUP BY element_type
 UNION ALL
 SELECT 'docs/index.md', element_type, count(*)
-FROM read_markdown_blocks('/tmp/regen_index.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_index.md')
 GROUP BY element_type
 UNION ALL
 SELECT 'docs/markdown_doc_block.md', element_type, count(*)
-FROM read_markdown_blocks('/tmp/regen_markdown_doc_block.md')
+FROM read_markdown_blocks('__TEST_DIR__/regen_markdown_doc_block.md')
 GROUP BY element_type;
 
 # Heading counts should match exactly
