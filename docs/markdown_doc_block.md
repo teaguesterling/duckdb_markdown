@@ -82,7 +82,7 @@ STRUCT(
 ```sql
 read_markdown_blocks(
     path VARCHAR,                    -- File path or glob pattern
-    include_filepath := false,       -- Add file_path column
+    include_filepath := false,       -- Add file_path column (alias: filename)
     include_raw_html := false        -- Include raw HTML blocks
 )
 ```
@@ -349,7 +349,7 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.1 | 2025-01 | Fixed level/heading_level: `level` is now document depth (1 for top-level), heading H1-H6 stored in `attributes['heading_level']`. Added `list_item` element type support. Fixed inline-to-block transitions. |
+| 2.1 | 2025-01 | Fixed level/heading_level: `level` is now document depth (1 for top-level), heading H1-H6 stored in `attributes['heading_level']`. Added `list_item` element type support. Fixed inline-to-block transitions. Added `filename` parameter alias. |
 | 2.0 | 2025-01 | Unified on `duck_block` shape, removed `markdown_doc_block` type |
 | 1.3 | 2025-01 | Added unified `doc_element` type with conversion functions |
 | 1.2 | 2024-12 | Added duck_block conversion functions, `duck_block` COPY mode alias |

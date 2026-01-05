@@ -635,7 +635,7 @@ The extension is designed for high-performance document processing:
 
 ## Current Status
 
-**✅ Available (v1.3.5):**
+**✅ Available (v1.3.6):**
 - Complete file reading functions (`read_markdown`, `read_markdown_sections`, `read_markdown_blocks`) with full parameter support
 - **COPY TO markdown** with table, document, and blocks modes (including inline element support)
 - All 5 extraction functions (`md_extract_code_blocks`, `md_extract_links`, `md_extract_images`, `md_extract_table_rows`, `md_extract_tables_json`)
