@@ -477,3 +477,45 @@ SELECT duck_block_to_md({
 }) LIKE '%[Example](http://example.com)%';
 ----
 true
+
+# Pandoc table with multiple rows
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"},{"t":"AlignDefault"}],[0,0],[[{"t":"Plain","c":[{"t":"Str","c":"Name"}]}],[{"t":"Plain","c":[{"t":"Str","c":"Value"}]}]],[[[{"t":"Plain","c":[{"t":"Str","c":"Row1A"}]}],[{"t":"Plain","c":[{"t":"Str","c":"Row1B"}]}]],[[{"t":"Plain","c":[{"t":"Str","c":"Row2A"}]}],[{"t":"Plain","c":[{"t":"Str","c":"Row2B"}]}]],[[{"t":"Plain","c":[{"t":"Str","c":"Row3A"}]}],[{"t":"Plain","c":[{"t":"Str","c":"Row3B"}]}]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| Name | Value |%| Row1A | Row1B |%| Row2A | Row2B |%| Row3A | Row3B |%';
+----
+true
+
+# Pandoc table with nested formatting (bold inside italic)
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"}],[0],[[{"t":"Plain","c":[{"t":"Str","c":"Col"}]}]],[[[[{"t":"Plain","c":[{"t":"Emph","c":[{"t":"Str","c":"italic"},{"t":"Space"},{"t":"Strong","c":[{"t":"Str","c":"and bold"}]}]}]}]]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%*italic **and bold**%';
+----
+true
+
+# Pandoc table 3 columns
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"},{"t":"AlignDefault"},{"t":"AlignDefault"}],[0,0,0],[[{"t":"Plain","c":[{"t":"Str","c":"A"}]}],[{"t":"Plain","c":[{"t":"Str","c":"B"}]}],[{"t":"Plain","c":[{"t":"Str","c":"C"}]}]],[[[[{"t":"Plain","c":[{"t":"Str","c":"1"}]}],[{"t":"Plain","c":[{"t":"Str","c":"2"}]}],[{"t":"Plain","c":[{"t":"Str","c":"3"}]}]]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| A | B | C |%|---|---|---|%| 1 | 2 | 3 |%';
+----
+true
