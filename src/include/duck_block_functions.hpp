@@ -69,6 +69,15 @@ private:
 
 	// Helper to parse JSON table
 	static void ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows);
+
+	// Helper to extract plain text from Pandoc AST inline elements
+	static string ExtractPandocText(const string &content);
+
+	// Check if content looks like Pandoc table format
+	static bool IsPandocTableFormat(const string &content);
+
+	// Parse Pandoc table format into headers and rows
+	static void ParsePandocTable(const string &content, vector<string> &headers, vector<vector<string>> &rows);
 };
 
 } // namespace duckdb

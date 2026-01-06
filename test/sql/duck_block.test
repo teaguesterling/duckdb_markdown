@@ -388,3 +388,92 @@ query I
 SELECT element_order FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') WHERE element_order = 1 LIMIT 1;
 ----
 1
+
+# =============================================================================
+# Test: Pandoc table format rendering
+# =============================================================================
+
+# Simple Pandoc table with headers and one row
+# Structure: [caption, alignments, widths, headers, body]
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"},{"t":"AlignDefault"}],[0,0],[[{"t":"Plain","c":[{"t":"Str","c":"Col1"}]}],[{"t":"Plain","c":[{"t":"Str","c":"Col2"}]}]],[[[[{"t":"Plain","c":[{"t":"Str","c":"A"}]}],[{"t":"Plain","c":[{"t":"Str","c":"B"}]}]]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| Col1 | Col2 |%|---|---|%| A | B |%';
+----
+true
+
+# Pandoc table with spaces in cell text
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"}],[0],[[{"t":"Plain","c":[{"t":"Str","c":"Hello"},{"t":"Space"},{"t":"Str","c":"World"}]}]],[[[[{"t":"Plain","c":[{"t":"Str","c":"Test"},{"t":"Space"},{"t":"Str","c":"Value"}]}]]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%Hello World%Test Value%';
+----
+true
+
+# Standard JSON table format still works ({"headers": [...], "rows": [...]})
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["Name", "Age"], "rows": [["Alice", "30"], ["Bob", "25"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| Name | Age |%|---|---|%| Alice | 30 |%| Bob | 25 |%';
+----
+true
+
+# Pandoc table with rich formatting (bold, emphasis)
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"},{"t":"AlignDefault"}],[0,0],[[{"t":"Plain","c":[{"t":"Str","c":"Feature"}]}],[{"t":"Plain","c":[{"t":"Str","c":"Status"}]}]],[[[{"t":"Plain","c":[{"t":"Strong","c":[{"t":"Str","c":"Bold"}]}]}],[{"t":"Plain","c":[{"t":"Str","c":"Done"}]}]],[[{"t":"Plain","c":[{"t":"Str","c":"Text"},{"t":"Space"},{"t":"Str","c":"with"},{"t":"Space"},{"t":"Emph","c":[{"t":"Str","c":"emphasis"}]}]}],[{"t":"Plain","c":[{"t":"Str","c":"Pending"}]}]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| **Bold** |%| Text with *emphasis* |%';
+----
+true
+
+# Pandoc table with inline code
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"}],[0],[[{"t":"Plain","c":[{"t":"Str","c":"Col"}]}]],[[[[{"t":"Plain","c":[{"t":"Code","c":[["",[],""],"print()"]}]}]]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%`print()`%';
+----
+true
+
+# Pandoc table with link
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '[[],[{"t":"AlignDefault"}],[0],[[{"t":"Plain","c":[{"t":"Str","c":"Col"}]}]],[[[[{"t":"Plain","c":[{"t":"Link","c":[["",[],""],[ {"t":"Str","c":"Example"}],["http://example.com",""]]}]}]]]]]',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%[Example](http://example.com)%';
+----
+true
