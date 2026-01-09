@@ -1,0 +1,148 @@
+# name: test/sql/readme_integration.test
+# description: Integration test reading the actual README.md file (reproduces GitHub issue #13)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Test: read_markdown on README.md
+# =============================================================================
+
+# Basic read should return content
+query I
+SELECT count(*) > 0 FROM read_markdown('README.md');
+----
+true
+
+# Should have expected columns (content and metadata only)
+query II
+SELECT
+    content IS NOT NULL,
+    metadata IS NOT NULL
+FROM read_markdown('README.md');
+----
+true	true
+
+# Content should contain expected text
+query I
+SELECT content LIKE '%DuckDB Markdown Extension%' FROM read_markdown('README.md');
+----
+true
+
+# =============================================================================
+# Test: read_markdown_sections on README.md
+# =============================================================================
+
+# Should return multiple sections
+query I
+SELECT count(*) > 1 FROM read_markdown_sections('README.md');
+----
+true
+
+# First section (by level and start_line) should be the main heading
+query II
+SELECT title, level FROM read_markdown_sections('README.md') ORDER BY start_line LIMIT 1;
+----
+DuckDB Markdown Extension	1
+
+# Should have section hierarchy
+query I
+SELECT count(DISTINCT level) > 1 FROM read_markdown_sections('README.md');
+----
+true
+
+# Sections should have content
+query I
+SELECT bool_and(content IS NOT NULL) FROM read_markdown_sections('README.md');
+----
+true
+
+# Sections should have proper structure
+query I
+SELECT bool_and(section_id IS NOT NULL AND title IS NOT NULL) FROM read_markdown_sections('README.md');
+----
+true
+
+# =============================================================================
+# Test: read_markdown_blocks on README.md
+# =============================================================================
+
+# Should return multiple blocks
+query I
+SELECT count(*) > 5 FROM read_markdown_blocks('README.md');
+----
+true
+
+# Should have various block types
+query I
+SELECT count(DISTINCT element_type) >= 3 FROM read_markdown_blocks('README.md');
+----
+true
+
+# First block should be a heading
+query II
+SELECT element_type, content FROM read_markdown_blocks('README.md') ORDER BY element_order LIMIT 1;
+----
+heading	DuckDB Markdown Extension
+
+# Should include headings, paragraphs, and lists at minimum
+query I
+SELECT
+    bool_and(element_type IN ('heading', 'paragraph', 'list', 'code', 'blockquote', 'table', 'hr', 'html', 'frontmatter'))
+FROM read_markdown_blocks('README.md');
+----
+true
+
+# Block order should be sequential starting from 1
+query I
+SELECT min(element_order) FROM read_markdown_blocks('README.md');
+----
+1
+
+# All blocks should have valid kind
+query I
+SELECT bool_and(kind = 'block') FROM read_markdown_blocks('README.md');
+----
+true
+
+# =============================================================================
+# Test: Code blocks in README should have language attributes
+# =============================================================================
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('README.md') WHERE element_type = 'code' AND attributes['language'] IS NOT NULL;
+----
+true
+
+# =============================================================================
+# Test: Links are extractable from README
+# =============================================================================
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('README.md') WHERE content LIKE '%http%';
+----
+true
+
+# =============================================================================
+# Test: All three readers return consistent data about the same file
+# =============================================================================
+
+# The full content from read_markdown should contain text from sections
+query I
+SELECT
+    (SELECT content FROM read_markdown('README.md'))
+    LIKE '%' || (SELECT title FROM read_markdown_sections('README.md') ORDER BY start_line LIMIT 1) || '%';
+----
+true
+
+# Block count should be reasonable (not empty, not corrupted)
+query I
+SELECT count(*) BETWEEN 10 AND 1000 FROM read_markdown_blocks('README.md');
+----
+true
+
+# Section count should be reasonable
+query I
+SELECT count(*) BETWEEN 3 AND 100 FROM read_markdown_sections('README.md');
+----
+true

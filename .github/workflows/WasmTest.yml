@@ -1,0 +1,146 @@
+name: WASM Integration Test
+
+on:
+  workflow_run:
+    workflows: ["Main Extension Distribution Pipeline"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      duckdb_wasm_version:
+        description: 'duckdb-wasm npm version to test'
+        required: false
+        default: '1.32.0'
+
+jobs:
+  test-wasm-node:
+    name: Test WASM in Node.js
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['18', '20']
+        duckdb_wasm_version: ['1.32.0']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Create test directory
+        run: mkdir -p wasm-test
+
+      - name: Install dependencies
+        working-directory: wasm-test
+        run: |
+          npm init -y
+          npm install @duckdb/duckdb-wasm@${{ matrix.duckdb_wasm_version }} web-worker
+
+      - name: Create test script
+        run: |
+          cat > wasm-test/test.cjs << 'TESTSCRIPT'
+          const duckdb = require('@duckdb/duckdb-wasm');
+          const path = require('path');
+          const Worker = require('web-worker');
+          const fs = require('fs');
+
+          const DUCKDB_DIST = path.dirname(require.resolve('@duckdb/duckdb-wasm'));
+
+          (async () => {
+            console.log('=== DuckDB WASM Markdown Extension Test ===\n');
+            console.log('Node version:', process.version);
+            console.log('duckdb-wasm dist:', DUCKDB_DIST);
+
+            const BUNDLES = {
+              mvp: {
+                mainModule: path.resolve(DUCKDB_DIST, 'duckdb-mvp.wasm'),
+                mainWorker: path.resolve(DUCKDB_DIST, 'duckdb-node-mvp.worker.cjs'),
+              },
+              eh: {
+                mainModule: path.resolve(DUCKDB_DIST, 'duckdb-eh.wasm'),
+                mainWorker: path.resolve(DUCKDB_DIST, 'duckdb-node-eh.worker.cjs'),
+              },
+            };
+
+            try {
+              const bundle = await duckdb.selectBundle(BUNDLES);
+              console.log('Selected bundle:', path.basename(bundle.mainModule));
+
+              const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+              const worker = new Worker(bundle.mainWorker);
+              const db = new duckdb.AsyncDuckDB(logger, worker);
+              await db.instantiate(bundle.mainModule);
+
+              const conn = await db.connect();
+
+              const runQuery = async (desc, sql) => {
+                console.log(`\n>>> ${desc}`);
+                try {
+                  const result = await conn.query(sql);
+                  const rows = result.toArray();
+                  console.log(`✓ OK (${rows.length} rows)`);
+                  return { ok: true, rows };
+                } catch (err) {
+                  console.error(`✗ FAIL: ${err.message}`);
+                  return { ok: false, error: err.message };
+                }
+              };
+
+              // Check version
+              await runQuery('DuckDB Version', 'SELECT version() as v');
+
+              // Install extension
+              const install = await runQuery('Install extension',
+                "INSTALL markdown FROM community; LOAD markdown;");
+
+              if (!install.ok) {
+                console.error('\n❌ Extension install failed');
+                process.exit(1);
+              }
+
+              // Create test file
+              fs.writeFileSync('/tmp/test.md',
+                '# Hello\n\nParagraph.\n\n## Section\n\n- Item\n');
+
+              // Test the functions (issue #13 scenario)
+              const results = [
+                await runQuery('read_markdown',
+                  "SELECT content IS NOT NULL as ok FROM read_markdown('/tmp/test.md')"),
+                await runQuery('read_markdown_sections',
+                  "SELECT count(*) as n FROM read_markdown_sections('/tmp/test.md')"),
+                await runQuery('read_markdown_blocks',
+                  "SELECT element_type, content FROM read_markdown_blocks('/tmp/test.md') ORDER BY element_order"),
+              ];
+
+              await conn.close();
+              await db.terminate();
+              worker.terminate();
+
+              const failed = results.filter(r => !r.ok).length;
+              console.log(`\n=== ${failed ? '❌ FAILED' : '✅ PASSED'} ===`);
+              process.exit(failed ? 1 : 0);
+
+            } catch (err) {
+              console.error('Fatal:', err.message);
+              console.error(err.stack);
+              process.exit(1);
+            }
+          })();
+          TESTSCRIPT
+
+      - name: Run WASM tests
+        working-directory: wasm-test
+        run: node test.cjs
+        timeout-minutes: 5
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## WASM Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Node.js: ${{ matrix.node-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- duckdb-wasm: ${{ matrix.duckdb_wasm_version }}" >> $GITHUB_STEP_SUMMARY
