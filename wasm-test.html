@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB WASM Markdown Extension Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #fff; }
+        h2 { color: #60a5fa; margin-top: 30px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .test {
+            margin: 10px 0;
+            padding: 12px;
+            background: #16213e;
+            border-radius: 8px;
+            border-left: 4px solid #666;
+        }
+        .test.pass { border-left-color: #4ade80; }
+        .test.fail { border-left-color: #f87171; }
+        .test.running { border-left-color: #fbbf24; }
+        .test h3 { margin: 0 0 8px 0; font-size: 14px; }
+        .status { font-weight: bold; font-size: 12px; }
+        .pass .status { color: #4ade80; }
+        .fail .status { color: #f87171; }
+        .running .status { color: #fbbf24; }
+        pre {
+            background: #0f0f1a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+            margin: 8px 0 0 0;
+        }
+        .error { color: #f87171; }
+        #log {
+            background: #0f0f1a;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+            font-size: 11px;
+            margin-top: 20px;
+        }
+        .log-entry { margin: 2px 0; font-family: monospace; }
+        .log-info { color: #60a5fa; }
+        .log-warn { color: #fbbf24; }
+        .log-error { color: #f87171; }
+        .log-success { color: #4ade80; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+            margin-bottom: 20px;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #666; cursor: not-allowed; }
+        #summary {
+            font-size: 18px;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        #summary.pass { background: #166534; }
+        #summary.fail { background: #991b1b; }
+        .category { margin: 20px 0; }
+        .category-header {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <h1>DuckDB WASM Markdown Extension - Debug Test Suite</h1>
+    <p style="color: #94a3b8;">Tests scalar functions (in-memory) vs table functions (file-based) to isolate WASM issues</p>
+    <button id="runBtn" onclick="runTests()">Run All Tests</button>
+    <div id="tests"></div>
+    <div id="summary"></div>
+    <h3>Console Log</h3>
+    <div id="log"></div>
+
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
+
+        const testsDiv = document.getElementById('tests');
+        const logDiv = document.getElementById('log');
+        const summaryDiv = document.getElementById('summary');
+        const runBtn = document.getElementById('runBtn');
+
+        function log(msg, level = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${level}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(msg);
+        }
+
+        function createCategory(name) {
+            const div = document.createElement('div');
+            div.className = 'category';
+            div.innerHTML = `<div class="category-header">${name}</div>`;
+            testsDiv.appendChild(div);
+            return div;
+        }
+
+        function createTestDiv(category, name) {
+            const div = document.createElement('div');
+            div.className = 'test running';
+            div.innerHTML = `<h3>${name}</h3><span class="status">Running...</span><pre></pre>`;
+            category.appendChild(div);
+            return div;
+        }
+
+        function updateTest(div, passed, result) {
+            div.className = `test ${passed ? 'pass' : 'fail'}`;
+            div.querySelector('.status').textContent = passed ? 'PASSED' : 'FAILED';
+            div.querySelector('pre').textContent = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+        }
+
+        window.runTests = async function() {
+            testsDiv.innerHTML = '';
+            logDiv.innerHTML = '';
+            summaryDiv.innerHTML = '';
+            summaryDiv.className = '';
+            runBtn.disabled = true;
+
+            let passed = 0;
+            let failed = 0;
+
+            try {
+                log('Initializing DuckDB WASM...');
+
+                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+                log(`Selected bundle: ${bundle.mainModule}`);
+
+                const worker_url = URL.createObjectURL(
+                    new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+                );
+                const worker = new Worker(worker_url);
+                const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+                const db = new duckdb.AsyncDuckDB(logger, worker);
+
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                URL.revokeObjectURL(worker_url);
+                log('DuckDB instantiated successfully', 'success');
+
+                const conn = await db.connect();
+                log('Connected to database');
+
+                // === SETUP ===
+                const setupCat = createCategory('Setup');
+
+                // Version check
+                const tVersion = createTestDiv(setupCat, 'DuckDB Version');
+                try {
+                    const result = await conn.query('SELECT version() as version');
+                    const version = result.toArray()[0].version;
+                    updateTest(tVersion, true, `DuckDB ${version}`);
+                    log(`DuckDB version: ${version}`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tVersion, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`Version check failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // Install extension
+                const tInstall = createTestDiv(setupCat, 'Install & Load Extension');
+                try {
+                    await conn.query("INSTALL markdown FROM community;");
+                    await conn.query("LOAD markdown;");
+                    updateTest(tInstall, true, 'Extension installed and loaded');
+                    log('Markdown extension loaded', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tInstall, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`Extension install failed: ${e.message}`, 'error');
+                    failed++;
+                    throw new Error('Cannot continue without extension');
+                }
+
+                // === TEST DATA ===
+                // Simple test content (no headings)
+                const simpleMd = 'Hello world. This is a test.';
+
+                // Minimal structured content
+                const minimalMd = '# Hello\n\nParagraph.';
+
+                // Full test content
+                const fullMd = `# Hello World
+
+This is a test paragraph with some **bold** and *italic* text.
+
+## Section Two
+
+Here's a list:
+- Item 1
+- Item 2
+- Item 3
+
+### Code Example
+
+\`\`\`sql
+SELECT * FROM test;
+\`\`\`
+
+> A blockquote for testing
+`;
+
+                // Register test files
+                await db.registerFileText('simple.md', simpleMd);
+                await db.registerFileText('minimal.md', minimalMd);
+                await db.registerFileText('test.md', fullMd);
+                log('Registered test files');
+
+                // === SCALAR FUNCTIONS (in-memory) ===
+                const scalarCat = createCategory('Scalar Functions (in-memory string processing)');
+
+                // md_valid
+                const tValid = createTestDiv(scalarCat, 'md_valid()');
+                try {
+                    const result = await conn.query(`SELECT md_valid('# Test') as valid`);
+                    const valid = result.toArray()[0].valid;
+                    updateTest(tValid, true, `md_valid('# Test') = ${valid}`);
+                    log('md_valid: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tValid, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_valid failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_to_text
+                const tToText = createTestDiv(scalarCat, 'md_to_text()');
+                try {
+                    const result = await conn.query(`SELECT md_to_text('# Hello **World**') as txt`);
+                    const txt = result.toArray()[0].txt;
+                    updateTest(tToText, true, `md_to_text('# Hello **World**') = "${txt}"`);
+                    log('md_to_text: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tToText, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_to_text failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_stats
+                const tStats = createTestDiv(scalarCat, 'md_stats()');
+                try {
+                    const result = await conn.query(`SELECT md_stats('# Hello\\n\\nWorld') as stats`);
+                    const stats = result.toArray()[0].stats;
+                    // Handle BigInt serialization for display
+                    const statsStr = JSON.stringify(stats, (key, value) =>
+                        typeof value === 'bigint' ? value.toString() : value, 2);
+                    updateTest(tStats, true, statsStr);
+                    log('md_stats: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tStats, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_stats failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_metadata (empty)
+                const tMetaEmpty = createTestDiv(scalarCat, 'md_extract_metadata() - no frontmatter');
+                try {
+                    const result = await conn.query(`SELECT md_extract_metadata('# Hello') as meta`);
+                    const meta = result.toArray()[0].meta;
+                    updateTest(tMetaEmpty, true, `Empty map: ${JSON.stringify(meta)}`);
+                    log('md_extract_metadata (empty): OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tMetaEmpty, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_extract_metadata (empty) failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_sections - THE KEY SCALAR TEST
+                const tExtractSections = createTestDiv(scalarCat, 'md_extract_sections() - SCALAR VERSION');
+                try {
+                    const result = await conn.query(`SELECT md_extract_sections('# Hello\\n\\nPara.\\n\\n## World\\n\\nMore.') as sections`);
+                    const sections = result.toArray()[0].sections;
+                    updateTest(tExtractSections, true, sections);
+                    log('md_extract_sections: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtractSections, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_extract_sections FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_code_blocks
+                const tExtractCode = createTestDiv(scalarCat, 'md_extract_code_blocks()');
+                try {
+                    const result = await conn.query("SELECT md_extract_code_blocks('```sql\\nSELECT 1;\\n```') as blocks");
+                    const blocks = result.toArray()[0].blocks;
+                    updateTest(tExtractCode, true, blocks);
+                    log('md_extract_code_blocks: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtractCode, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_extract_code_blocks failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_links
+                const tExtractLinks = createTestDiv(scalarCat, 'md_extract_links()');
+                try {
+                    const result = await conn.query(`SELECT md_extract_links('[test](http://example.com)') as links`);
+                    const links = result.toArray()[0].links;
+                    updateTest(tExtractLinks, true, links);
+                    log('md_extract_links: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtractLinks, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`md_extract_links failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // === TABLE FUNCTIONS (file-based) ===
+                const tableCat = createCategory('Table Functions (file-based)');
+
+                // read_markdown - simple
+                const tReadSimple = createTestDiv(tableCat, 'read_markdown() - simple content');
+                try {
+                    const result = await conn.query("SELECT content FROM read_markdown('simple.md')");
+                    const content = result.toArray()[0].content;
+                    updateTest(tReadSimple, true, `Content: "${content}"`);
+                    log('read_markdown (simple): OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tReadSimple, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown (simple) failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown - full
+                const tReadFull = createTestDiv(tableCat, 'read_markdown() - full content');
+                try {
+                    const result = await conn.query("SELECT content FROM read_markdown('test.md')");
+                    const content = result.toArray()[0].content;
+                    updateTest(tReadFull, true, `Content length: ${content.length} chars\nFirst 100: ${content.substring(0, 100)}...`);
+                    log('read_markdown (full): OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tReadFull, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown (full) failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_sections - minimal
+                const tSectionsMin = createTestDiv(tableCat, 'read_markdown_sections() - minimal content');
+                try {
+                    const result = await conn.query("SELECT title, level FROM read_markdown_sections('minimal.md')");
+                    const rows = result.toArray();
+                    updateTest(tSectionsMin, true, rows);
+                    log(`read_markdown_sections (minimal): ${rows.length} row(s)`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tSectionsMin, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown_sections (minimal) FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_sections - full
+                const tSectionsFull = createTestDiv(tableCat, 'read_markdown_sections() - full content');
+                try {
+                    const result = await conn.query("SELECT title, level FROM read_markdown_sections('test.md') ORDER BY start_line");
+                    const rows = result.toArray();
+                    updateTest(tSectionsFull, true, rows);
+                    log(`read_markdown_sections (full): ${rows.length} row(s)`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tSectionsFull, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown_sections (full) FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_blocks - simple (no structure)
+                const tBlocksSimple = createTestDiv(tableCat, 'read_markdown_blocks() - simple content');
+                try {
+                    const result = await conn.query("SELECT element_type, content FROM read_markdown_blocks('simple.md')");
+                    const rows = result.toArray();
+                    updateTest(tBlocksSimple, true, rows);
+                    log(`read_markdown_blocks (simple): ${rows.length} row(s)`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tBlocksSimple, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown_blocks (simple) FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_blocks - minimal
+                const tBlocksMin = createTestDiv(tableCat, 'read_markdown_blocks() - minimal content');
+                try {
+                    const result = await conn.query("SELECT element_type, content, level FROM read_markdown_blocks('minimal.md') ORDER BY element_order");
+                    const rows = result.toArray();
+                    updateTest(tBlocksMin, true, rows);
+                    log(`read_markdown_blocks (minimal): ${rows.length} row(s)`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tBlocksMin, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown_blocks (minimal) FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_blocks - full
+                const tBlocksFull = createTestDiv(tableCat, 'read_markdown_blocks() - full content');
+                try {
+                    const result = await conn.query("SELECT element_type, content, level FROM read_markdown_blocks('test.md') ORDER BY element_order");
+                    const rows = result.toArray();
+                    updateTest(tBlocksFull, true, rows.map(r => ({ type: r.element_type, level: r.level, content: (r.content || '').substring(0, 50) })));
+                    log(`read_markdown_blocks (full): ${rows.length} row(s)`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tBlocksFull, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`read_markdown_blocks (full) FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // === HYBRID TEST: Read file then use scalar function ===
+                const hybridCat = createCategory('Hybrid Test: read_markdown() + scalar extraction');
+
+                const tHybrid = createTestDiv(hybridCat, 'SELECT md_extract_sections(content) FROM read_markdown()');
+                try {
+                    const result = await conn.query(`
+                        SELECT md_extract_sections(content) as sections
+                        FROM read_markdown('minimal.md')
+                    `);
+                    const sections = result.toArray()[0].sections;
+                    updateTest(tHybrid, true, sections);
+                    log('Hybrid (read + extract): OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tHybrid, false, e.message + '\n\n' + (e.stack || ''));
+                    log(`Hybrid test FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // Cleanup
+                await conn.close();
+                await db.terminate();
+                worker.terminate();
+                log('Cleanup complete');
+
+            } catch (e) {
+                log(`Fatal error: ${e.message}`, 'error');
+                console.error(e);
+                failed++;
+            }
+
+            // Summary
+            const total = passed + failed;
+            summaryDiv.className = failed === 0 ? 'pass' : 'fail';
+            summaryDiv.innerHTML = failed === 0
+                ? `All ${total} tests passed!`
+                : `${failed} of ${total} tests failed`;
+
+            runBtn.disabled = false;
+        };
+
+        // Auto-run on load
+        runTests();
+    </script>
+</body>
+</html>
