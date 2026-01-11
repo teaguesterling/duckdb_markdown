@@ -576,7 +576,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_markdown_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
 	read_markdown_func.named_parameters["flavor"] = LogicalType(LogicalTypeId::VARCHAR);
 	read_markdown_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_markdown_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN);  // Alias for include_filepath
+	read_markdown_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 	read_markdown_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
 
 	loader.RegisterFunction(read_markdown_func);
@@ -596,7 +596,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_sections_func.named_parameters["max_level"] = LogicalType(LogicalTypeId::INTEGER);
 	read_sections_func.named_parameters["include_empty_sections"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_sections_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN);  // Alias for include_filepath
+	read_sections_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 	read_sections_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
 
 	// Content mode options (Issue #8)
@@ -615,7 +615,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_blocks_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_blocks_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
 	read_blocks_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_blocks_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN);  // Alias for include_filepath
+	read_blocks_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 
 	loader.RegisterFunction(read_blocks_func);
 }

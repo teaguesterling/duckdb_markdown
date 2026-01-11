@@ -169,11 +169,21 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 		for (size_t i = 0; i < text.size(); i++) {
 			if (text[i] == '\\' && i + 1 < text.size()) {
 				char next = text[i + 1];
-				if (next == 'n') { unescaped += '\n'; i++; }
-				else if (next == 't') { unescaped += '\t'; i++; }
-				else if (next == '"') { unescaped += '"'; i++; }
-				else if (next == '\\') { unescaped += '\\'; i++; }
-				else { unescaped += text[i]; }
+				if (next == 'n') {
+					unescaped += '\n';
+					i++;
+				} else if (next == 't') {
+					unescaped += '\t';
+					i++;
+				} else if (next == '"') {
+					unescaped += '"';
+					i++;
+				} else if (next == '\\') {
+					unescaped += '\\';
+					i++;
+				} else {
+					unescaped += text[i];
+				}
 			} else {
 				unescaped += text[i];
 			}
@@ -203,11 +213,14 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 				in_string = !in_string;
 				continue;
 			}
-			if (in_string) continue;
-			if (c == '[') depth++;
+			if (in_string)
+				continue;
+			if (c == '[')
+				depth++;
 			else if (c == ']') {
 				depth--;
-				if (depth == 0) return i;
+				if (depth == 0)
+					return i;
 			}
 		}
 		return string::npos;
@@ -256,7 +269,8 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 			match_type = 7;
 		}
 
-		if (match_type == 0) break;
+		if (match_type == 0)
+			break;
 
 		if (match_type == 1) {
 			// Str: {"t":"Str","c":"text"}
@@ -380,14 +394,13 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 // Check if content looks like a Pandoc table format
 bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
 	// Pandoc tables start with [[ and contain alignment specs like "t":"Align
-	return content.size() > 2 &&
-	       content[0] == '[' &&
-	       content[1] == '[' &&
+	return content.size() > 2 && content[0] == '[' && content[1] == '[' &&
 	       content.find("\"t\":\"Align") != string::npos;
 }
 
 // Parse Pandoc table format into headers and rows
-void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers, vector<vector<string>> &rows) {
+void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers,
+                                          vector<vector<string>> &rows) {
 	// Pandoc table structure: [caption, alignments, widths, tableHead, tableBodies]
 	// We need to find the tableHead and tableBodies sections and extract cell text
 
@@ -425,7 +438,8 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 			// Skip strings
 			i++;
 			while (i < content.size() && content[i] != '"') {
-				if (content[i] == '\\') i++;
+				if (content[i] == '\\')
+					i++;
 				i++;
 			}
 		}
@@ -443,12 +457,14 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 			size_t para_pos = head_section.find("\"t\":\"Para\"", cell_pos);
 
 			size_t block_pos = string::npos;
-			if (plain_pos != string::npos) block_pos = plain_pos;
+			if (plain_pos != string::npos)
+				block_pos = plain_pos;
 			if (para_pos != string::npos && (block_pos == string::npos || para_pos < block_pos)) {
 				block_pos = para_pos;
 			}
 
-			if (block_pos == string::npos) break;
+			if (block_pos == string::npos)
+				break;
 
 			// Find the "c" array for this block
 			size_t c_pos = head_section.find("\"c\":", block_pos);
@@ -459,12 +475,15 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 					int depth = 1;
 					size_t arr_end = arr_start + 1;
 					while (arr_end < head_section.size() && depth > 0) {
-						if (head_section[arr_end] == '[') depth++;
-						else if (head_section[arr_end] == ']') depth--;
+						if (head_section[arr_end] == '[')
+							depth++;
+						else if (head_section[arr_end] == ']')
+							depth--;
 						else if (head_section[arr_end] == '"') {
 							arr_end++;
 							while (arr_end < head_section.size() && head_section[arr_end] != '"') {
-								if (head_section[arr_end] == '\\') arr_end++;
+								if (head_section[arr_end] == '\\')
+									arr_end++;
 								arr_end++;
 							}
 						}
@@ -499,12 +518,14 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 			size_t para_pos = body_section.find("\"t\":\"Para\"", cell_pos);
 
 			size_t block_pos = string::npos;
-			if (plain_pos != string::npos) block_pos = plain_pos;
+			if (plain_pos != string::npos)
+				block_pos = plain_pos;
 			if (para_pos != string::npos && (block_pos == string::npos || para_pos < block_pos)) {
 				block_pos = para_pos;
 			}
 
-			if (block_pos == string::npos) break;
+			if (block_pos == string::npos)
+				break;
 
 			// Check if we've crossed a row boundary (large gap or specific pattern)
 			// Row boundaries in Pandoc are marked by ]],[[ patterns
@@ -525,12 +546,15 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 					int depth = 1;
 					size_t arr_end = arr_start + 1;
 					while (arr_end < body_section.size() && depth > 0) {
-						if (body_section[arr_end] == '[') depth++;
-						else if (body_section[arr_end] == ']') depth--;
+						if (body_section[arr_end] == '[')
+							depth++;
+						else if (body_section[arr_end] == ']')
+							depth--;
 						else if (body_section[arr_end] == '"') {
 							arr_end++;
 							while (arr_end < body_section.size() && body_section[arr_end] != '"') {
-								if (body_section[arr_end] == '\\') arr_end++;
+								if (body_section[arr_end] == '\\')
+									arr_end++;
 								arr_end++;
 							}
 						}
@@ -567,7 +591,7 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 //===--------------------------------------------------------------------===//
 
 string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_type, const string &content,
-                                                          const Value &attributes) {
+                                                         const Value &attributes) {
 	if (element_type == "link") {
 		// [text](href "title")
 		string href = GetAttribute(attributes, "href");
@@ -668,8 +692,9 @@ string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_t
 // RenderBlockElementToMarkdown (helper for block elements)
 //===--------------------------------------------------------------------===//
 
-string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content, int32_t level,
-                                                        const string &encoding, const Value &attributes) {
+string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content,
+                                                        int32_t level, const string &encoding,
+                                                        const Value &attributes) {
 	string result;
 
 	if (element_type == "frontmatter" || element_type == "metadata") {
@@ -690,8 +715,10 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 			heading_level = level;
 		}
 		// Clamp to valid range
-		if (heading_level < 1) heading_level = 1;
-		if (heading_level > 6) heading_level = 6;
+		if (heading_level < 1)
+			heading_level = 1;
+		if (heading_level > 6)
+			heading_level = 6;
 		result = string(heading_level, '#') + " " + content + "\n\n";
 	} else if (element_type == "paragraph") {
 		// Plain paragraph
@@ -830,8 +857,8 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 //===--------------------------------------------------------------------===//
 
 string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const string &element_type,
-                                                      const string &content, int32_t level,
-                                                      const string &encoding, const Value &attributes) {
+                                                     const string &content, int32_t level, const string &encoding,
+                                                     const Value &attributes) {
 	if (kind == "block") {
 		// Delegate to block rendering
 		return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
@@ -842,9 +869,8 @@ string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const s
 		// Unknown kind - try to guess based on element_type
 		// Block types
 		if (element_type == "heading" || element_type == "paragraph" || element_type == "blockquote" ||
-		    element_type == "list" || element_type == "table" || element_type == "hr" ||
-		    element_type == "metadata" || element_type == "frontmatter" || element_type == "code" ||
-		    element_type == "image") {
+		    element_type == "list" || element_type == "table" || element_type == "hr" || element_type == "metadata" ||
+		    element_type == "frontmatter" || element_type == "code" || element_type == "image") {
 			return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
 		}
 		// Assume inline otherwise
@@ -952,23 +978,22 @@ void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader)
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
 	// duck_blocks_to_md(blocks LIST) -> MARKDOWN
-	ScalarFunction duck_blocks_to_md(
-	    "duck_blocks_to_md", {duck_block_list_type}, markdown_type,
-	    [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &blocks_vector = args.data[0];
+	ScalarFunction duck_blocks_to_md("duck_blocks_to_md", {duck_block_list_type}, markdown_type,
+	                                 [](DataChunk &args, ExpressionState &state, Vector &result) {
+		                                 auto &blocks_vector = args.data[0];
 
-		    for (idx_t i = 0; i < args.size(); i++) {
-			    auto blocks_value = blocks_vector.GetValue(i);
+		                                 for (idx_t i = 0; i < args.size(); i++) {
+			                                 auto blocks_value = blocks_vector.GetValue(i);
 
-			    if (blocks_value.IsNull()) {
-				    result.SetValue(i, Value());
-				    continue;
-			    }
+			                                 if (blocks_value.IsNull()) {
+				                                 result.SetValue(i, Value());
+				                                 continue;
+			                                 }
 
-			    string markdown = RenderDuckBlocksToMarkdown(blocks_value);
-			    result.SetValue(i, Value(markdown));
-		    }
-	    });
+			                                 string markdown = RenderDuckBlocksToMarkdown(blocks_value);
+			                                 result.SetValue(i, Value(markdown));
+		                                 }
+	                                 });
 
 	loader.RegisterFunction(duck_blocks_to_md);
 }
@@ -1073,8 +1098,10 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 						    heading_level = level;
 					    }
 					    // Clamp to valid range
-					    if (heading_level < 1) heading_level = 1;
-					    if (heading_level > 6) heading_level = 6;
+					    if (heading_level < 1)
+						    heading_level = 1;
+					    if (heading_level > 6)
+						    heading_level = 6;
 
 					    // Update section path for new heading
 					    while (section_path_parts.size() >= (size_t)heading_level) {

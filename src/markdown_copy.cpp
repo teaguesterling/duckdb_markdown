@@ -575,7 +575,7 @@ static string GetAttribute(const Value &attributes, const string &key) {
 }
 
 string MarkdownCopyFunction::RenderInlineElement(const string &element_type, const string &content,
-                                                  const Value &attributes, const WriteMarkdownBindData &bind_data) {
+                                                 const Value &attributes, const WriteMarkdownBindData &bind_data) {
 	// Inline elements render WITHOUT trailing newlines
 	if (element_type == "link") {
 		// [text](href "title")
@@ -656,8 +656,8 @@ string MarkdownCopyFunction::RenderInlineElement(const string &element_type, con
 }
 
 string MarkdownCopyFunction::RenderBlockElement(const string &element_type, const string &content, int32_t level,
-                                                 const string &encoding, const Value &attributes,
-                                                 const WriteMarkdownBindData &bind_data) {
+                                                const string &encoding, const Value &attributes,
+                                                const WriteMarkdownBindData &bind_data) {
 	string result;
 
 	if (element_type == "frontmatter" || element_type == "metadata") {
@@ -897,8 +897,8 @@ string MarkdownCopyFunction::RenderBlockElement(const string &element_type, cons
 }
 
 string MarkdownCopyFunction::RenderElement(const string &kind, const string &element_type, const string &content,
-                                            int32_t level, const string &encoding, const Value &attributes,
-                                            const WriteMarkdownBindData &bind_data) {
+                                           int32_t level, const string &encoding, const Value &attributes,
+                                           const WriteMarkdownBindData &bind_data) {
 	if (kind == "inline") {
 		// Inline elements render without trailing newlines
 		return RenderInlineElement(element_type, content, attributes, bind_data);
@@ -909,10 +909,9 @@ string MarkdownCopyFunction::RenderElement(const string &kind, const string &ele
 		// Unknown kind - try to guess based on element_type
 		// Block types
 		if (element_type == "heading" || element_type == "paragraph" || element_type == "blockquote" ||
-		    element_type == "list" || element_type == "table" || element_type == "hr" ||
-		    element_type == "metadata" || element_type == "frontmatter" || element_type == "code" ||
-		    element_type == "image" || element_type == "raw" || element_type == "html" ||
-		    element_type == "md:html_block") {
+		    element_type == "list" || element_type == "table" || element_type == "hr" || element_type == "metadata" ||
+		    element_type == "frontmatter" || element_type == "code" || element_type == "image" ||
+		    element_type == "raw" || element_type == "html" || element_type == "md:html_block") {
 			return RenderBlockElement(element_type, content, level, encoding, attributes, bind_data);
 		}
 		// Assume inline otherwise

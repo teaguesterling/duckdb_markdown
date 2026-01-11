@@ -25,8 +25,8 @@ LogicalType MarkdownTypes::DuckBlockType() {
 	//        encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)
 	// Note: This type is defined by duck_block_utils extension; we just use the shape
 	child_list_t<LogicalType> struct_children;
-	struct_children.push_back(make_pair("kind", LogicalType::VARCHAR));           // 'block' or 'inline'
-	struct_children.push_back(make_pair("element_type", LogicalType::VARCHAR));   // 'heading', 'bold', etc.
+	struct_children.push_back(make_pair("kind", LogicalType::VARCHAR));         // 'block' or 'inline'
+	struct_children.push_back(make_pair("element_type", LogicalType::VARCHAR)); // 'heading', 'bold', etc.
 	struct_children.push_back(make_pair("content", LogicalType::VARCHAR));
 	struct_children.push_back(make_pair("level", LogicalType::INTEGER));
 	struct_children.push_back(make_pair("encoding", LogicalType::VARCHAR));

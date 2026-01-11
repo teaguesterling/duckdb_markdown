@@ -101,11 +101,13 @@ std::string MarkdownToText(const std::string &markdown_str) {
 MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 	MarkdownMetadata metadata;
 
-	// Check for YAML frontmatter (use default flags, multiline not supported on Windows)
-	std::regex frontmatter_regex(R"(^---\n([\s\S]*?)\n---)");
+	// Check for YAML frontmatter - handle both LF and CRLF line endings
+	// Use match.position() == 0 to ensure we only match at the start of the string
+	// (MSVC regex has issues with ^ anchor not working correctly)
+	std::regex frontmatter_regex(R"(^---\r?\n([\s\S]*?)\r?\n---)");
 	std::smatch match;
 
-	if (std::regex_search(markdown_str, match, frontmatter_regex)) {
+	if (std::regex_search(markdown_str, match, frontmatter_regex) && match.position() == 0) {
 		std::string yaml_content = match[1].str();
 
 		// Basic YAML parsing for common fields (placeholder)
@@ -135,11 +137,13 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 }
 
 std::string ExtractRawFrontmatter(const std::string &markdown_str) {
-	// Check for YAML frontmatter
-	std::regex frontmatter_regex(R"(^---\n([\s\S]*?)\n---)");
+	// Check for YAML frontmatter - handle both LF and CRLF line endings
+	// Use match.position() == 0 to ensure we only match at the start of the string
+	// (MSVC regex has issues with ^ anchor not working correctly)
+	std::regex frontmatter_regex(R"(^---\r?\n([\s\S]*?)\r?\n---)");
 	std::smatch match;
 
-	if (std::regex_search(markdown_str, match, frontmatter_regex)) {
+	if (std::regex_search(markdown_str, match, frontmatter_regex) && match.position() == 0) {
 		return match[1].str();
 	}
 
@@ -147,11 +151,19 @@ std::string ExtractRawFrontmatter(const std::string &markdown_str) {
 }
 
 std::string StripFrontmatter(const std::string &markdown_str) {
-	// Match frontmatter block including trailing newlines
-	std::regex frontmatter_regex(R"(^---\n[\s\S]*?\n---\n*)");
+	// Match frontmatter block including trailing newlines - handle both LF and CRLF
+	// Use match.position() == 0 to ensure we only match at the start of the string
+	// (MSVC regex has issues with ^ anchor not working correctly)
+	std::regex frontmatter_regex(R"(^---\r?\n[\s\S]*?\r?\n---\r?\n*)");
+	std::smatch match;
 
-	// Remove frontmatter and return the rest
-	return std::regex_replace(markdown_str, frontmatter_regex, "");
+	// Only strip if frontmatter is at the very start of the string
+	if (std::regex_search(markdown_str, match, frontmatter_regex) && match.position() == 0) {
+		return markdown_str.substr(match.length());
+	}
+
+	// No frontmatter found at start, return original
+	return markdown_str;
 }
 
 Value MetadataToMap(const MarkdownMetadata &metadata) {

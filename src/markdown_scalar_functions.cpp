@@ -18,26 +18,26 @@ void MarkdownFunctions::Register(ExtensionLoader &loader) {
 void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 	// md_valid function - validates markdown content
 	// Only register VARCHAR version since md type is a VARCHAR alias and will auto-cast
-	ScalarFunction md_valid_fun(
-	    "md_valid", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
-	    [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &input_vector = args.data[0];
+	ScalarFunction md_valid_fun("md_valid", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
+	                            [](DataChunk &args, ExpressionState &state, Vector &result) {
+		                            auto &input_vector = args.data[0];
 
-		    UnaryExecutor::ExecuteWithNulls<string_t, bool>(
-		        input_vector, result, args.size(), [&](string_t md_str, ValidityMask &mask, idx_t idx) {
-			        if (!mask.RowIsValid(idx)) {
-				        return false;
-			        }
+		                            UnaryExecutor::ExecuteWithNulls<string_t, bool>(
+		                                input_vector, result, args.size(),
+		                                [&](string_t md_str, ValidityMask &mask, idx_t idx) {
+			                                if (!mask.RowIsValid(idx)) {
+				                                return false;
+			                                }
 
-			        try {
-				        // Basic validation - check for basic Markdown structure
-				        const std::string content = md_str.GetString();
-				        return !content.empty();
-			        } catch (...) {
-				        return false;
-			        }
-		        });
-	    });
+			                                try {
+				                                // Basic validation - check for basic Markdown structure
+				                                const std::string content = md_str.GetString();
+				                                return !content.empty();
+			                                } catch (...) {
+				                                return false;
+			                                }
+		                                });
+	                            });
 
 	loader.RegisterFunction(md_valid_fun);
 }

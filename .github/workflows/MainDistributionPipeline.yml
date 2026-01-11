@@ -33,11 +33,11 @@ jobs:
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
-#  code-quality-check:
-#    name: Code Quality Check
-#    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
-#    with:
-#      duckdb_version: v1.4.1
-#      ci_tools_version: main
-#      extension_name: markdown
-#      format_checks: 'format;tidy'
+  code-quality-check:
+    name: Code Quality Check
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
+    with:
+      duckdb_version: v1.4.3
+      ci_tools_version: main
+      extension_name: markdown
+      format_checks: 'format'

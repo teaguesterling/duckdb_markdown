@@ -155,7 +155,8 @@ private:
 	//! Render a single element from flattened duck_block representation
 	//! Dispatches to RenderBlockElement or RenderInlineElement based on kind
 	static string RenderElement(const string &kind, const string &element_type, const string &content, int32_t level,
-	                            const string &encoding, const Value &attributes, const WriteMarkdownBindData &bind_data);
+	                            const string &encoding, const Value &attributes,
+	                            const WriteMarkdownBindData &bind_data);
 
 	//! Render a block element (with trailing newlines)
 	static string RenderBlockElement(const string &element_type, const string &content, int32_t level,
