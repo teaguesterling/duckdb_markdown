@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDB WASM Markdown Extension - Community Test v1.3.9 (DuckDB v1.4.3)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            max-width: 1100px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #fff; }
+        h2 { color: #60a5fa; margin-top: 30px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .test {
+            margin: 10px 0;
+            padding: 12px;
+            background: #16213e;
+            border-radius: 8px;
+            border-left: 4px solid #666;
+        }
+        .test.pass { border-left-color: #4ade80; }
+        .test.fail { border-left-color: #f87171; }
+        .test.running { border-left-color: #fbbf24; }
+        .test h3 { margin: 0 0 8px 0; font-size: 14px; }
+        .status { font-weight: bold; font-size: 12px; }
+        .pass .status { color: #4ade80; }
+        .fail .status { color: #f87171; }
+        .running .status { color: #fbbf24; }
+        pre {
+            background: #0f0f1a;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+            margin: 8px 0 0 0;
+        }
+        #log {
+            background: #0f0f1a;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+            font-size: 11px;
+            margin-top: 20px;
+        }
+        .log-entry { margin: 2px 0; font-family: monospace; }
+        .log-info { color: #60a5fa; }
+        .log-warn { color: #fbbf24; }
+        .log-error { color: #f87171; }
+        .log-success { color: #4ade80; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+            margin-bottom: 20px;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #666; cursor: not-allowed; }
+        #summary {
+            font-size: 18px;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        #summary.pass { background: #166534; }
+        #summary.fail { background: #991b1b; }
+        .category { margin: 20px 0; }
+        .category-header {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .community-banner {
+            background: #059669;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>DuckDB WASM Markdown Extension - Community Test</h1>
+    <div class="community-banner">
+        Testing v1.3.9 from community-extensions with DuckDB v1.4.3 (WASM + Windows fixes)
+    </div>
+    <p style="color: #94a3b8;">Tests cmark-gfm functions to verify WASM fix works</p>
+    <button id="runBtn" onclick="runTests()">Run All Tests</button>
+    <div id="tests"></div>
+    <div id="summary"></div>
+    <h3>Console Log</h3>
+    <div id="log"></div>
+
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
+
+        const testsDiv = document.getElementById('tests');
+        const logDiv = document.getElementById('log');
+        const summaryDiv = document.getElementById('summary');
+        const runBtn = document.getElementById('runBtn');
+
+        function log(msg, level = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${level}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(msg);
+        }
+
+        function createCategory(name) {
+            const div = document.createElement('div');
+            div.className = 'category';
+            div.innerHTML = `<div class="category-header">${name}</div>`;
+            testsDiv.appendChild(div);
+            return div;
+        }
+
+        function createTestDiv(category, name) {
+            const div = document.createElement('div');
+            div.className = 'test running';
+            div.innerHTML = `<h3>${name}</h3><span class="status">Running...</span><pre></pre>`;
+            category.appendChild(div);
+            return div;
+        }
+
+        function updateTest(div, passed, result) {
+            div.className = `test ${passed ? 'pass' : 'fail'}`;
+            div.querySelector('.status').textContent = passed ? 'PASSED' : 'FAILED';
+            div.querySelector('pre').textContent = typeof result === 'string' ? result : JSON.stringify(result, (key, value) =>
+                typeof value === 'bigint' ? value.toString() : value, 2);
+        }
+
+        window.runTests = async function() {
+            testsDiv.innerHTML = '';
+            logDiv.innerHTML = '';
+            summaryDiv.innerHTML = '';
+            summaryDiv.className = '';
+            runBtn.disabled = true;
+
+            let passed = 0;
+            let failed = 0;
+
+            try {
+                log('Initializing DuckDB WASM...');
+
+                const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+                const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+                log(`Selected bundle: ${bundle.mainModule}`);
+
+                const worker_url = URL.createObjectURL(
+                    new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+                );
+                const worker = new Worker(worker_url);
+                const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+                const db = new duckdb.AsyncDuckDB(logger, worker);
+
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                URL.revokeObjectURL(worker_url);
+                log('DuckDB instantiated successfully', 'success');
+
+                const conn = await db.connect();
+                log('Connected to database');
+
+                // === SETUP ===
+                const setupCat = createCategory('Setup');
+
+                // Version check
+                const tVersion = createTestDiv(setupCat, 'DuckDB Version');
+                try {
+                    const result = await conn.query('SELECT version() as version');
+                    const version = result.toArray()[0].version;
+                    updateTest(tVersion, true, `DuckDB ${version}`);
+                    log(`DuckDB version: ${version}`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tVersion, false, e.message);
+                    log(`Version check failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // Load from community
+                const tInstall = createTestDiv(setupCat, 'Load from Community Extensions');
+                try {
+                    await conn.query("FORCE INSTALL markdown FROM community;");
+                    log('Extension installed from community');
+                    await conn.query("LOAD markdown;");
+
+                    updateTest(tInstall, true, 'Community extension loaded!');
+                    log('Community markdown extension loaded!', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tInstall, false, e.message);
+                    log(`Extension load failed: ${e.message}`, 'error');
+                    failed++;
+                    throw new Error('Cannot continue without extension');
+                }
+
+                // Check extension version
+                const tExtVersion = createTestDiv(setupCat, 'Extension Version');
+                try {
+                    const result = await conn.query("SELECT extension_name, extension_version, installed FROM duckdb_extensions() WHERE extension_name = 'markdown'");
+                    const row = result.toArray()[0];
+                    const version = row.extension_version;
+                    updateTest(tExtVersion, true, `markdown v${version} (installed: ${row.installed})`);
+                    log(`Extension version: ${version}`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtVersion, false, e.message);
+                    log(`Version check failed: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // === TEST DATA ===
+                const simpleMd = 'Hello world. This is a test.';
+                const minimalMd = '# Hello\\n\\nParagraph.';
+                const fullMd = `# Hello World
+
+This is a test paragraph with some **bold** and *italic* text.
+
+## Section Two
+
+Here's a list:
+- Item 1
+- Item 2
+
+### Code Example
+
+\`\`\`sql
+SELECT * FROM test;
+\`\`\`
+`;
+
+                await db.registerFileText('simple.md', simpleMd);
+                await db.registerFileText('minimal.md', minimalMd);
+                await db.registerFileText('test.md', fullMd);
+                log('Registered test markdown files');
+
+                // === KEY TESTS: Functions that use cmark-gfm ===
+                const cmarkCat = createCategory('CMARK-GFM Functions (these failed before v1.3.8 fix)');
+
+                // md_to_text - uses cmark_render_plaintext
+                const tToText = createTestDiv(cmarkCat, 'md_to_text() - uses cmark');
+                try {
+                    const result = await conn.query(`SELECT md_to_text('# Hello **World**') as txt`);
+                    const txt = result.toArray()[0].txt;
+                    updateTest(tToText, true, `Result: "${txt}"`);
+                    log('md_to_text: OK - CMARK WORKS!', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tToText, false, e.message);
+                    log(`md_to_text FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_sections - uses cmark parser and iterator
+                const tExtractSections = createTestDiv(cmarkCat, 'md_extract_sections() - uses cmark');
+                try {
+                    const result = await conn.query(`SELECT md_extract_sections('# Hello\\n\\nPara.\\n\\n## World') as sections`);
+                    const sections = result.toArray()[0].sections;
+                    updateTest(tExtractSections, true, sections);
+                    log('md_extract_sections: OK - CMARK WORKS!', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtractSections, false, e.message);
+                    log(`md_extract_sections FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_code_blocks - uses cmark
+                const tExtractCode = createTestDiv(cmarkCat, 'md_extract_code_blocks() - uses cmark');
+                try {
+                    const result = await conn.query("SELECT md_extract_code_blocks('```sql\\nSELECT 1;\\n```') as blocks");
+                    const blocks = result.toArray()[0].blocks;
+                    updateTest(tExtractCode, true, blocks);
+                    log('md_extract_code_blocks: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtractCode, false, e.message);
+                    log(`md_extract_code_blocks FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // md_extract_links - uses cmark
+                const tExtractLinks = createTestDiv(cmarkCat, 'md_extract_links() - uses cmark');
+                try {
+                    const result = await conn.query(`SELECT md_extract_links('[test](http://example.com)') as links`);
+                    const links = result.toArray()[0].links;
+                    updateTest(tExtractLinks, true, links);
+                    log('md_extract_links: OK', 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tExtractLinks, false, e.message);
+                    log(`md_extract_links FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_sections - table function using cmark
+                const tSections = createTestDiv(cmarkCat, 'read_markdown_sections() - uses cmark');
+                try {
+                    const result = await conn.query("SELECT title, level FROM read_markdown_sections('test.md') ORDER BY start_line");
+                    const rows = result.toArray();
+                    updateTest(tSections, true, rows);
+                    log(`read_markdown_sections: ${rows.length} rows - CMARK WORKS!`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tSections, false, e.message);
+                    log(`read_markdown_sections FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // read_markdown_blocks - table function using cmark
+                const tBlocks = createTestDiv(cmarkCat, 'read_markdown_blocks() - uses cmark');
+                try {
+                    const result = await conn.query("SELECT element_type, content FROM read_markdown_blocks('test.md') ORDER BY element_order");
+                    const rows = result.toArray();
+                    updateTest(tBlocks, true, rows.slice(0, 5).map(r => ({ type: r.element_type, content: (r.content || '').substring(0, 40) })));
+                    log(`read_markdown_blocks: ${rows.length} rows - CMARK WORKS!`, 'success');
+                    passed++;
+                } catch (e) {
+                    updateTest(tBlocks, false, e.message);
+                    log(`read_markdown_blocks FAILED: ${e.message}`, 'error');
+                    failed++;
+                }
+
+                // Cleanup
+                await conn.close();
+                await db.terminate();
+                worker.terminate();
+                log('Cleanup complete');
+
+            } catch (e) {
+                log(`Fatal error: ${e.message}`, 'error');
+                console.error(e);
+                failed++;
+            }
+
+            // Summary
+            const total = passed + failed;
+            summaryDiv.className = failed === 0 ? 'pass' : 'fail';
+            summaryDiv.innerHTML = failed === 0
+                ? `All ${total} tests passed! WASM FIX VERIFIED!`
+                : `${failed} of ${total} tests failed`;
+
+            runBtn.disabled = false;
+        };
+
+        // Auto-run on load
+        runTests();
+    </script>
+</body>
+</html>
