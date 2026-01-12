@@ -7,7 +7,6 @@ message(STATUS "extension_config.cmake: EMSCRIPTEN=${EMSCRIPTEN}, CMAKE_SYSTEM_N
 if(EMSCRIPTEN)
     set(MARKDOWN_WASM_LINKED_LIBS "-sEMULATE_FUNCTION_POINTER_CASTS=1")
     message(STATUS "WASM build: markdown extension will use EMULATE_FUNCTION_POINTER_CASTS for cmark-gfm")
-    message(STATUS "MARKDOWN_WASM_LINKED_LIBS=${MARKDOWN_WASM_LINKED_LIBS}")
 else()
     set(MARKDOWN_WASM_LINKED_LIBS "")
     message(STATUS "Non-WASM build: EMSCRIPTEN not defined")
@@ -20,8 +19,13 @@ duckdb_extension_load(markdown
     LINKED_LIBS "${MARKDOWN_WASM_LINKED_LIBS}"
 )
 
-# Debug: verify the variable was set correctly after duckdb_extension_load
-message(STATUS "After duckdb_extension_load: DUCKDB_EXTENSION_MARKDOWN_LINKED_LIBS=${DUCKDB_EXTENSION_MARKDOWN_LINKED_LIBS}")
+# For WASM: Set as CACHE variable AFTER duckdb_extension_load to ensure it's visible
+# in child scopes (add_subdirectory) where build_loadable_extension_directory reads it.
+# Normal scope variables set by duckdb_extension_load are not visible across add_subdirectory boundaries.
+if(EMSCRIPTEN)
+    set(DUCKDB_EXTENSION_MARKDOWN_LINKED_LIBS "${MARKDOWN_WASM_LINKED_LIBS}" CACHE STRING "Linked libs for markdown extension" FORCE)
+    message(STATUS "Set CACHE variable DUCKDB_EXTENSION_MARKDOWN_LINKED_LIBS=${DUCKDB_EXTENSION_MARKDOWN_LINKED_LIBS}")
+endif()
 
 # Any extra extensions that should be built
 # e.g.: duckdb_extension_load(json)
