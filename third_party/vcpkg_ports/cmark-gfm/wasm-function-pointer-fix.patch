@@ -1,0 +1,56 @@
+diff --git a/src/plugin.c b/src/plugin.c
+index 3992fe1..6011a33 100644
+--- a/src/plugin.c
++++ b/src/plugin.c
+@@ -4,6 +4,14 @@
+
+ extern cmark_mem CMARK_DEFAULT_MEM_ALLOCATOR;
+
++// Wrapper function to avoid function pointer cast that breaks WASM.
++// cmark_free_func expects (cmark_mem*, void*) but cmark_syntax_extension_free
++// has (cmark_mem*, cmark_syntax_extension*). In WASM, these are different
++// function table signatures, causing "indirect call signature mismatch".
++static void syntax_extension_free_wrapper(cmark_mem *mem, void *ext) {
++  cmark_syntax_extension_free(mem, (cmark_syntax_extension *)ext);
++}
++
+ int cmark_plugin_register_syntax_extension(cmark_plugin    * plugin,
+                                         cmark_syntax_extension * extension) {
+   plugin->syntax_extensions = cmark_llist_append(&CMARK_DEFAULT_MEM_ALLOCATOR, plugin->syntax_extensions, extension);
+@@ -23,7 +31,7 @@ void
+ cmark_plugin_free(cmark_plugin *plugin) {
+   cmark_llist_free_full(&CMARK_DEFAULT_MEM_ALLOCATOR,
+                         plugin->syntax_extensions,
+-                        (cmark_free_func) cmark_syntax_extension_free);
++                        syntax_extension_free_wrapper);
+   CMARK_DEFAULT_MEM_ALLOCATOR.free(plugin);
+ }
+
+diff --git a/src/registry.c b/src/registry.c
+index f4f2040..e0f6af1 100644
+--- a/src/registry.c
++++ b/src/registry.c
+@@ -12,6 +12,14 @@ extern cmark_mem CMARK_DEFAULT_MEM_ALLOCATOR;
+
+ static cmark_llist *syntax_extensions = NULL;
+
++// Wrapper function to avoid function pointer cast that breaks WASM.
++// cmark_free_func expects (cmark_mem*, void*) but cmark_syntax_extension_free
++// has (cmark_mem*, cmark_syntax_extension*). In WASM, these are different
++// function table signatures, causing "indirect call signature mismatch".
++static void syntax_extension_free_wrapper(cmark_mem *mem, void *ext) {
++  cmark_syntax_extension_free(mem, (cmark_syntax_extension *)ext);
++}
++
+ void cmark_register_plugin(cmark_plugin_init_func reg_fn) {
+   cmark_plugin *plugin = cmark_plugin_new();
+
+@@ -36,7 +44,7 @@ void cmark_release_plugins(void) {
+     cmark_llist_free_full(
+         &CMARK_DEFAULT_MEM_ALLOCATOR,
+         syntax_extensions,
+-        (cmark_free_func) cmark_syntax_extension_free);
++        syntax_extension_free_wrapper);
+     syntax_extensions = NULL;
+   }
+ }
