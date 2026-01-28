@@ -9,7 +9,7 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 - **Markdown Content Extraction**: Extract code blocks, links, images, and tables from Markdown text
 - **COPY TO Markdown**: Export query results as Markdown tables or reconstruct documents from sections
 - **Documentation Analysis**: Analyze large documentation repositories with SQL queries
-- **Cross-Platform Support**: Works on Linux, macOS, and Windows (see [Known Limitations](#known-limitations) for WebAssembly status)
+- **Cross-Platform Support**: Works on Linux, macOS, Windows, and WebAssembly (browsers)
 - **GitHub Flavored Markdown**: Uses cmark-gfm for accurate parsing of modern Markdown
 - **High Performance**: Process thousands of documents efficiently with robust glob pattern support
 
@@ -651,7 +651,7 @@ The extension is designed for high-performance document processing:
 - Frontmatter metadata as `MAP(VARCHAR, VARCHAR)` for easy field access
 - Replacement scan support for table-like syntax (`FROM '*.md'`)
 - MARKDOWN type with automatic VARCHAR casting
-- Cross-platform support (Linux, macOS, Windows)
+- Cross-platform support (Linux, macOS, Windows, WebAssembly)
 - Robust glob pattern support for local and remote file systems
 - High-performance content processing (4,000+ sections/second)
 - Comprehensive parameter system for flexible file processing
@@ -701,28 +701,26 @@ Contributions welcome! The extension provides a solid foundation for Markdown an
 - **Performance optimizations**: Streaming improvements for very large documents
 - **Advanced features**: Custom renderer integration and streaming parser optimizations
 
-## Known Limitations
+## WebAssembly (WASM) Support
 
-### WebAssembly (WASM) Support
+The extension fully supports WebAssembly environments (DuckDB-WASM in browsers). All markdown functions work in the browser:
 
-The extension currently does not work in WebAssembly environments (DuckDB-WASM in browsers). When loading the extension, you will see an error like:
+```javascript
+// Load the extension in DuckDB-WASM
+await conn.query("LOAD 'markdown.duckdb_extension.wasm'");
 
+// Register a markdown file
+await db.registerFileText('doc.md', '# Hello\n\nWorld');
+
+// Query markdown content
+const result = await conn.query("SELECT * FROM read_markdown('doc.md')");
 ```
-Extension load failed: indirect call signature mismatch
-```
 
-**Root Cause:** The cmark-gfm library uses function pointers extensively for its rendering and extension system. WebAssembly enforces strict type checking on indirect function calls (`call_indirect`), and when the extension is loaded as a side module via `dlopen`, the function pointer tables don't properly synchronize between modules.
+**Important**: Use the extension version that matches your duckdb-wasm version:
+- duckdb-wasm 1.32.0 → Use `markdown-v1.4.3-extension-wasm_eh`
+- duckdb-wasm latest → Use `markdown-main-extension-wasm_eh`
 
-**Technical Details:**
-- Emscripten provides `-sEMULATE_FUNCTION_POINTER_CASTS=1` to work around this, but it must be enabled on both the main module (DuckDB-WASM) and side module (this extension)
-- Even when enabled on both modules, this flag has known compatibility issues with `dlopen`/`dlsym` ([Emscripten issue #13076](https://github.com/emscripten-core/emscripten/issues/13076))
-- The extension build process only controls the side module; the main DuckDB-WASM module is pre-built
-
-**Workarounds:**
-- Use the native extension (Linux, macOS, Windows) instead of WASM
-- For browser-based markdown processing, consider using a JavaScript markdown library alongside DuckDB-WASM
-
-This limitation is tracked in [GitHub issue #13](https://github.com/teaguesterling/duckdb_markdown/issues/13).
+For technical details on how WASM support was implemented (including cmark-gfm static linking and function pointer compatibility), see [docs/WASM.md](docs/WASM.md).
 
 ## License
 
