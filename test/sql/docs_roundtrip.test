@@ -182,7 +182,7 @@ true
 # Test: Verify heading levels are preserved through round-trip
 # =============================================================================
 
-# Get heading levels from original blocks
+# Get heading levels from original blocks (only the files we're testing)
 statement ok
 CREATE TEMPORARY TABLE original_headings AS
 SELECT
@@ -190,7 +190,13 @@ SELECT
     content,
     attributes['heading_level'] as heading_level
 FROM read_markdown_blocks('docs/*.md', filename := true)
-WHERE element_type = 'heading';
+WHERE element_type = 'heading'
+  AND replace(file_path, '\', '/') IN (
+      'docs/doc_block_spec.md',
+      'docs/ecosystem.md',
+      'docs/index.md',
+      'docs/markdown_doc_block.md'
+  );
 
 # Get heading levels from regenerated docs
 statement ok
