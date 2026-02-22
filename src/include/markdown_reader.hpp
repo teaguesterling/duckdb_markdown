@@ -31,7 +31,6 @@ struct ReplacementScanData;
  * - Full-text search optimization
  */
 class MarkdownReader {
-
 public:
 	// Structure to hold Markdown read options
 	struct MarkdownReadOptions {
