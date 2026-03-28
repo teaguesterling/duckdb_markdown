@@ -71,7 +71,7 @@ static bool MarkdownToTextCast(Vector &source, Vector &result, idx_t count, Cast
 			const std::string text_str = markdown_utils::MarkdownToText(md_str.GetString());
 			return StringVector::AddString(result, text_str.c_str(), text_str.length());
 		} catch (const std::exception &e) {
-			return md_str; // Fallback to original
+			return StringVector::AddString(result, md_str); // Fallback to original
 		}
 	});
 
@@ -80,8 +80,7 @@ static bool MarkdownToTextCast(Vector &source, Vector &result, idx_t count, Cast
 
 static bool VarcharToMarkdownCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t str) -> string_t {
-		// For now, just pass through - could add validation/normalization later
-		return str;
+		return StringVector::AddString(result, str);
 	});
 
 	return true;
@@ -89,8 +88,7 @@ static bool VarcharToMarkdownCast(Vector &source, Vector &result, idx_t count, C
 
 static bool MarkdownToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t md_str) -> string_t {
-		// Pass through - Markdown is stored as VARCHAR anyway
-		return md_str;
+		return StringVector::AddString(result, md_str);
 	});
 
 	return true;
