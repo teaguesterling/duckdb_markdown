@@ -203,7 +203,7 @@ FROM (SELECT UNNEST(md_extract_sections(E'# H1\nLine2\n## H2\nLine4\n', 1, 6, 'm
 ORDER BY section.start_line;
 ----
 h1	1	2
-h2	3	3
+h2	3	4
 
 # Test full mode content includes subsections (end_line is heading position)
 query TT
@@ -212,6 +212,45 @@ FROM (SELECT UNNEST(md_extract_sections(E'# H1\nLine2\n## H2\nLine4', 1, 6, 'ful
 WHERE section.section_id = 'h1';
 ----
 h1	true
+
+# =============================================================================
+# Test: end_line with include_content=false (Issue #15)
+# end_line should reflect section boundaries regardless of include_content
+# =============================================================================
+
+# Test include_content=false end_line matches include_content=true (table function)
+# Bug: end_line was always equal to start_line when include_content=false
+query TII
+SELECT section_id, start_line, end_line
+FROM read_markdown_sections('test/markdown/sections_test.md', include_content := false)
+ORDER BY start_line;
+----
+api-reference	1	4
+functions	5	8
+read_data-path	9	12
+write_data-path-data	13	16
+classes	17	18
+datamanager	19	22
+initialize-config	23	26
+shutdown	27	30
+bold-and-code-heading	31	34
+italic-heading	35	37
+
+# Test include_content=false end_line matches include_content=true (scalar function)
+# The scalar function always includes content, so we compare end_line values
+query III
+SELECT a.start_line, a.end_line as with_content, b.end_line as without_content
+FROM (
+    SELECT section_id, start_line, end_line
+    FROM read_markdown_sections('test/markdown/sections_test.md', include_content := true)
+) a
+JOIN (
+    SELECT section_id, start_line, end_line
+    FROM read_markdown_sections('test/markdown/sections_test.md', include_content := false)
+) b ON a.section_id = b.section_id
+WHERE a.end_line != b.end_line
+ORDER BY a.start_line;
+----
 
 # =============================================================================
 # Test: Backward compatibility

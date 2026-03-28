@@ -105,7 +105,7 @@ FROM (SELECT UNNEST(md_extract_sections(E'Line 1\n# Title on Line 2\nContent on 
 ORDER BY section.start_line;
 ----
 Title on Line 2	2	5
-Sub on Line 6	6	6
+Sub on Line 6	6	7
 
 # Test interaction with other markdown elements (code blocks)
 query TT

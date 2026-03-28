@@ -453,35 +453,41 @@ std::vector<MarkdownSection> ExtractSections(const std::string &markdown_str, in
 			}
 		}
 
-		// Extract content if requested
-		if (include_content) {
-			// Find the stopping point based on content_mode
-			cmark_node *stop_node = nullptr;
-			idx_t stop_line = 0;
+		// Find the stopping point based on content_mode (needed for end_line and content extraction)
+		cmark_node *stop_node = nullptr;
+		idx_t stop_line = 0;
 
-			for (size_t j = i + 1; j < heading_nodes.size(); ++j) {
-				int32_t next_level = heading_levels[j];
+		for (size_t j = i + 1; j < heading_nodes.size(); ++j) {
+			int32_t next_level = heading_levels[j];
 
-				if (content_mode == "minimal") {
-					// Stop at ANY next heading
+			if (content_mode == "minimal") {
+				// Stop at ANY next heading
+				stop_node = heading_nodes[j];
+				stop_line = cmark_node_get_start_line(stop_node) - 1;
+				break;
+			} else {
+				// "full" or "smart": stop at same-or-higher level heading
+				if (next_level <= section.level) {
 					stop_node = heading_nodes[j];
 					stop_line = cmark_node_get_start_line(stop_node) - 1;
 					break;
-				} else {
-					// "full" or "smart": stop at same-or-higher level heading
-					if (next_level <= section.level) {
-						stop_node = heading_nodes[j];
-						stop_line = cmark_node_get_start_line(stop_node) - 1;
-						break;
-					}
 				}
 			}
+		}
 
-			// Update end_line based on stop point
-			if (stop_line > 0) {
-				section.end_line = stop_line;
+		// Update end_line based on stop point or document end for last section
+		if (stop_line > 0) {
+			section.end_line = stop_line;
+		} else {
+			// No next heading found — extend to end of document
+			idx_t doc_end = cmark_node_get_end_line(cmark.doc);
+			if (doc_end > section.end_line) {
+				section.end_line = doc_end;
 			}
+		}
 
+		// Extract content if requested
+		if (include_content) {
 			// Extract content by walking through nodes
 			std::string content_text;
 			std::string immediate_content; // Content before first subsection (for smart mode)

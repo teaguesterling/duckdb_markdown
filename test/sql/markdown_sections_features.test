@@ -307,7 +307,7 @@ FROM (SELECT UNNEST(md_extract_sections(E'# Parent\n## Child\nContent here')) as
 ORDER BY section.start_line;
 ----
 parent	parent	1	Parent	NULL	md	1	1
-child	parent/child	2	Child	parent	md	2	2
+child	parent/child	2	Child	parent	md	2	3
 
 # Test content is captured correctly
 query T
