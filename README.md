@@ -11,6 +11,7 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 - **Documentation Analysis**: Analyze large documentation repositories with SQL queries
 - **Cross-Platform Support**: Works on Linux, macOS, Windows, and WebAssembly (browsers)
 - **GitHub Flavored Markdown**: Uses cmark-gfm for accurate parsing of modern Markdown
+- **Optional Wiki / Obsidian Extraction**: Opt into `[[wikilinks]]`, `![[embeds]]`, and `#tags` extraction via the `extract_extensions` parameter on the readers — or call `md_extract_wikilinks` / `md_extract_tags` directly on a markdown string
 - **High Performance**: Process thousands of documents efficiently with robust glob pattern support
 
 ## Installation
@@ -111,8 +112,9 @@ Reads Markdown files and returns one row per file.
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
 - `extract_metadata := true` - Extract frontmatter metadata
 - `normalize_content := true` - Normalize Markdown content
+- `extract_extensions := NULL` - Opt-in add-on extractors (comma-separated VARCHAR; see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds `wikilinks` and/or `tags` `LIST<STRUCT>` columns to the output
 
-**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(file_path VARCHAR, content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` with `include_filepath := true`
+**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(file_path VARCHAR, content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` with `include_filepath := true`. With `extract_extensions`, the requested add-on columns are appended.
 
 #### `read_markdown_blocks(files, [parameters...])`
 Reads Markdown files and parses them into block-level elements (headings, paragraphs, code blocks, lists, tables, etc.).
@@ -120,8 +122,9 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 **Parameters:**
 - `files` (required) - File path, glob pattern, or list of patterns
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
+- `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-block `wikilinks` and/or `tags` columns extracted from each block's content.
 
-**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`
+**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. With `extract_extensions`, the requested add-on columns are appended.
 
 **Note on level vs heading_level:** For headings, the H1-H6 level is stored in `attributes['heading_level']` (preferred). If not present, the `level` field is used as a fallback.
 
@@ -161,6 +164,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - `include_empty_sections := false` - Include sections without content
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `extract_metadata := true` - Include frontmatter as a special section (level=0)
+- `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-section `wikilinks` and/or `tags` columns extracted from each section's content.
 - Plus all `read_markdown` parameters
 
 **Content Modes:**
@@ -180,10 +184,42 @@ Reads Markdown files and parses them into hierarchical sections.
 All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 
 - **`md_extract_code_blocks(markdown)`** - Extract code blocks with language and metadata
-- **`md_extract_links(markdown)`** - Extract links with text, URL, and title information  
+- **`md_extract_links(markdown)`** - Extract standard `[text](url)` links with text, URL, title, line number
 - **`md_extract_images(markdown)`** - Extract images with alt text and metadata
 - **`md_extract_table_rows(markdown)`** - Extract table data as individual cells
 - **`md_extract_tables_json(markdown)`** - Extract tables as structured JSON with enhanced metadata
+- **`md_extract_wikilinks(markdown)`** - Extract Obsidian/wiki-style links: `[[target]]`, `[[target|alias]]`, `[[target#heading]]`, `[[target^block]]`, and embeds `![[…]]`. Returns `LIST<STRUCT(target, alias, anchor, is_embed, line_number)>`. *Not* CommonMark/GFM — a lightweight linear scan (no std::regex); see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions).
+- **`md_extract_tags(markdown)`** - Extract inline `#tag` / `#nested/tag` references; skips fenced code blocks and inline code spans. Returns `LIST<STRUCT(tag, line_number)>`.
+
+### Optional Add-On Extractors (`extract_extensions`)
+
+`md_extract_wikilinks` and `md_extract_tags` cover the **Obsidian / wiki Markdown superset** that cmark-gfm cannot parse — `[[wikilinks]]`, `![[embeds]]`, `#tags`. They are a lightweight linear scan, not part of CommonMark/GFM, and are exposed two ways:
+
+1. **Directly as scalar functions** — call them on a markdown string you already have in hand.
+2. **As opt-in add-on columns** on the readers, via the `extract_extensions` named parameter — comma-separated VARCHAR, default `NULL` (no add-ons; existing behavior unchanged):
+
+```sql
+-- Single feature
+SELECT wikilinks FROM read_markdown('vault/**/*.md', extract_extensions := 'wikilinks');
+
+-- Multiple features (comma-separated, whitespace tolerant)
+SELECT wikilinks, tags FROM read_markdown('vault/**/*.md', extract_extensions := 'wikilinks, tags');
+
+-- Flavor shortcut: 'obsidian' expands to wikilinks + tags
+SELECT wikilinks, tags FROM read_markdown('vault/**/*.md', extract_extensions := 'obsidian');
+
+-- Works on the section / block readers too — extracted per-row from each section's / block's content
+SELECT title, len(wikilinks) AS n
+FROM read_markdown_sections('vault/**/*.md', extract_extensions := 'wikilinks');
+```
+
+Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unknown tokens raise an error.
+
+**Limitations** (v1):
+- The wikilink extractor is per-line, so a wikilink target spanning a line break is not matched.
+- `md_extract_wikilinks` does not currently skip fenced code blocks (`md_extract_tags` does). A `[[…]]` inside a code fence will still be extracted.
+- In the per-section and per-block paths, cmark strips fence markers from its plaintext content, so a `#tag` inside a fenced code block of a section/block *will* be extracted (per-file `read_markdown` sees the raw bytes and honors fences correctly).
+- Tokens in `extract_extensions` are split only on commas (not whitespace); a token with internal whitespace is rejected as unknown.
 
 ### Document Processing Functions
 
@@ -550,6 +586,42 @@ SELECT title, substring(md_to_text(content), 1, 200) as preview
 FROM docs 
 WHERE md_to_text(content) ILIKE '%memory optimization%'
 ORDER BY title;
+```
+
+### Obsidian / Wiki Vault Analytics
+
+A vault is just a folder of `.md` files. With `extract_extensions := 'obsidian'`, you can build a backlink graph and tag rollups across the whole vault in SQL:
+
+```sql
+-- Backlink edges across a vault: (source_file, target_note)
+WITH wl AS (
+  SELECT file_path AS source, unnest(wikilinks) AS w
+  FROM read_markdown('vault/**/*.md', include_filepath := true, extract_extensions := 'wikilinks')
+)
+SELECT source, w.target AS target_note, w.is_embed, w.line_number
+FROM wl;
+
+-- Orphan notes (no incoming wikilinks)
+WITH edges AS (
+  SELECT regexp_extract(file_path, '([^/]+)\.md$', 1) AS note,
+         unnest(wikilinks).target AS target
+  FROM read_markdown('vault/**/*.md', include_filepath := true, extract_extensions := 'wikilinks')
+)
+SELECT DISTINCT note FROM edges
+WHERE note NOT IN (SELECT target FROM edges);
+
+-- Tag usage across the vault
+SELECT t.tag, count(*) AS uses
+FROM read_markdown('vault/**/*.md', extract_extensions := 'tags'),
+     UNNEST(tags) AS t
+GROUP BY t.tag
+ORDER BY uses DESC;
+
+-- Per-section tag/wikilink density (which sections are link-rich?)
+SELECT title, len(wikilinks) + len(tags) AS link_density
+FROM read_markdown_sections('vault/**/*.md', extract_extensions := 'obsidian')
+ORDER BY link_density DESC
+LIMIT 20;
 ```
 
 ## Glob Pattern Support
