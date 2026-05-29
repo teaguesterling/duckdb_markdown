@@ -109,6 +109,67 @@ static void ImageExtractionFunction(DataChunk &args, ExpressionState &state, Vec
 }
 
 //===--------------------------------------------------------------------===//
+// Wikilink Extraction - Scalar Function (Obsidian / wiki-style [[...]], ![[...]])
+//===--------------------------------------------------------------------===//
+
+static void WikilinkExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &input_vector = args.data[0];
+
+	auto count = args.size();
+
+	for (idx_t i = 0; i < count; i++) {
+		auto markdown_str = input_vector.GetValue(i).ToString();
+		auto wikilinks = markdown_utils::ExtractWikilinks(markdown_str);
+
+		vector<Value> struct_values;
+		for (const auto &wl : wikilinks) {
+			child_list_t<Value> struct_children;
+			struct_children.push_back({"target", Value(wl.target)});
+			struct_children.push_back({"alias", wl.alias.empty() ? Value(LogicalType::VARCHAR) : Value(wl.alias)});
+			struct_children.push_back({"anchor", wl.anchor.empty() ? Value(LogicalType::VARCHAR) : Value(wl.anchor)});
+			struct_children.push_back({"is_embed", Value(wl.is_embed)});
+			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(wl.line_number))});
+			struct_values.push_back(Value::STRUCT(struct_children));
+		}
+
+		if (struct_values.empty()) {
+			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
+		} else {
+			result.SetValue(i, Value::LIST(struct_values));
+		}
+	}
+}
+
+//===--------------------------------------------------------------------===//
+// Tag Extraction - Scalar Function (inline #tags)
+//===--------------------------------------------------------------------===//
+
+static void TagExtractionFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &input_vector = args.data[0];
+
+	auto count = args.size();
+
+	for (idx_t i = 0; i < count; i++) {
+		auto markdown_str = input_vector.GetValue(i).ToString();
+		auto md_tags = markdown_utils::ExtractTags(markdown_str);
+
+		vector<Value> struct_values;
+		for (const auto &t : md_tags) {
+			child_list_t<Value> struct_children;
+			struct_children.push_back({"tag", Value(t.tag)});
+			struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(t.line_number))});
+			struct_values.push_back(Value::STRUCT(struct_children));
+		}
+
+		if (struct_values.empty()) {
+			result.SetValue(i, Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {}));
+		} else {
+			result.SetValue(i, Value::LIST(struct_values));
+		}
+	}
+}
+
+//===--------------------------------------------------------------------===//
 // Table Row Extraction - Scalar Function (renamed from md_extract_tables)
 //===--------------------------------------------------------------------===//
 
@@ -372,6 +433,15 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	                                              {"title", LogicalType(LogicalTypeId::VARCHAR)},
 	                                              {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
 
+	auto wikilink_struct_type = LogicalType::STRUCT({{"target", LogicalType(LogicalTypeId::VARCHAR)},
+	                                                 {"alias", LogicalType(LogicalTypeId::VARCHAR)},
+	                                                 {"anchor", LogicalType(LogicalTypeId::VARCHAR)},
+	                                                 {"is_embed", LogicalType(LogicalTypeId::BOOLEAN)},
+	                                                 {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
+
+	auto tag_struct_type = LogicalType::STRUCT({{"tag", LogicalType(LogicalTypeId::VARCHAR)},
+	                                            {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
+
 	auto table_row_struct_type = LogicalType::STRUCT({{"table_index", LogicalType(LogicalTypeId::BIGINT)},
 	                                                  {"row_type", LogicalType(LogicalTypeId::VARCHAR)},
 	                                                  {"row_index", LogicalType(LogicalTypeId::BIGINT)},
@@ -403,6 +473,16 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	ScalarFunction images_func("md_extract_images", {MarkdownTypes::MarkdownType()},
 	                           LogicalType::LIST(image_struct_type), ImageExtractionFunction);
 	loader.RegisterFunction(images_func);
+
+	// Register md_extract_wikilinks scalar function (Obsidian / wiki-style links + embeds)
+	ScalarFunction wikilinks_func("md_extract_wikilinks", {MarkdownTypes::MarkdownType()},
+	                              LogicalType::LIST(wikilink_struct_type), WikilinkExtractionFunction);
+	loader.RegisterFunction(wikilinks_func);
+
+	// Register md_extract_tags scalar function (inline #tags)
+	ScalarFunction tags_func("md_extract_tags", {MarkdownTypes::MarkdownType()},
+	                         LogicalType::LIST(tag_struct_type), TagExtractionFunction);
+	loader.RegisterFunction(tags_func);
 
 	// Register md_extract_table_rows scalar function (renamed from md_extract_tables)
 	ScalarFunction table_rows_func("md_extract_table_rows", {MarkdownTypes::MarkdownType()},

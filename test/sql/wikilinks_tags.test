@@ -1,0 +1,354 @@
+# name: test/sql/wikilinks_tags.test
+# description: Obsidian/wiki extraction via the `extract_extensions` add-on parameter on
+#              read_markdown / read_markdown_sections / read_markdown_blocks, plus the
+#              md_stats heading_count fix and the un-gated scalar primitives.
+# group: [sql]
+
+require markdown
+
+#===================================================================
+# Scalar primitives — un-gated; calling them is its own opt-in
+#===================================================================
+
+query I
+SELECT len(md_extract_wikilinks('[[A]] [[B|b]] ![[C]] [[D#h]] [[E^x]]'));
+----
+5
+
+query I
+SELECT len(md_extract_tags('#one and #two/sub'));
+----
+2
+
+#===================================================================
+# md_stats heading_count fix (UNGATED — bug fix, not a new feature)
+#===================================================================
+
+# Pre-fix this returned 0 (the single-pass ^#{1,6} only matched doc start).
+query I
+SELECT md_stats('intro' || chr(10) || '# H1' || chr(10) || '## H2').heading_count;
+----
+2
+
+# Headings inside fenced code blocks are not counted.
+query I
+SELECT md_stats('# Real' || chr(10) || '```' || chr(10) || '# fake in code' || chr(10) || '```').heading_count;
+----
+1
+
+#===================================================================
+# extract_extensions parameter on read_markdown — opt-in add-on columns
+#===================================================================
+
+# Default (no extract_extensions): existing behavior unchanged, no extra columns.
+statement ok
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md');
+
+# Single feature → wikilinks column present
+query I
+SELECT len(wikilinks) FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'wikilinks');
+----
+5
+
+# Single feature → tags column present (3 real tags; #notag-in-fence is skipped)
+query I
+SELECT len(tags) FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'tags');
+----
+3
+
+# 'obsidian' flavor expands to wikilinks + tags
+query II
+SELECT len(wikilinks), len(tags) FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'obsidian');
+----
+5	3
+
+# Comma-separated form is equivalent
+query II
+SELECT len(wikilinks), len(tags) FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'wikilinks,tags');
+----
+5	3
+
+# Whitespace tolerance
+query II
+SELECT len(wikilinks), len(tags) FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := ' wikilinks , tags ');
+----
+5	3
+
+# Unknown feature errors with a helpful message
+statement error
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'nope');
+----
+Unknown extract_extensions feature
+
+#===================================================================
+# Same parameter on read_markdown_sections and read_markdown_blocks
+# (per-section / per-block extraction, not just per-file)
+#===================================================================
+
+# read_markdown_sections: each section row gets its own wikilinks/tags.
+# The "Tasks" section contains [[Meeting^abc]] and [[Spec#API]] — 2 wikilinks.
+query I
+SELECT len(wikilinks) FROM read_markdown_sections('test/data/wikilinks_tags_sample.md', extract_extensions := 'obsidian')
+WHERE title = 'Tasks';
+----
+2
+
+# read_markdown_blocks: at least some blocks have non-empty wiki content.
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/data/wikilinks_tags_sample.md', extract_extensions := 'obsidian')
+WHERE len(wikilinks) > 0 OR len(tags) > 0;
+----
+true
+
+#===================================================================
+# Scalar primitives — NULL / empty / no-match
+#===================================================================
+
+# NULL inputs short-circuit via DuckDB's default null handling.
+query I
+SELECT md_extract_wikilinks(NULL) IS NULL;
+----
+true
+
+query I
+SELECT md_extract_tags(NULL) IS NULL;
+----
+true
+
+# Empty string returns empty list (not NULL, not an error).
+query I
+SELECT len(md_extract_wikilinks(''));
+----
+0
+
+query I
+SELECT len(md_extract_tags(''));
+----
+0
+
+# No matches in non-empty text → empty list
+query I
+SELECT len(md_extract_wikilinks('just plain text with [single brackets] and no wiki'));
+----
+0
+
+query I
+SELECT len(md_extract_tags('text without any tags or hashes attached'));
+----
+0
+
+#===================================================================
+# Wikilinks — edge / compound shapes
+#===================================================================
+
+# Compound: target + anchor + alias  (#heading + |alias)
+query TTTI
+SELECT w.target, w.anchor, w.alias, w.is_embed
+FROM (SELECT UNNEST(md_extract_wikilinks('[[Page#Section|Alias]]')) AS w);
+----
+Page	#Section	Alias	false
+
+# Compound: target + block-ref + alias  (^block + |alias)
+query TTTI
+SELECT w.target, w.anchor, w.alias, w.is_embed
+FROM (SELECT UNNEST(md_extract_wikilinks('[[Note^blkid|Alias]]')) AS w);
+----
+Note	^blkid	Alias	false
+
+# Embed with anchor
+query TTI
+SELECT w.target, w.anchor, w.is_embed
+FROM (SELECT UNNEST(md_extract_wikilinks('![[Diagram#Top]]')) AS w);
+----
+Diagram	#Top	true
+
+# Empty target [[]] is NOT a wikilink (regex requires 1+ chars)
+query I
+SELECT len(md_extract_wikilinks('text [[]] more'));
+----
+0
+
+# Whitespace inside the brackets is trimmed from target / alias
+query TT
+SELECT w.target, w.alias
+FROM (SELECT UNNEST(md_extract_wikilinks('[[  Spaced Page  |  spaced alias  ]]')) AS w);
+----
+Spaced Page	spaced alias
+
+# Two wikilinks on the same line share the same line_number
+query II
+SELECT w.line_number, count(*) OVER ()
+FROM (SELECT UNNEST(md_extract_wikilinks('[[A]] and [[B]]')) AS w);
+----
+1	2
+1	2
+
+# Duplicate wikilinks are NOT deduped — both occurrences are kept (by design)
+query I
+SELECT len(md_extract_wikilinks('[[X]] then [[X]] again'));
+----
+2
+
+# Single-letter target is fine
+query T
+SELECT (md_extract_wikilinks('[[X]]'))[1].target;
+----
+X
+
+#===================================================================
+# Tags — boundary / negative cases
+#===================================================================
+
+# Numeric-first is NOT a tag (regex requires [A-Za-z_] as first char)
+query I
+SELECT len(md_extract_tags('#123 #1abc'));
+----
+0
+
+# Attached to a word (no boundary) is NOT a tag
+query I
+SELECT len(md_extract_tags('email@example.com text#attached more'));
+----
+0
+
+# Single-letter tag matches (regex is [A-Za-z_][A-Za-z0-9_/-]*)
+query I
+SELECT len(md_extract_tags(' #a #b'));
+----
+2
+
+# Hyphens are allowed in tag names
+query T
+SELECT (md_extract_tags(' #multi-word-tag'))[1].tag;
+----
+multi-word-tag
+
+# ## (double-hash) is not a tag (no letter/_ after second #)
+query I
+SELECT len(md_extract_tags('## not_a_tag here'));
+----
+0
+
+# Trailing punctuation does not break tag extraction (comma not in class)
+query T
+SELECT (md_extract_tags(' #planning, more text'))[1].tag;
+----
+planning
+
+# Inline code spans are scrubbed before tag-matching
+query I
+SELECT len(md_extract_tags('see `#nope` and #real'));
+----
+1
+
+# Tag at exact start-of-string (no preceding whitespace)
+query T
+SELECT (md_extract_tags('#first thing'))[1].tag;
+----
+first
+
+#===================================================================
+# extract_extensions parameter — edge / negative
+#===================================================================
+
+# Empty string: no extensions enabled, no error
+statement ok
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := '');
+
+# Whitespace-only string: no extensions enabled, no error
+statement ok
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := '   ');
+
+# Trailing/duplicate commas with empty tokens are tolerated
+query II
+SELECT len(wikilinks), len(tags) FROM read_markdown('test/data/wikilinks_tags_sample.md',
+  extract_extensions := 'wikilinks,,tags,');
+----
+5	3
+
+# NULL value: no extensions (same as default)
+statement ok
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := NULL);
+
+# Idempotent overlap: obsidian + wikilinks (already implied) — both still enabled, no error
+query II
+SELECT len(wikilinks), len(tags) FROM read_markdown('test/data/wikilinks_tags_sample.md',
+  extract_extensions := 'obsidian,wikilinks');
+----
+5	3
+
+# Combines with other named parameters (extract_metadata)
+query I
+SELECT len(wikilinks) > 0 FROM read_markdown('test/data/wikilinks_tags_sample.md',
+  extract_metadata := true, extract_extensions := 'wikilinks');
+----
+true
+
+# Case sensitivity is intentional (matches `flavor` strictness) — uppercase is rejected
+statement error
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'Obsidian');
+----
+Unknown extract_extensions feature
+
+#===================================================================
+# heading_count fix — edge cases
+#===================================================================
+
+# File starts WITH a heading (the case the old buggy code happened to handle right)
+query I
+SELECT md_stats('# H1' || chr(10) || '## H2' || chr(10) || '### H3').heading_count;
+----
+3
+
+# Frontmatter then headings: the YAML `---` lines are not headings
+query I
+SELECT md_stats('---' || chr(10) || 'title: x' || chr(10) || '---' || chr(10) || '# Real').heading_count;
+----
+1
+
+# 7+ hashes is not a heading (ATX caps at 6)
+query I
+SELECT md_stats('####### Not a heading').heading_count;
+----
+0
+
+# No space after the hashes → not a heading
+query I
+SELECT md_stats('#NoSpace' || chr(10) || '##AlsoNo').heading_count;
+----
+0
+
+#===================================================================
+# Documented limitations / known behaviors (intentional or deferred)
+#===================================================================
+
+# Wikilink regex is per-line — a wikilink whose target spans a line break is NOT matched.
+query I
+SELECT len(md_extract_wikilinks('start [[Foo' || chr(10) || 'Bar]] end'));
+----
+0
+
+# Wikilinks inside fenced code blocks ARE currently extracted: md_extract_wikilinks does
+# not track fences (only md_extract_tags does). Deferred Obsidian-fidelity improvement.
+query I
+SELECT len(md_extract_wikilinks('```' || chr(10) || '[[InFence]]' || chr(10) || '```'));
+----
+1
+
+# Per-section / per-block extraction can't see ``` fence markers, because cmark strips
+# them from its plaintext content. So a #tag inside a fenced code block in a section
+# WILL be extracted — unlike per-file `read_markdown`, which sees raw bytes incl. fences.
+# Tasks section in the fixture: 1 fenced `#notag-in-fence` + 1 trailing `#realtag` → 2 tags.
+# (Per-file the same file yields 3 tags total: planning, q2/goals, realtag — fence honored.)
+query I
+SELECT len(tags) FROM read_markdown_sections('test/data/wikilinks_tags_sample.md',
+  extract_extensions := 'tags') WHERE title = 'Tasks';
+----
+2
+
+# extract_extensions splits ONLY on commas (not whitespace), so a token containing an
+# internal space is rejected as unknown — matching the existing `flavor` strictness.
+statement error
+SELECT * FROM read_markdown('test/data/wikilinks_tags_sample.md', extract_extensions := 'wiki links');
+----
+Unknown extract_extensions feature

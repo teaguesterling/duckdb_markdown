@@ -192,10 +192,26 @@ MarkdownStats CalculateStats(const std::string &markdown_str) {
 	stats.char_count = markdown_str.length();
 	stats.line_count = static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
 
-	// Count headings
-	std::regex heading_regex(R"(^#{1,6}\s+)");
-	stats.heading_count = static_cast<idx_t>(std::distance(
-	    std::sregex_iterator(markdown_str.begin(), markdown_str.end(), heading_regex), std::sregex_iterator()));
+	// Count headings. NOTE: a single-pass `^#{1,6}` over the whole string only matches the
+	// document start (default std::regex `^` is not multiline), so this previously returned 0
+	// unless the file began with a heading. Scan line-by-line (the convention used elsewhere
+	// in this file for MSVC ^ compatibility) and skip fenced code blocks.
+	{
+		std::istringstream heading_stream(markdown_str);
+		std::string heading_line;
+		bool in_fence = false;
+		std::regex fence_regex(R"(^\s*(```|~~~))");
+		std::regex heading_line_regex(R"(^#{1,6}[ \t])");
+		while (std::getline(heading_stream, heading_line)) {
+			if (std::regex_search(heading_line, fence_regex)) {
+				in_fence = !in_fence;
+				continue;
+			}
+			if (!in_fence && std::regex_search(heading_line, heading_line_regex)) {
+				stats.heading_count++;
+			}
+		}
+	}
 
 	// Count code blocks
 	std::regex code_block_regex(R"(```)");
@@ -1289,6 +1305,77 @@ std::string NormalizeMarkdown(const std::string &markdown_str) {
 	// This can be implemented later if needed
 
 	return normalized;
+}
+
+std::vector<MarkdownWikilink> ExtractWikilinks(const std::string &markdown_str) {
+	std::vector<MarkdownWikilink> wikilinks;
+	if (markdown_str.empty()) {
+		return wikilinks;
+	}
+
+	// [[target]], [[target|alias]], [[target#heading]], [[target^block]], ![[embed]].
+	// Group 1: leading '!' (embed). 2: target (up to # ^ | ]). 3: anchor incl. leading # or ^.
+	// 4: alias (after |). cmark-gfm does not parse wiki links, so scan line-by-line.
+	std::regex wikilink_regex(R"((!?)\[\[([^\]\|#\^]+)((?:#|\^)[^\]\|]+)?(?:\|([^\]]*))?\]\])");
+	std::istringstream stream(markdown_str);
+	std::string line;
+	idx_t line_number = 0;
+	while (std::getline(stream, line)) {
+		line_number++;
+		auto begin = std::sregex_iterator(line.begin(), line.end(), wikilink_regex);
+		for (auto it = begin; it != std::sregex_iterator(); ++it) {
+			const std::smatch &m = *it;
+			MarkdownWikilink wl;
+			wl.is_embed = m[1].matched && m[1].str() == "!";
+			wl.target = m[2].str();
+			StringUtil::Trim(wl.target); // Trim modifies in place and returns void
+			wl.anchor = m[3].matched ? m[3].str() : "";
+			wl.alias = m[4].matched ? m[4].str() : "";
+			StringUtil::Trim(wl.alias);
+			wl.line_number = line_number;
+			wikilinks.push_back(wl);
+		}
+	}
+	return wikilinks;
+}
+
+std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str) {
+	std::vector<MarkdownTag> tags;
+	if (markdown_str.empty()) {
+		return tags;
+	}
+
+	// Inline #tag / #nested/tag. v1 limitations (documented): tags inside link URLs or
+	// wikilink targets are not suppressed; fenced code blocks and inline code spans are.
+	std::regex fence_regex(R"(^\s*(```|~~~))");
+	std::regex inline_code_regex(R"(`[^`]*`)");
+	// A tag: '#' preceded by start-of-string or whitespace, then a letter/_ and tag chars,
+	// allowing nested '/'. Excludes pure-numeric (#123) to avoid issue/anchor false positives.
+	std::regex tag_regex(R"((^|\s)#([A-Za-z_][A-Za-z0-9_/-]*))");
+	std::istringstream stream(markdown_str);
+	std::string line;
+	idx_t line_number = 0;
+	bool in_fence = false;
+	while (std::getline(stream, line)) {
+		line_number++;
+		if (std::regex_search(line, fence_regex)) {
+			in_fence = !in_fence;
+			continue;
+		}
+		if (in_fence) {
+			continue;
+		}
+		// Blank out inline code spans so '#' inside them doesn't match.
+		std::string scrubbed = std::regex_replace(line, inline_code_regex, " ");
+		auto begin = std::sregex_iterator(scrubbed.begin(), scrubbed.end(), tag_regex);
+		for (auto it = begin; it != std::sregex_iterator(); ++it) {
+			MarkdownTag tag;
+			tag.tag = (*it)[2].str();
+			tag.line_number = line_number;
+			tags.push_back(tag);
+		}
+	}
+	return tags;
 }
 
 } // namespace markdown_utils

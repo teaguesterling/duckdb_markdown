@@ -144,6 +144,21 @@ struct MarkdownImage {
 	idx_t line_number;
 };
 
+// Obsidian / wiki-style inline elements (not part of CommonMark, so cmark-gfm does
+// not see them — extracted with a line-by-line regex pass, like the reference-link scan).
+struct MarkdownWikilink {
+	std::string target;   // [[target]] — the page/note name (before #, ^, |)
+	std::string alias;    // [[target|alias]] — display text, "" if none
+	std::string anchor;   // [[target#heading]] -> "#heading", [[target^block]] -> "^block", "" if none
+	bool is_embed;        // ![[...]] transclusion
+	idx_t line_number;
+};
+
+struct MarkdownTag {
+	std::string tag;      // #tag / #nested/tag — without the leading '#'
+	idx_t line_number;
+};
+
 struct MarkdownTable {
 	std::vector<std::string> headers;           // Table headers
 	std::vector<std::string> alignments;        // Column alignments (left, right, center)
@@ -166,6 +181,13 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str);
 
 // Extract images
 std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str);
+
+// Extract Obsidian/wiki-style links: [[target]], [[target|alias]], [[target#heading]],
+// [[target^block]], and embeds ![[...]]. Regex-based, line-by-line.
+std::vector<MarkdownWikilink> ExtractWikilinks(const std::string &markdown_str);
+
+// Extract inline #tags (including #nested/tags), skipping fenced code blocks and inline code.
+std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str);
 
 // Extract tables
 std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str);
