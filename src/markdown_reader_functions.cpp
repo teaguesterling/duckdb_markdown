@@ -40,6 +40,20 @@ struct MarkdownReadBlocksBindData : public TableFunctionData {
 // Helper Functions
 //===--------------------------------------------------------------------===//
 
+// SetValue with catalog-aware pre-cast — necessary on duckdb main because
+// VectorStringBuffer::SetValue (post commit ffdceae563) falls back to
+// Value::DefaultCastAs when val.type() != column.type(). DefaultCastAs uses
+// a stack-local CastFunctionSet that doesn't see extension-registered casts
+// (like VarcharToMarkdownCast) and silently returns NULL → SetValue writes
+// NULL. Value::CastAs(context, ...) uses the catalog's cast set which DOES
+// include extension casts, and also covers structural mismatches in complex
+// types (MAP / STRUCT / LIST<STRUCT>) where the inferred Value type may not
+// match the column's exact type. Cross-version safe: both v1.4.3 and main
+// have this signature.
+static inline void SetValueCasted(ClientContext &context, Vector &vec, idx_t idx, const Value &val) {
+	vec.SetValue(idx, val.CastAs(context, vec.GetType()));
+}
+
 //===--------------------------------------------------------------------===//
 // Optional add-on extractor columns (extract_extensions param)
 //===--------------------------------------------------------------------===//
@@ -297,23 +311,14 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 				column_idx++;
 			}
 
-			// Set content — pre-cast the VARCHAR Value to the column type via
-			// Value::CastAs(context, ...) which uses the catalog's cast set (it sees
-			// our extension-registered VarcharToMarkdownCast). This is necessary on
-			// duckdb main because VectorStringBuffer::SetValue (post ffdceae563)
-			// falls back to Value::DefaultCastAs when val.type() != column.type();
-			// DefaultCastAs uses a stack-local CastFunctionSet that doesn't see
-			// extension casts and silently returns NULL → SetValue writes NULL.
-			// On v1.4.3 the recursive path tolerated the alias-mismatch quietly;
-			// CastAs makes the cast explicit and works on both versions.
-			output.data[column_idx].SetValue(output_idx,
-			                                 Value(content).CastAs(context, output.data[column_idx].GetType()));
+			// Set content (MarkdownType-aliased VARCHAR) — see SetValueCasted.
+			SetValueCasted(context, output.data[column_idx], output_idx, Value(content));
 			column_idx++;
 
 			// Set metadata if requested
 			if (bind_data.options.extract_metadata) {
 				auto metadata = markdown_utils::ExtractMetadata(content);
-				output.data[column_idx].SetValue(output_idx, markdown_utils::MetadataToMap(metadata));
+				SetValueCasted(context, output.data[column_idx], output_idx, markdown_utils::MetadataToMap(metadata));
 				column_idx++;
 			}
 
@@ -332,17 +337,17 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 				struct_values.push_back(
 				    std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
 
-				output.data[column_idx].SetValue(output_idx, Value::STRUCT(struct_values));
+				SetValueCasted(context, output.data[column_idx], output_idx, Value::STRUCT(struct_values));
 				column_idx++;
 			}
 
 			// Optional add-on extractor columns
 			if (bind_data.options.extract_wikilinks) {
-				output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(content));
+				SetValueCasted(context, output.data[column_idx], output_idx, BuildWikilinksValue(content));
 				column_idx++;
 			}
 			if (bind_data.options.extract_tags) {
-				output.data[column_idx].SetValue(output_idx, BuildTagsValue(content));
+				SetValueCasted(context, output.data[column_idx], output_idx, BuildTagsValue(content));
 				column_idx++;
 			}
 
@@ -566,12 +571,8 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, Value(actual_title));
 		column_idx++;
-		// Section content: same MarkdownType alias-cast trap as read_markdown — use
-		// Value::CastAs(context, ...) so the extension-registered VarcharToMarkdownCast
-		// is applied (catalog-aware cast). See MarkdownReadDocumentsFunction for the
-		// duckdb-main commit chain.
-		output.data[column_idx].SetValue(output_idx,
-		                                 Value(section.content).CastAs(context, output.data[column_idx].GetType()));
+		// Section content (MarkdownType-aliased VARCHAR) — see SetValueCasted.
+		SetValueCasted(context, output.data[column_idx], output_idx, Value(section.content));
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, section.parent_id.empty() ? Value() : Value(section.parent_id));
 		column_idx++;
@@ -582,11 +583,11 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 
 		// Optional add-on extractor columns (extracted from this section's content)
 		if (bind_data.options.extract_wikilinks) {
-			output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(section.content));
+			SetValueCasted(context, output.data[column_idx], output_idx, BuildWikilinksValue(section.content));
 			column_idx++;
 		}
 		if (bind_data.options.extract_tags) {
-			output.data[column_idx].SetValue(output_idx, BuildTagsValue(section.content));
+			SetValueCasted(context, output.data[column_idx], output_idx, BuildTagsValue(section.content));
 			column_idx++;
 		}
 
@@ -723,7 +724,7 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 		}
 		Value attributes_map = Value::MAP(LogicalType(LogicalTypeId::VARCHAR), LogicalType(LogicalTypeId::VARCHAR),
 		                                  attr_keys, attr_values);
-		output.data[column_idx].SetValue(output_idx, attributes_map);
+		SetValueCasted(context, output.data[column_idx], output_idx, attributes_map);
 		column_idx++;
 
 		// element_order (was block_order)
@@ -732,11 +733,11 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 
 		// Optional add-on extractor columns (extracted from this block's content)
 		if (bind_data.options.extract_wikilinks) {
-			output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(block.content));
+			SetValueCasted(context, output.data[column_idx], output_idx, BuildWikilinksValue(block.content));
 			column_idx++;
 		}
 		if (bind_data.options.extract_tags) {
-			output.data[column_idx].SetValue(output_idx, BuildTagsValue(block.content));
+			SetValueCasted(context, output.data[column_idx], output_idx, BuildTagsValue(block.content));
 			column_idx++;
 		}
 
