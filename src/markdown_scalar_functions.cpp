@@ -17,18 +17,17 @@ void MarkdownFunctions::Register(ExtensionLoader &loader) {
 
 void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 	// md_valid function - validates markdown content
-	// Only register VARCHAR version since md type is a VARCHAR alias and will auto-cast
+	// Only register VARCHAR version since md type is a VARCHAR alias and will auto-cast.
+	// Use UnaryExecutor::Execute (auto-propagates NULL: NULL input → NULL output) — the
+	// older ExecuteWithNulls overload was removed from duckdb main in commit 987ea2c409
+	// ("Functions can throw errors"); Execute<INPUT,RESULT>(in,out,n,fn) exists in both
+	// v1.4.3 and main, matching how md_to_html / md_to_text below already call it.
 	ScalarFunction md_valid_fun("md_valid", {LogicalType::VARCHAR}, LogicalType::BOOLEAN,
 	                            [](DataChunk &args, ExpressionState &state, Vector &result) {
 		                            auto &input_vector = args.data[0];
 
-		                            UnaryExecutor::ExecuteWithNulls<string_t, bool>(
-		                                input_vector, result, args.size(),
-		                                [&](string_t md_str, ValidityMask &mask, idx_t idx) {
-			                                if (!mask.RowIsValid(idx)) {
-				                                return false;
-			                                }
-
+		                            UnaryExecutor::Execute<string_t, bool>(
+		                                input_vector, result, args.size(), [&](string_t md_str) {
 			                                try {
 				                                // Basic validation - check for basic Markdown structure
 				                                const std::string content = md_str.GetString();
