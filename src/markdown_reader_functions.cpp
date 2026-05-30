@@ -297,8 +297,20 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 				column_idx++;
 			}
 
-			// Set content
-			output.data[column_idx].SetValue(output_idx, Value(content));
+			// Set content via direct FlatVector write — bypasses
+			// StandardVectorBuffer::SetValue's alias-strict cast trap (introduced in
+			// duckdb main commit ffdceae563). When the column type is MarkdownType
+			// (VARCHAR with alias "markdown" / "md") and the Value is plain VARCHAR,
+			// SetValue calls Value::DefaultCastAs(MarkdownType) which uses an empty
+			// CastFunctionSet — it doesn't see our extension-registered
+			// VarcharToMarkdownCast and returns a NULL Value, so SetValue silently
+			// writes NULL. Writing string_t directly avoids the cast entirely.
+			{
+				auto &content_vec = output.data[column_idx];
+				auto str_val = StringVector::AddString(content_vec, content);
+				FlatVector::GetData<string_t>(content_vec)[output_idx] = str_val;
+				FlatVector::Validity(content_vec).SetValid(output_idx);
+			}
 			column_idx++;
 
 			// Set metadata if requested
@@ -557,7 +569,15 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, Value(actual_title));
 		column_idx++;
-		output.data[column_idx].SetValue(output_idx, Value(section.content));
+		// Section content goes through the same MarkdownType alias-cast trap as
+		// read_markdown's content column — write string_t directly. See the long
+		// comment in MarkdownReadDocumentsFunction for the duckdb-main commit chain.
+		{
+			auto &content_vec = output.data[column_idx];
+			auto str_val = StringVector::AddString(content_vec, section.content);
+			FlatVector::GetData<string_t>(content_vec)[output_idx] = str_val;
+			FlatVector::Validity(content_vec).SetValid(output_idx);
+		}
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, section.parent_id.empty() ? Value() : Value(section.parent_id));
 		column_idx++;
