@@ -1,22 +1,30 @@
-# DuckDB C++ Internal API: v1.4.x → v1.6.0-dev Migration Guide
+# DuckDB C++ Internal API: v1.5.x → v1.6.0-dev Migration Guide
 
 > **Audience:** maintainers of DuckDB community extensions that compile
 > against the duckdb submodule and build into a `.duckdb_extension`.
 > **Status:** field notes from migrating `duckdb_markdown` to build green
-> against both `duckdb_version: v1.4.3` (stable) and `duckdb_version: main`
-> (currently `v1.6.0-dev7491`, commit `bbd990d554`).
+> against both `duckdb_version: v1.5.3` (current stable) and
+> `duckdb_version: main` (currently `v1.6.0-dev7491`, commit `bbd990d554`,
+> on the way to v1.6.0).
 >
 > If you've seen any of these symptoms in CI and didn't know why —
 > this is what's happening.
 
 DuckDB's C++ *internal* API (`src/include/duckdb/...`) has churned non-trivially
-between the `v1.4.3` tag (Feb 2026) and the post-`ffdceae563` main branch
+between the `v1.5.x` line (Feb–Mar 2026) and the post-`ffdceae563` main branch
 (Apr 2026). The **C API** (`duckdb.h`) is stable; the **C++ internal API**
 that extensions consume directly is not, and is explicitly versioned only via
 the `DUCKDB_EXTENSION_API_VERSION_{MAJOR,MINOR,PATCH}` macros — which cover
 the *extension boundary*, not every `#include`d internal header.
 
 That gap is what this guide covers.
+
+**API-equivalence note.** All four breaking changes below landed on `main`
+after the last stable tag. Verified by `git show` against:
+`v1.4.3`, `v1.5.0`, `v1.5.1`, `v1.5.2`, `v1.5.3`, and `main@bbd990d554`.
+The v1.4 and v1.5 lines are *identical* on every API surface this guide
+covers — there is no cliff inside that range. So whether you're bumping from
+v1.4.4 or from v1.5.3, the migration is the same one this guide describes.
 
 ## The four real gaps we hit
 
@@ -31,7 +39,7 @@ overload remains: `(input, result, count, fn)` where `fn` takes the input
 and returns the result. NULL propagation is handled by the framework; the
 lambda only sees defined inputs.
 
-**v1.4.3 / v1.5.x:** both `ExecuteWithNulls` (lambda takes `(input, ValidityMask&, idx)`)
+**v1.4.x / v1.5.x:** both `ExecuteWithNulls` (lambda takes `(input, ValidityMask&, idx)`)
 and `Execute` (lambda takes `(input)`) exist.
 
 **main:** only `Execute` remains.
@@ -87,7 +95,7 @@ and `LIST<STRUCT<...>>` when your `Value::MAP` / `Value::STRUCT` / `Value::LIST`
 constructor produces a type that's structurally similar but not bitwise-equal
 to the column's bind-time type.
 
-**v1.4.3:** the old `Vector::SetValue` implementation tolerated alias mismatches
+**v1.4.x / v1.5.x:** the old `Vector::SetValue` implementation tolerated alias mismatches
 silently (copied the data because the InternalType matched). Tests passed.
 
 **main:** new path strict; silent NULL.
@@ -117,7 +125,7 @@ output.data[col].SetValue(idx, val.CastAs(context, output.data[col].GetType()));
 
 `Value::CastAs(ClientContext&, target_type)` uses the **catalog's** cast set,
 which DOES include your extension-registered casts. Also handles structural
-mismatches in complex types. Both `v1.4.3` and `main` have this signature.
+mismatches in complex types. Both `v1.4.x` / `v1.5.x` and `main` have this signature.
 
 Wrap it in a small helper so the intent is clear:
 
@@ -152,10 +160,10 @@ some others) now consult each vector's `Size()` *in addition to* the chunk's
 data via `SetValue`.
 
 A new sibling `DataChunk::SetChildCardinality(N)` was added that calls
-`FlatVector::SetSize(v, N)` on every child vector. `v1.4.3` has neither
+`FlatVector::SetSize(v, N)` on every child vector. `v1.4.x` / `v1.5.x` has neither
 `SetChildCardinality` nor `FlatVector::SetSize`.
 
-**v1.4.3:** `SetCardinality` is the only API; vectors don't track size
+**v1.4.x / v1.5.x:** `SetCardinality` is the only API; vectors don't track size
 individually; query operators read `chunk.count` only. Works.
 
 **main:** `SetCardinality` does not propagate; you must call
@@ -209,7 +217,7 @@ inline void SetCardinalityPropagating(Chunk &chunk, idx_t count) {
 
 Then everywhere you used to write `output.SetCardinality(N)`, use
 `your_ext_compat::SetCardinalityPropagating(output, N)`. SFINAE picks the right
-call at compile time, so the same source compiles against both `v1.4.3` and
+call at compile time, so the same source compiles against both `v1.5.x` and
 `main` with no `#if` ladders.
 
 ### 4. `FlatVector::GetData<T>` and `Validity` split into const + Mutable
@@ -220,7 +228,7 @@ call at compile time, so the same source compiles against both `v1.4.3` and
 enforce write-discipline. New `GetDataMutable<T>` / `ValidityMutable` overloads
 exist for writes.
 
-**v1.4.3:** unified accessors return non-const (`T *GetData<T>(Vector&)`,
+**v1.4.x / v1.5.x:** unified accessors return non-const (`T *GetData<T>(Vector&)`,
 `ValidityMask &Validity(Vector&)`).
 
 **main:** const-returning by default; need `GetDataMutable<T>` and
@@ -241,7 +249,7 @@ auto *data = const_cast<string_t *>(FlatVector::GetData<string_t>(vec));
 data[idx] = StringVector::AddString(vec, str);
 ```
 
-This is a no-op on `v1.4.3` (whose `GetData<T>(Vector&)` already returns
+This is a no-op on `v1.4.x` / `v1.5.x` (whose `GetData<T>(Vector&)` already returns
 non-const) and a stripping cast on `main`. It's safe because the underlying
 vector is non-const — we just happen to access its data through a const
 overload — but it's an unmistakable code smell, so keep the use narrow.
@@ -266,7 +274,7 @@ pin, work through these in order:
       on duckdb main and `SetCardinality` on v1.4.x / v1.5.x. See §3.
 - [ ] **If you have direct `FlatVector::GetData<T>` writes, audit them.** If the
       cast site can be migrated to `SetValueCasted`, prefer that. Otherwise
-      wrap the write in a `const_cast` (no-op on v1.4.3, required on main).
+      wrap the write in a `const_cast` (no-op on v1.4.x / v1.5.x, required on main).
 - [ ] **Run `make format-check` against your bumped submodule.** The
       `.clang-format` config tightened slightly; `make format-fix` is the
       easiest catch-up.
