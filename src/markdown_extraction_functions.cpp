@@ -439,8 +439,8 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	                                                 {"is_embed", LogicalType(LogicalTypeId::BOOLEAN)},
 	                                                 {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
 
-	auto tag_struct_type = LogicalType::STRUCT({{"tag", LogicalType(LogicalTypeId::VARCHAR)},
-	                                            {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
+	auto tag_struct_type = LogicalType::STRUCT(
+	    {{"tag", LogicalType(LogicalTypeId::VARCHAR)}, {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
 
 	auto table_row_struct_type = LogicalType::STRUCT({{"table_index", LogicalType(LogicalTypeId::BIGINT)},
 	                                                  {"row_type", LogicalType(LogicalTypeId::VARCHAR)},
@@ -480,8 +480,8 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	loader.RegisterFunction(wikilinks_func);
 
 	// Register md_extract_tags scalar function (inline #tags)
-	ScalarFunction tags_func("md_extract_tags", {MarkdownTypes::MarkdownType()},
-	                         LogicalType::LIST(tag_struct_type), TagExtractionFunction);
+	ScalarFunction tags_func("md_extract_tags", {MarkdownTypes::MarkdownType()}, LogicalType::LIST(tag_struct_type),
+	                         TagExtractionFunction);
 	loader.RegisterFunction(tags_func);
 
 	// Register md_extract_table_rows scalar function (renamed from md_extract_tables)

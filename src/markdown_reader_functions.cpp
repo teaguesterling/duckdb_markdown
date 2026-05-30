@@ -77,8 +77,8 @@ static std::string UnescapeMarkdownInline(const std::string &in) {
 	for (size_t i = 0; i < in.size(); i++) {
 		if (in[i] == '\\' && i + 1 < in.size()) {
 			char next = in[i + 1];
-			if (next == '[' || next == ']' || next == '#' || next == '^' ||
-			    next == '|' || next == '!' || next == '\\') {
+			if (next == '[' || next == ']' || next == '#' || next == '^' || next == '|' || next == '!' ||
+			    next == '\\') {
 				out.push_back(next);
 				i++;
 				continue;
@@ -191,10 +191,9 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 					} else if (tok == "tags") {
 						options.extract_tags = true;
 					} else {
-						throw InvalidInputException(
-						    "Unknown extract_extensions feature: '%s'. Known: 'obsidian' "
-						    "(flavor expanding to wikilinks+tags), 'wikilinks', 'tags'.",
-						    tok);
+						throw InvalidInputException("Unknown extract_extensions feature: '%s'. Known: 'obsidian' "
+						                            "(flavor expanding to wikilinks+tags), 'wikilinks', 'tags'.",
+						                            tok);
 					}
 				}
 			}

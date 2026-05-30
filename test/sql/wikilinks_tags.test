@@ -1,8 +1,9 @@
 # name: test/sql/wikilinks_tags.test
 # description: Obsidian/wiki extraction via the `extract_extensions` add-on parameter on
+# group: [sql]
+
 #              read_markdown / read_markdown_sections / read_markdown_blocks, plus the
 #              md_stats heading_count fix and the un-gated scalar primitives.
-# group: [sql]
 
 require markdown
 

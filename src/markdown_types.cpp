@@ -79,17 +79,15 @@ static bool MarkdownToTextCast(Vector &source, Vector &result, idx_t count, Cast
 }
 
 static bool VarcharToMarkdownCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t str) -> string_t {
-		return StringVector::AddString(result, str);
-	});
+	UnaryExecutor::Execute<string_t, string_t>(
+	    source, result, count, [&](string_t str) -> string_t { return StringVector::AddString(result, str); });
 
 	return true;
 }
 
 static bool MarkdownToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t md_str) -> string_t {
-		return StringVector::AddString(result, md_str);
-	});
+	UnaryExecutor::Execute<string_t, string_t>(
+	    source, result, count, [&](string_t md_str) -> string_t { return StringVector::AddString(result, md_str); });
 
 	return true;
 }
