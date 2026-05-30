@@ -305,11 +305,14 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 			// CastFunctionSet — it doesn't see our extension-registered
 			// VarcharToMarkdownCast and returns a NULL Value, so SetValue silently
 			// writes NULL. Writing string_t directly avoids the cast entirely.
+			// const_cast: duckdb main split FlatVector::GetData<T> into const + Mutable
+			// variants; v1.4.3 returns non-const. const_cast is a no-op on v1.4.3 and
+			// makes the write compile on main. Vectors start with all positions valid,
+			// so no explicit SetValid is needed.
 			{
 				auto &content_vec = output.data[column_idx];
 				auto str_val = StringVector::AddString(content_vec, content);
-				FlatVector::GetData<string_t>(content_vec)[output_idx] = str_val;
-				FlatVector::Validity(content_vec).SetValid(output_idx);
+				const_cast<string_t *>(FlatVector::GetData<string_t>(content_vec))[output_idx] = str_val;
 			}
 			column_idx++;
 
@@ -575,8 +578,7 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 		{
 			auto &content_vec = output.data[column_idx];
 			auto str_val = StringVector::AddString(content_vec, section.content);
-			FlatVector::GetData<string_t>(content_vec)[output_idx] = str_val;
-			FlatVector::Validity(content_vec).SetValid(output_idx);
+			const_cast<string_t *>(FlatVector::GetData<string_t>(content_vec))[output_idx] = str_val;
 		}
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, section.parent_id.empty() ? Value() : Value(section.parent_id));
