@@ -9,6 +9,12 @@
 >
 > If you've seen any of these symptoms in CI and didn't know why —
 > this is what's happening.
+>
+> **Prior art:** @bendrucker established the fleet's `__has_include`-based
+> compat pattern in [duckdb_webbed#76](https://github.com/teaguesterling/duckdb_webbed/pull/76)
+> (May 2026), referencing [duckdb/duckdb#22377](https://github.com/duckdb/duckdb/pull/22377)
+> as the upstream change. The `src/include/duckdb_compat.hpp` shape in this
+> repo follows that convention.
 
 DuckDB's C++ *internal* API (`src/include/duckdb/...`) has churned non-trivially
 between the `v1.5.x` line (Feb–Mar 2026) and the post-`ffdceae563` main branch
@@ -183,42 +189,45 @@ with NULL content, downstream operators short-circuit on NULL and never read
 the underlying vector data, so the size mismatch never surfaces. Once content
 is populated, the next operator that needs vector data trips the check.
 
-**Migration — cross-version `SetCardinalityPropagating`:**
+**Migration — cross-version `CompatSetOutputCardinality`:**
 
-Add `src/include/duckdb_compat.hpp`:
+The fleet pattern from [duckdb_webbed#76](https://github.com/teaguesterling/duckdb_webbed/pull/76)
+detects the new API via `__has_include` of a header that moved in the same
+duckdb refactor:
 
 ```cpp
 #pragma once
-#include "duckdb/common/types/data_chunk.hpp"
-#include <type_traits>
-#include <utility>
+#include "duckdb.hpp"
+
+#if __has_include("duckdb/common/vector/list_vector.hpp")
+#define DUCKDB_HAS_NEW_VECTOR_HEADERS 1
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
+#endif
 
 namespace duckdb {
-namespace your_ext_compat {
 
-template <typename T, typename = void>
-struct has_set_child_cardinality : std::false_type {};
-template <typename T>
-struct has_set_child_cardinality<T, std::void_t<decltype(std::declval<T &>().SetChildCardinality(idx_t(0)))>>
-    : std::true_type {};
-
-template <typename Chunk>
-inline void SetCardinalityPropagating(Chunk &chunk, idx_t count) {
-    if constexpr (has_set_child_cardinality<Chunk>::value) {
-        chunk.SetChildCardinality(count);
-    } else {
-        chunk.SetCardinality(count);
-    }
+#ifdef DUCKDB_HAS_NEW_VECTOR_HEADERS
+inline void CompatSetOutputCardinality(DataChunk &chunk, idx_t count) {
+    chunk.SetChildCardinality(count);
 }
+#else
+inline void CompatSetOutputCardinality(DataChunk &chunk, idx_t count) {
+    chunk.SetCardinality(count);
+}
+#endif
 
-}  // namespace your_ext_compat
 }  // namespace duckdb
 ```
 
 Then everywhere you used to write `output.SetCardinality(N)`, use
-`your_ext_compat::SetCardinalityPropagating(output, N)`. SFINAE picks the right
-call at compile time, so the same source compiles against both `v1.5.x` and
-`main` with no `#if` ladders.
+`CompatSetOutputCardinality(output, N)`. The `#if`-block picks the right path
+at preprocess time, so the same source compiles against both `v1.5.x` and
+`main` with no version-macro probing.
+
+(An earlier draft of this guide used SFINAE detection for the same purpose.
+The `__has_include` approach is shorter and matches the existing fleet
+convention; both compile to identical code.)
 
 ### 4. `FlatVector::GetData<T>` and `Validity` split into const + Mutable
 
@@ -270,7 +279,7 @@ pin, work through these in order:
       calls `val.CastAs(context, vec.GetType())` before SetValue. Don't migrate
       to `Vector::Append(Value)` thinking it sidesteps the trap — it doesn't.
 - [ ] **Find every `DataChunk::SetCardinality` call in a table-function execute.**
-      Replace with a SFINAE-dispatched helper that calls `SetChildCardinality`
+      Replace with a `__has_include`-dispatched helper that calls `SetChildCardinality`
       on duckdb main and `SetCardinality` on v1.4.x / v1.5.x. See §3.
 - [ ] **If you have direct `FlatVector::GetData<T>` writes, audit them.** If the
       cast site can be migrated to `SetValueCasted`, prefer that. Otherwise
