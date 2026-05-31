@@ -41,19 +41,7 @@ struct MarkdownReadBlocksBindData : public TableFunctionData {
 // Helper Functions
 //===--------------------------------------------------------------------===//
 
-// SetValue with catalog-aware pre-cast — necessary on duckdb main because
-// VectorStringBuffer::SetValue (post commit ffdceae563) falls back to
-// Value::DefaultCastAs when val.type() != column.type(). DefaultCastAs uses
-// a stack-local CastFunctionSet that doesn't see extension-registered casts
-// (like VarcharToMarkdownCast) and silently returns NULL → SetValue writes
-// NULL. Value::CastAs(context, ...) uses the catalog's cast set which DOES
-// include extension casts, and also covers structural mismatches in complex
-// types (MAP / STRUCT / LIST<STRUCT>) where the inferred Value type may not
-// match the column's exact type. Cross-version safe: both v1.4.3 and main
-// have this signature.
-static inline void SetValueCasted(ClientContext &context, Vector &vec, idx_t idx, const Value &val) {
-	vec.SetValue(idx, val.CastAs(context, vec.GetType()));
-}
+// SetValueCasted + CompatSetOutputCardinality both live in duckdb_compat.hpp now.
 
 //===--------------------------------------------------------------------===//
 // Optional add-on extractor columns (extract_extensions param)
