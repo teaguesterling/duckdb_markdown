@@ -1,0 +1,17 @@
+# name: test/sql/markdown_sections_varchar.test
+# description: md_extract_sections resolves on VARCHAR / md inputs (Issue: binder ambiguity)
+# group: [markdown]
+
+require markdown
+
+# VARCHAR column input (previously: Could not choose a best candidate function)
+query I
+SELECT len(md_extract_sections(body)) FROM (VALUES (E'# A\n## B\nx')) t(body);
+----
+2
+
+# Explicit ::md cast (previously also ambiguous)
+query I
+SELECT len(md_extract_sections(E'# A\n## B\nx'::md));
+----
+2

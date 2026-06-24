@@ -429,11 +429,6 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	                             LogicalType::LIST(section_struct_type), SectionExtractionFunction);
 	loader.RegisterFunction(sections_func);
 
-	// Register overload for VARCHAR input
-	ScalarFunction sections_varchar_func("md_extract_sections", {LogicalType::VARCHAR},
-	                                     LogicalType::LIST(section_struct_type), SectionExtractionFunction);
-	loader.RegisterFunction(sections_varchar_func);
-
 	// Register overload for VARCHAR with level filtering
 	ScalarFunction sections_levels_func("md_extract_sections",
 	                                    {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER},
