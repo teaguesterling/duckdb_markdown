@@ -70,8 +70,9 @@ private:
 	// Helper to parse JSON table
 	static void ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows);
 
-	// Helper to extract plain text from Pandoc AST inline elements
-	static string ExtractPandocText(const string &content);
+	// Helper to extract plain text from Pandoc AST inline elements.
+	// depth guards against unbounded recursion on adversarially nested input.
+	static string ExtractPandocText(const string &content, int depth = 0);
 
 	// Check if content looks like Pandoc table format
 	static bool IsPandocTableFormat(const string &content);
