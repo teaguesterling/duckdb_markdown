@@ -2,7 +2,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include <algorithm>
-#include <regex>
+#include <cctype>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -16,6 +16,131 @@
 namespace duckdb {
 
 namespace markdown_utils {
+
+//===--------------------------------------------------------------------===//
+// Linear (non-backtracking) scanners
+//
+// These replace hand-rolled std::regex patterns that ran over untrusted,
+// potentially large input. libstdc++'s std::regex recurses while matching
+// greedy quantifiers, so a long run with no terminator (e.g. an unclosed
+// frontmatter block, a giant table line, or a long unterminated "[") could
+// overflow the stack and SIGSEGV the whole DuckDB process. A stack overflow
+// is not a catchable C++ exception, so the scalar functions' try/catch did
+// not help. Every scanner below runs in O(n) with bounded stack usage.
+//===--------------------------------------------------------------------===//
+
+// Result of locating a leading YAML-style frontmatter block.
+struct FrontmatterMatch {
+	bool found = false;
+	size_t body_start = 0; // offset of first byte of the frontmatter body
+	size_t body_len = 0;   // length of the body (delimiters excluded)
+	size_t after_close = 0; // offset just past the closing "---"
+};
+
+// Faithful linear replacement for R"(^---\r?\n([\s\S]*?)\r?\n---)".
+// Requires the string to begin with "---" then \r?\n, then finds the earliest
+// following "\r?\n---". Returns the body between the delimiters. O(n), no
+// recursion.
+static FrontmatterMatch FindFrontmatter(const std::string &s) {
+	FrontmatterMatch m;
+	// Opening delimiter: "---" then \r?\n
+	if (s.size() < 4 || s[0] != '-' || s[1] != '-' || s[2] != '-') {
+		return m;
+	}
+	size_t p = 3;
+	if (p < s.size() && s[p] == '\r') {
+		p++;
+	}
+	if (p >= s.size() || s[p] != '\n') {
+		return m;
+	}
+	p++; // start of body
+	size_t body_start = p;
+
+	// Closing delimiter: earliest '\n' immediately followed by "---".
+	while (p < s.size()) {
+		if (s[p] == '\n' && p + 4 <= s.size() && s[p + 1] == '-' && s[p + 2] == '-' && s[p + 3] == '-') {
+			size_t body_end = p; // at the '\n'
+			// The delimiter is \r?\n, so drop a trailing '\r' from the body.
+			if (body_end > body_start && s[body_end - 1] == '\r') {
+				body_end--;
+			}
+			m.found = true;
+			m.body_start = body_start;
+			m.body_len = body_end - body_start;
+			m.after_close = p + 4; // just past the closing "---"
+			return m;
+		}
+		p++;
+	}
+	return m;
+}
+
+// True if a single line (without its trailing '\n') is a GFM pipe-table row:
+// starts with '|', has at least two '|', and only spaces/tabs after the last
+// '|'. Faithful to R"(\|[^\n]*\|[ \t]*)" applied per line. A trailing '\r'
+// (CRLF input) is tolerated, matching the original regex behaviour.
+static bool IsPipeTableLine(const std::string &line_in) {
+	std::string line = line_in;
+	if (!line.empty() && line.back() == '\r') {
+		line.pop_back();
+	}
+	if (line.empty() || line[0] != '|') {
+		return false;
+	}
+	size_t last = line.rfind('|');
+	if (last == 0) {
+		return false; // only one '|'
+	}
+	for (size_t i = last + 1; i < line.size(); i++) {
+		if (line[i] != ' ' && line[i] != '\t') {
+			return false;
+		}
+	}
+	return true;
+}
+
+// True if a (trimmed, non-empty) table line is an alignment/separator row:
+// contains only '-', '|', ':', and whitespace, with at least one of '-|:'.
+// Linear replacement for R"(^\s*\|?\s*[-|:\s]+\s*\|?\s*$)" restricted to the
+// non-empty lines the table scanner actually feeds it.
+static bool IsSeparatorLine(const std::string &line) {
+	bool has_core = false;
+	for (char c : line) {
+		if (c == '-' || c == '|' || c == ':') {
+			has_core = true;
+		} else if (c == ' ' || c == '\t' || c == '\r') {
+			// allowed whitespace
+		} else {
+			return false;
+		}
+	}
+	return has_core;
+}
+
+// Split a table row into cells. Faithful to the previous R"([^|]+)" iterator:
+// split on '|', drop segments that are empty *before* trimming, then trim each
+// kept segment. Leading/trailing pipes therefore produce no empty cells.
+static std::vector<std::string> SplitTableCells(const std::string &line) {
+	std::vector<std::string> cells;
+	std::string cur;
+	auto flush = [&]() {
+		if (!cur.empty()) {
+			StringUtil::Trim(cur);
+			cells.push_back(cur);
+		}
+		cur.clear();
+	};
+	for (char c : line) {
+		if (c == '|') {
+			flush();
+		} else {
+			cur += c;
+		}
+	}
+	flush();
+	return cells;
+}
 
 //===--------------------------------------------------------------------===//
 // Core Conversion Functions
@@ -65,7 +190,9 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	cmark_node *doc = cmark_parser_finish(parser);
 	char *html = cmark_render_html(doc, options, nullptr);
 
-	std::string result(html);
+	// cmark can return NULL on allocation failure; guard against constructing
+	// a std::string from a NULL pointer (undefined behaviour).
+	std::string result(html ? html : "");
 
 	// Clean up
 	free(html);
@@ -88,7 +215,8 @@ std::string MarkdownToText(const std::string &markdown_str) {
 	// Render as plain text
 	char *text = cmark_render_plaintext(doc, CMARK_OPT_DEFAULT, 0);
 
-	std::string result(text);
+	// Guard against a NULL return (see MarkdownToHTML).
+	std::string result(text ? text : "");
 
 	// Clean up
 	free(text);
@@ -101,14 +229,11 @@ std::string MarkdownToText(const std::string &markdown_str) {
 MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 	MarkdownMetadata metadata;
 
-	// Check for YAML frontmatter - handle both LF and CRLF line endings
-	// Use match.position() == 0 to ensure we only match at the start of the string
-	// (MSVC regex has issues with ^ anchor not working correctly)
-	std::regex frontmatter_regex(R"(^---\r?\n([\s\S]*?)\r?\n---)");
-	std::smatch match;
-
-	if (std::regex_search(markdown_str, match, frontmatter_regex) && match.position() == 0) {
-		std::string yaml_content = match[1].str();
+	// Locate a leading YAML-style frontmatter block with a linear scanner
+	// (see FindFrontmatter) instead of a backtracking std::regex.
+	auto fm = FindFrontmatter(markdown_str);
+	if (fm.found) {
+		std::string yaml_content = markdown_str.substr(fm.body_start, fm.body_len);
 
 		// Basic YAML parsing for common fields (placeholder)
 		std::istringstream stream(yaml_content);
@@ -121,8 +246,8 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 				StringUtil::Trim(key);
 				StringUtil::Trim(value);
 
-				// Remove quotes if present
-				if (value.front() == '"' && value.back() == '"') {
+				// Remove surrounding quotes if present (guard against empty value)
+				if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
 					value = value.substr(1, value.length() - 2);
 				}
 
@@ -137,33 +262,30 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 }
 
 std::string ExtractRawFrontmatter(const std::string &markdown_str) {
-	// Check for YAML frontmatter - handle both LF and CRLF line endings
-	// Use match.position() == 0 to ensure we only match at the start of the string
-	// (MSVC regex has issues with ^ anchor not working correctly)
-	std::regex frontmatter_regex(R"(^---\r?\n([\s\S]*?)\r?\n---)");
-	std::smatch match;
-
-	if (std::regex_search(markdown_str, match, frontmatter_regex) && match.position() == 0) {
-		return match[1].str();
+	// Linear scan (see FindFrontmatter) instead of a backtracking std::regex.
+	auto fm = FindFrontmatter(markdown_str);
+	if (fm.found) {
+		return markdown_str.substr(fm.body_start, fm.body_len);
 	}
-
 	return "";
 }
 
 std::string StripFrontmatter(const std::string &markdown_str) {
-	// Match frontmatter block including trailing newlines - handle both LF and CRLF
-	// Use match.position() == 0 to ensure we only match at the start of the string
-	// (MSVC regex has issues with ^ anchor not working correctly)
-	std::regex frontmatter_regex(R"(^---\r?\n[\s\S]*?\r?\n---\r?\n*)");
-	std::smatch match;
-
-	// Only strip if frontmatter is at the very start of the string
-	if (std::regex_search(markdown_str, match, frontmatter_regex) && match.position() == 0) {
-		return markdown_str.substr(match.length());
+	// Linear scan (see FindFrontmatter) instead of a backtracking std::regex.
+	// Faithful to R"(^---\r?\n[\s\S]*?\r?\n---\r?\n*)": strip through the closing
+	// "---" plus a single optional '\r' and any following '\n' characters.
+	auto fm = FindFrontmatter(markdown_str);
+	if (!fm.found) {
+		return markdown_str; // no frontmatter at start, return original
 	}
-
-	// No frontmatter found at start, return original
-	return markdown_str;
+	size_t end = fm.after_close;
+	if (end < markdown_str.size() && markdown_str[end] == '\r') {
+		end++;
+	}
+	while (end < markdown_str.size() && markdown_str[end] == '\n') {
+		end++;
+	}
+	return markdown_str.substr(end);
 }
 
 Value MetadataToMap(const MarkdownMetadata &metadata) {
@@ -192,21 +314,68 @@ MarkdownStats CalculateStats(const std::string &markdown_str) {
 	stats.char_count = markdown_str.length();
 	stats.line_count = static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
 
-	// Count headings
-	std::regex heading_regex(R"(^#{1,6}\s+)");
-	stats.heading_count = static_cast<idx_t>(std::distance(
-	    std::sregex_iterator(markdown_str.begin(), markdown_str.end(), heading_regex), std::sregex_iterator()));
+	// Count headings. Faithful to the previous std::regex R"(^#{1,6}\s+)"
+	// which (default, non-multiline) only anchors at the START of the string,
+	// so this is 0 or 1: 1 iff the document opens with 1-6 '#' then whitespace.
+	stats.heading_count = 0;
+	{
+		size_t h = 0;
+		while (h < markdown_str.size() && markdown_str[h] == '#') {
+			h++;
+		}
+		if (h >= 1 && h <= 6 && h < markdown_str.size() &&
+		    std::isspace(static_cast<unsigned char>(markdown_str[h]))) {
+			stats.heading_count = 1;
+		}
+	}
 
-	// Count code blocks
-	std::regex code_block_regex(R"(```)");
-	auto code_matches = std::distance(std::sregex_iterator(markdown_str.begin(), markdown_str.end(), code_block_regex),
-	                                  std::sregex_iterator());
-	stats.code_block_count = static_cast<idx_t>(code_matches) / 2; // Opening and closing
+	// Count code fences ("```"); pairs of fences == code blocks.
+	{
+		idx_t fence_count = 0;
+		size_t pos = 0;
+		while ((pos = markdown_str.find("```", pos)) != std::string::npos) {
+			fence_count++;
+			pos += 3;
+		}
+		stats.code_block_count = fence_count / 2; // Opening and closing
+	}
 
-	// Count links
-	std::regex link_regex(R"(\[([^\]]+)\]\([^)]+\))");
-	stats.link_count = static_cast<idx_t>(std::distance(
-	    std::sregex_iterator(markdown_str.begin(), markdown_str.end(), link_regex), std::sregex_iterator()));
+	// Count inline links. Linear replacement for R"(\[([^\]]+)\]\([^)]+\))":
+	// non-overlapping "[" non-"]"+ "]" "(" non-")"+ ")".
+	stats.link_count = 0;
+	{
+		const std::string &s = markdown_str;
+		size_t i = 0;
+		size_t n = s.size();
+		while (i < n) {
+			if (s[i] != '[') {
+				i++;
+				continue;
+			}
+			size_t j = i + 1;
+			while (j < n && s[j] != ']') {
+				j++;
+			}
+			if (j >= n || j == i + 1) { // no closing ']' or empty label
+				i++;
+				continue;
+			}
+			if (j + 1 >= n || s[j + 1] != '(') {
+				i++;
+				continue;
+			}
+			size_t k = j + 2;
+			while (k < n && s[k] != ')') {
+				k++;
+			}
+			if (k >= n || k == j + 2) { // no closing ')' or empty target
+				i++;
+				continue;
+			}
+			stats.link_count++;
+			i = k + 1; // non-overlapping: resume past the match
+		}
+	}
 
 	// Estimate reading time (200 words per minute average)
 	stats.reading_time_minutes = static_cast<double>(stats.word_count) / 200.0;
@@ -226,14 +395,36 @@ std::string GenerateSectionId(const std::string &heading_text,
 	// Convert to lowercase
 	std::transform(id.begin(), id.end(), id.begin(), ::tolower);
 
-	// Replace spaces and special chars with hyphens
-	id = std::regex_replace(id, std::regex(R"([^a-z0-9\-_])"), "-");
-
-	// Remove multiple consecutive hyphens
-	id = std::regex_replace(id, std::regex(R"(-+)"), "-");
-
-	// Trim leading/trailing hyphens
-	id = std::regex_replace(id, std::regex(R"(^-+|-+$)"), "");
+	// Linear replacement for the three std::regex passes that previously ran
+	// on (untrusted, possibly large) heading text:
+	//   1. R"([^a-z0-9\-_])" -> "-"   (replace disallowed chars with '-')
+	//   2. R"(-+)"           -> "-"   (collapse consecutive hyphens)
+	//   3. R"(^-+|-+$)"      -> ""    (trim leading/trailing hyphens)
+	{
+		std::string out;
+		out.reserve(id.size());
+		bool prev_dash = false;
+		for (char c : id) {
+			bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+			char oc = keep ? c : '-';
+			if (oc == '-') {
+				if (!prev_dash) {
+					out += '-';
+				}
+				prev_dash = true;
+			} else {
+				out += oc;
+				prev_dash = false;
+			}
+		}
+		size_t b = out.find_first_not_of('-');
+		if (b == std::string::npos) {
+			id.clear();
+		} else {
+			size_t e = out.find_last_not_of('-');
+			id = out.substr(b, e - b + 1);
+		}
+	}
 
 	// Handle duplicates
 	auto it = id_counts.find(id);
@@ -598,8 +789,16 @@ static std::string RenderNodeContent(cmark_node *node) {
 	return result;
 }
 
+// Maximum inline-nesting depth walked by GetInlineText. Far above any
+// legitimate document; guards against unbounded recursion (stack overflow) on
+// adversarially deep nesting.
+static constexpr int MAX_INLINE_DEPTH = 1000;
+
 // Helper to get text content from inline children
-static std::string GetInlineText(cmark_node *node) {
+static std::string GetInlineText(cmark_node *node, int depth = 0) {
+	if (depth > MAX_INLINE_DEPTH) {
+		throw InvalidInputException("Markdown inline nesting exceeds maximum supported depth (%d)", MAX_INLINE_DEPTH);
+	}
 	std::string result;
 	cmark_node *child = cmark_node_first_child(node);
 	while (child) {
@@ -614,7 +813,7 @@ static std::string GetInlineText(cmark_node *node) {
 			result += "\n";
 		} else {
 			// Recursively get text from nested nodes
-			result += GetInlineText(child);
+			result += GetInlineText(child, depth + 1);
 		}
 		child = cmark_node_next(child);
 	}
@@ -959,20 +1158,59 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str) {
 		return links;
 	}
 
-	// Pre-scan for reference link definitions to detect reference-style links
-	// Reference definitions look like: [id]: url "optional title"
-	// Pattern matches: [id]: followed by URL (optionally in angle brackets)
-	// Process line-by-line for MSVC compatibility (no std::regex::multiline)
+	// Pre-scan for reference link definitions to detect reference-style links.
+	// Reference definitions look like: [id]: url "optional title".
+	// Linear per-line parser replacing R"(^\s*\[([^\]]+)\]:\s+<?([^\s>]+)>?)"
+	// (a single unterminated "[" line could otherwise overflow the stack).
 	std::set<std::string> reference_urls;
-	std::regex ref_pattern(R"(^\s*\[([^\]]+)\]:\s+<?([^\s>]+)>?)");
 	std::istringstream stream(markdown_str);
 	std::string line;
 	while (std::getline(stream, line)) {
-		std::smatch match;
-		if (std::regex_search(line, match, ref_pattern)) {
-			std::string url = match[2].str();
-			reference_urls.insert(url);
+		std::string url;
+		size_t i = 0;
+		size_t n = line.size();
+		// ^\s*
+		while (i < n && std::isspace(static_cast<unsigned char>(line[i]))) {
+			i++;
 		}
+		if (i >= n || line[i] != '[') {
+			continue;
+		}
+		i++; // past '['
+		size_t label_start = i;
+		while (i < n && line[i] != ']') {
+			i++;
+		}
+		if (i >= n || i == label_start) { // no closing ']' or empty label
+			continue;
+		}
+		i++; // past ']'
+		if (i >= n || line[i] != ':') {
+			continue;
+		}
+		i++; // past ':'
+		// \s+
+		size_t ws_start = i;
+		while (i < n && std::isspace(static_cast<unsigned char>(line[i]))) {
+			i++;
+		}
+		if (i == ws_start) { // need at least one whitespace
+			continue;
+		}
+		// optional '<'
+		if (i < n && line[i] == '<') {
+			i++;
+		}
+		// ([^\s>]+)
+		size_t url_start = i;
+		while (i < n && !std::isspace(static_cast<unsigned char>(line[i])) && line[i] != '>') {
+			i++;
+		}
+		if (i == url_start) { // empty URL
+			continue;
+		}
+		url = line.substr(url_start, i - url_start);
+		reference_urls.insert(url);
 	}
 
 	// Parse with cmark-gfm
@@ -1093,33 +1331,55 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 		return tables;
 	}
 
-	// For now, use a simpler regex-based approach for tables since the cmark-gfm table
-	// extension node types are not easily accessible. We can revisit this later.
+	// Locate GFM pipe-table blocks with a linear line scanner instead of a
+	// backtracking std::regex. A block is a maximal run of consecutive pipe
+	// table lines (see IsPipeTableLine); this replaces
+	// R"((?:^|\n)((?:\|[^\n]*\|[ \t]*\n?)+))" which could overflow the stack on
+	// a very long table line or many rows.
+	const std::string &s = markdown_str;
+	size_t n = s.size();
+	size_t i = 0;
 
-	// Parse tables using simple regex - this handles basic GFM tables
-	std::regex table_regex(R"((?:^|\n)((?:\|[^\n]*\|[ \t]*\n?)+))");
-	std::sregex_iterator iter(markdown_str.begin(), markdown_str.end(), table_regex);
-	std::sregex_iterator end;
+	while (i < n) {
+		// Current line spans [line_start, line_end); nl is the '\n' index or npos.
+		size_t line_start = i;
+		size_t nl = s.find('\n', i);
+		size_t line_end = (nl == std::string::npos) ? n : nl;
+		std::string line = s.substr(line_start, line_end - line_start);
 
-	for (; iter != end; ++iter) {
-		const std::smatch &match = *iter;
-		std::string table_content = match[1].str();
-
-		// Calculate line number
-		auto match_pos = match.position();
-		idx_t line_number = 1 + std::count(markdown_str.begin(), markdown_str.begin() + match_pos, '\n');
-
-		// Split into lines
-		std::istringstream table_stream(table_content);
-		std::string line;
-		std::vector<std::string> table_lines;
-
-		while (std::getline(table_stream, line)) {
-			StringUtil::Trim(line);
-			if (!line.empty()) {
-				table_lines.push_back(line);
-			}
+		if (!IsPipeTableLine(line)) {
+			i = (nl == std::string::npos) ? n : nl + 1;
+			continue;
 		}
+
+		// Faithful to the old regex's line_number: the match began at the '\n'
+		// preceding the block (or at offset 0), and newlines strictly before
+		// that position were counted.
+		idx_t line_number;
+		if (line_start == 0) {
+			line_number = 1;
+		} else {
+			line_number = 1 + static_cast<idx_t>(std::count(s.begin(), s.begin() + (line_start - 1), '\n'));
+		}
+
+		// Gather the maximal run of consecutive pipe-table lines.
+		std::vector<std::string> table_lines;
+		size_t j = i;
+		while (j < n) {
+			size_t ls = j;
+			size_t jnl = s.find('\n', j);
+			size_t le = (jnl == std::string::npos) ? n : jnl;
+			std::string l = s.substr(ls, le - ls);
+			if (!IsPipeTableLine(l)) {
+				break;
+			}
+			StringUtil::Trim(l);
+			if (!l.empty()) {
+				table_lines.push_back(l);
+			}
+			j = (jnl == std::string::npos) ? n : jnl + 1;
+		}
+		i = j; // continue scanning after the block
 
 		if (table_lines.size() < 2) {
 			continue; // Need at least header and separator
@@ -1130,10 +1390,7 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 
 		// Find header row (first non-separator line)
 		size_t header_idx = 0;
-
-		// Skip separator lines (lines with only |, -, :, and whitespace)
-		std::regex separator_regex(R"(^\s*\|?\s*[-|:\s]+\s*\|?\s*$)");
-		while (header_idx < table_lines.size() && std::regex_match(table_lines[header_idx], separator_regex)) {
+		while (header_idx < table_lines.size() && IsSeparatorLine(table_lines[header_idx])) {
 			header_idx++;
 		}
 
@@ -1141,52 +1398,16 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 			continue; // No valid header found
 		}
 
-		// Additional check: ensure this is the actual header row by checking if next line is separator
-		if (header_idx + 1 < table_lines.size() && !std::regex_match(table_lines[header_idx + 1], separator_regex)) {
-			// This might not be a proper markdown table format, but let's try anyway
-		}
-
 		// Parse header row
-		std::string header_line = table_lines[header_idx];
-		// DEBUG: Output table parsing info to stderr (will show in build log)
-		// fprintf(stderr, "DEBUG: Header idx=%zu, line='%s'\n", header_idx, header_line.c_str());
-		if (header_line.front() == '|')
-			header_line = header_line.substr(1);
-		if (header_line.back() == '|')
-			header_line = header_line.substr(0, header_line.length() - 1);
-
-		std::regex cell_regex(R"([^|]+)");
-		std::sregex_iterator cell_iter(header_line.begin(), header_line.end(), cell_regex);
-		std::sregex_iterator cell_end;
-
-		for (; cell_iter != cell_end; ++cell_iter) {
-			std::string cell = (*cell_iter).str();
-			StringUtil::Trim(cell);
-			table.headers.push_back(cell);
-		}
-
+		table.headers = SplitTableCells(table_lines[header_idx]);
 		table.num_columns = table.headers.size();
 
 		// Find data rows (skip separator lines)
-		for (size_t i = header_idx + 1; i < table_lines.size(); i++) {
-			// Skip separator lines
-			if (std::regex_match(table_lines[i], separator_regex)) {
+		for (size_t k = header_idx + 1; k < table_lines.size(); k++) {
+			if (IsSeparatorLine(table_lines[k])) {
 				continue;
 			}
-			std::string data_line = table_lines[i];
-			if (data_line.front() == '|')
-				data_line = data_line.substr(1);
-			if (data_line.back() == '|')
-				data_line = data_line.substr(0, data_line.length() - 1);
-
-			std::vector<std::string> row_data;
-			std::sregex_iterator data_cell_iter(data_line.begin(), data_line.end(), cell_regex);
-
-			for (; data_cell_iter != cell_end; ++data_cell_iter) {
-				std::string cell = (*data_cell_iter).str();
-				StringUtil::Trim(cell);
-				row_data.push_back(cell);
-			}
+			std::vector<std::string> row_data = SplitTableCells(table_lines[k]);
 
 			// Pad row to match header column count
 			while (row_data.size() < table.num_columns) {

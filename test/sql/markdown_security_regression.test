@@ -1,0 +1,139 @@
+# name: test/sql/markdown_security_regression.test
+# description: Regression tests for the linear-scanning extractors (GHSA-qv83-qqvf-72v9).
+#              The previous hand-rolled std::regex extractors recursed while
+#              matching greedy quantifiers over untrusted input; an unclosed
+#              frontmatter block, a many-cell table, or a long unterminated "["
+#              could overflow the stack and SIGSEGV the whole DuckDB process.
+#              A stack overflow is not a catchable C++ exception, so these
+#              inputs took down the base binary (verified out-of-process). The
+#              cases below all use BOUNDED inputs that tripped the old regexes
+#              and must now resolve cleanly in O(n).
+# group: [sql]
+
+require markdown
+
+#===================================================================
+# Frontmatter scanner: unclosed block (~128 KB body, no closing ---)
+# Reaches ExtractMetadata / StripFrontmatter / ExtractRawFrontmatter.
+#===================================================================
+
+# md_extract_metadata: unclosed frontmatter -> empty map, no crash
+query I
+SELECT cardinality(md_extract_metadata('---' || chr(10) || repeat('a', 131072)));
+----
+0
+
+# md_extract_sections routes through StripFrontmatter -> clean (no headings)
+query I
+SELECT count(*) FROM (SELECT unnest(md_extract_sections('---' || chr(10) || repeat('a', 131072))) AS s);
+----
+0
+
+#===================================================================
+# Table scanner: many-cell / many-row tables (~30 K cells)
+# Reaches ExtractTables via md_extract_tables_json / md_extract_table_rows.
+#===================================================================
+
+# One very long table line (~60 KB): tripped the \|[^\n]*\| backtracking.
+# A single line is not a full table (no separator) -> 0 tables, no crash.
+query I
+SELECT len(md_extract_tables_json(repeat('|x', 30000) || '|'));
+----
+0
+
+# Many table rows: tripped the (...)+ grouping. Resolves to one table.
+query I
+SELECT len(md_extract_tables_json(repeat('|x|' || chr(10), 30000)));
+----
+1
+
+# Same input via md_extract_table_rows -> all rows emitted, no crash.
+query I
+SELECT len(md_extract_table_rows(repeat('|x|' || chr(10), 30000)));
+----
+30000
+
+#===================================================================
+# md_stats scanners: link / heading regex over long input
+#===================================================================
+
+# Long unterminated "[" tripped \[([^\]]+)\] ... -> 0 links, no crash
+query I
+SELECT (md_stats(repeat('a', 5) || '[' || repeat('b', 300000))).link_count;
+----
+0
+
+# Long run after a "#" tripped ^#{1,6}\s+ -> heading_count preserved (1)
+query I
+SELECT (md_stats('#' || repeat(' ', 300000))).heading_count;
+----
+1
+
+#===================================================================
+# md_extract_links reference-definition scanner
+#===================================================================
+
+# Long unterminated "[" line tripped the per-line ref_pattern -> 0 links
+query I
+SELECT len(md_extract_links('[' || repeat('b', 300000)));
+----
+0
+
+#===================================================================
+# Positive: normal inputs still parse to the same results (no regression)
+#===================================================================
+
+# Normal frontmatter parses to a MAP with the expected fields
+query TT
+SELECT md_extract_metadata(E'---\ntitle: My Title\nauthor: John Doe\n---\nContent')['title'],
+       md_extract_metadata(E'---\ntitle: My Title\nauthor: John Doe\n---\nContent')['author'];
+----
+My Title	John Doe
+
+# CRLF frontmatter still recognized
+query I
+SELECT cardinality(md_extract_metadata(E'---\ntitle: T\r\nauthor: A\r\n---\r\nBody'));
+----
+2
+
+# Quoted values still unquoted; empty value handled (no crash on value.front())
+query TT
+SELECT md_extract_metadata(E'---\nq: "quoted"\nempty:\n---\nx')['q'],
+       md_extract_metadata(E'---\nq: "quoted"\nempty:\n---\nx')['empty'];
+----
+quoted	(empty)
+
+# Normal GFM table still parses (header + separator + one data row = 4 rows)
+query I
+SELECT len(md_extract_table_rows(E'| Name | Age |\n|------|-----|\n| John | 25  |'));
+----
+4
+
+# Table with alignment separators and an empty cell still parses correctly
+query I
+SELECT t.num_rows FROM (
+  SELECT unnest(md_extract_tables_json(E'| A | B | C |\n|---|:-:|--:|\n| 1 |  | 3 |\n| x | y | z |')) AS t
+) LIMIT 1;
+----
+2
+
+# md_stats on a normal doc keeps its (documented) counts
+query III
+SELECT (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```')).heading_count,
+       (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```')).link_count,
+       (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```')).code_block_count;
+----
+1	2	1
+
+# Reference-style and direct links both resolved
+query I
+SELECT len(md_extract_links('[ref]: http://ex.com' || chr(10) || 'see [x][ref] and [y](http://direct.com)'));
+----
+2
+
+# A legitimately deep (but legal) nested-emphasis document still renders,
+# exercising the inline walkers below their depth cap.
+query T
+SELECT md_to_text('# ' || repeat('*', 20) || 'deep' || repeat('*', 20)) <> '';
+----
+true

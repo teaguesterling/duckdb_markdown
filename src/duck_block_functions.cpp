@@ -2,9 +2,14 @@
 #include "markdown_types.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/exception.hpp"
 #include <sstream>
 
 namespace duckdb {
+
+// Maximum Pandoc inline-nesting depth walked by ExtractPandocText. Guards
+// against unbounded recursion (stack overflow) on adversarially nested JSON.
+static constexpr int MAX_PANDOC_DEPTH = 1000;
 
 //===--------------------------------------------------------------------===//
 // Helper Functions
@@ -142,7 +147,10 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 // Helper to extract text with markdown formatting from Pandoc AST inline elements
 // Handles {"t":"Str","c":"text"}, {"t":"Space"}, {"t":"Strong","c":[...]}, {"t":"Emph","c":[...]},
 // {"t":"Code","c":[[attr],text]}, {"t":"Link","c":[[attr],[inlines],[url,title]]}, etc.
-string DuckBlockFunctions::ExtractPandocText(const string &content) {
+string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
+	if (depth > MAX_PANDOC_DEPTH) {
+		throw InvalidInputException("Pandoc inline nesting exceeds maximum supported depth (%d)", MAX_PANDOC_DEPTH);
+	}
 	string result;
 	size_t pos = 0;
 
@@ -298,7 +306,7 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 					size_t arr_end = find_bracket_end(arr_start);
 					if (arr_end != string::npos) {
 						string inner = content.substr(arr_start, arr_end - arr_start + 1);
-						result += "**" + ExtractPandocText(inner) + "**";
+						result += "**" + ExtractPandocText(inner, depth + 1) + "**";
 						pos = arr_end + 1;
 						continue;
 					}
@@ -313,7 +321,7 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 					size_t arr_end = find_bracket_end(arr_start);
 					if (arr_end != string::npos) {
 						string inner = content.substr(arr_start, arr_end - arr_start + 1);
-						result += "*" + ExtractPandocText(inner) + "*";
+						result += "*" + ExtractPandocText(inner, depth + 1) + "*";
 						pos = arr_end + 1;
 						continue;
 					}
@@ -362,7 +370,7 @@ string DuckBlockFunctions::ExtractPandocText(const string &content) {
 								size_t inlines_end = find_bracket_end(inlines_arr);
 								if (inlines_end != string::npos) {
 									string inlines = content.substr(inlines_arr, inlines_end - inlines_arr + 1);
-									string link_text = ExtractPandocText(inlines);
+									string link_text = ExtractPandocText(inlines, depth + 1);
 
 									// Find the target array (third element) [url, title]
 									size_t target_arr = content.find('[', inlines_end + 1);
