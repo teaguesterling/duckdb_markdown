@@ -323,6 +323,39 @@ void MarkdownFunctions::RegisterMetadataFunctions(ExtensionLoader &loader) {
 	    });
 
 	loader.RegisterFunction(md_extract_metadata_fun);
+
+	// md_extract_frontmatter - the RAW frontmatter block (text between the --- fences) as VARCHAR,
+	// NULL when there is no frontmatter. This is the lightweight-markdown / real-YAML seam: pair it
+	// with duckdb_yaml (yaml(...) / read_yaml_frontmatter) when you need full YAML fidelity, without
+	// markdown itself carrying a YAML parser.
+	ScalarFunction md_extract_frontmatter_fun(
+	    "md_extract_frontmatter", {markdown_type}, LogicalType::VARCHAR,
+	    [](DataChunk &args, ExpressionState &state, Vector &result) {
+		    auto &input = args.data[0];
+		    auto count = args.size();
+
+		    for (idx_t i = 0; i < count; i++) {
+			    auto md_value = input.GetValue(i);
+			    if (md_value.IsNull()) {
+				    result.SetValue(i, Value(LogicalType::VARCHAR));
+				    continue;
+			    }
+
+			    try {
+				    auto raw = markdown_utils::ExtractRawFrontmatter(md_value.ToString());
+				    if (raw.empty()) {
+					    // No frontmatter block (ExtractRawFrontmatter returns "" when absent).
+					    result.SetValue(i, Value(LogicalType::VARCHAR));
+				    } else {
+					    result.SetValue(i, Value(raw));
+				    }
+			    } catch (const std::exception &e) {
+				    result.SetValue(i, Value(LogicalType::VARCHAR));
+			    }
+		    }
+	    });
+
+	loader.RegisterFunction(md_extract_frontmatter_fun);
 }
 
 } // namespace duckdb

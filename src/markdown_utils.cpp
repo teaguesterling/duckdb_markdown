@@ -76,6 +76,50 @@ static FrontmatterMatch FindFrontmatter(const std::string &s) {
 	return m;
 }
 
+// JSON-escape a string per RFC 8259 for `encoding='json'` block content: the named short
+// escapes plus \u00XX for any remaining control character (< 0x20). Previously two divergent
+// copies existed — the table-cell path escaped only " \ \n, so a literal tab/CR in a cell
+// produced invalid JSON (issue #21). Single source of truth avoids that.
+static std::string EscapeJSONString(const std::string &s) {
+	static const char *kHex = "0123456789abcdef";
+	std::string out;
+	out.reserve(s.size() + 8);
+	for (unsigned char c : s) {
+		switch (c) {
+		case '"':
+			out += "\\\"";
+			break;
+		case '\\':
+			out += "\\\\";
+			break;
+		case '\n':
+			out += "\\n";
+			break;
+		case '\r':
+			out += "\\r";
+			break;
+		case '\t':
+			out += "\\t";
+			break;
+		case '\b':
+			out += "\\b";
+			break;
+		case '\f':
+			out += "\\f";
+			break;
+		default:
+			if (c < 0x20) {
+				out += "\\u00";
+				out += kHex[(c >> 4) & 0xF];
+				out += kHex[c & 0xF];
+			} else {
+				out += static_cast<char>(c);
+			}
+		}
+	}
+	return out;
+}
+
 // True if a single line (without its trailing '\n') is a GFM pipe-table row:
 // starts with '|', has at least two '|', and only spaces/tabs after the last
 // '|'. Faithful to R"(\|[^\n]*\|[ \t]*)" applied per line. A trailing '\r'
@@ -1001,30 +1045,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
 						item_child = cmark_node_next(item_child);
 					}
 
-					// Escape JSON special characters
-					std::string escaped;
-					for (char c : item_text) {
-						switch (c) {
-						case '"':
-							escaped += "\\\"";
-							break;
-						case '\\':
-							escaped += "\\\\";
-							break;
-						case '\n':
-							escaped += "\\n";
-							break;
-						case '\r':
-							escaped += "\\r";
-							break;
-						case '\t':
-							escaped += "\\t";
-							break;
-						default:
-							escaped += c;
-						}
-					}
-					json += "\"" + escaped + "\"";
+					json += "\"" + EscapeJSONString(item_text) + "\"";
 				}
 				item = cmark_node_next(item);
 			}
@@ -1088,24 +1109,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
 								first_cell = false;
 
 								std::string cell_text = GetInlineText(cell);
-								// Escape JSON
-								std::string escaped;
-								for (char c : cell_text) {
-									switch (c) {
-									case '"':
-										escaped += "\\\"";
-										break;
-									case '\\':
-										escaped += "\\\\";
-										break;
-									case '\n':
-										escaped += "\\n";
-										break;
-									default:
-										escaped += c;
-									}
-								}
-								row_json += "\"" + escaped + "\"";
+								row_json += "\"" + EscapeJSONString(cell_text) + "\"";
 							}
 							cell = cmark_node_next(cell);
 						}

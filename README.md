@@ -191,7 +191,8 @@ All extraction functions return `LIST<STRUCT>` types for easy SQL composition:
 - **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
 - **`md_valid(markdown)`** - Validate markdown content and return boolean
 - **`md_stats(markdown)`** - Get document statistics (word count, reading time, etc.)
-- **`md_extract_metadata(markdown)`** - Extract frontmatter metadata as `MAP(VARCHAR, VARCHAR)`
+- **`md_extract_metadata(markdown)`** - Extract frontmatter as `MAP(VARCHAR, VARCHAR)`. This is a lightweight **line-split key/value** reader (each line split on the first `:`), *not* a full YAML parser — nested maps, lists, and multiline scalars are not interpreted. For full YAML fidelity, extract the raw block with `md_extract_frontmatter` (below) and hand it to the [`duckdb_yaml`](https://github.com/teaguesterling/duckdb_yaml) extension (`yaml`/`read_yaml_frontmatter`).
+- **`md_extract_frontmatter(markdown)`** - Extract the **raw** frontmatter block (the text between the `---` fences) as `VARCHAR`, or `NULL` when there is no frontmatter. Composes with `duckdb_yaml` for real YAML parsing without this extension carrying a YAML parser: e.g. `SELECT yaml(md_extract_frontmatter(content))`.
 - **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. With `include_subsections := true`, includes all nested content (full mode); default is minimal mode.
 - **`md_extract_sections(markdown, [min_level, max_level, content_mode])`** - Extract all sections as a list. Supports optional level filtering and content_mode ('minimal', 'full', 'smart').
 - **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
