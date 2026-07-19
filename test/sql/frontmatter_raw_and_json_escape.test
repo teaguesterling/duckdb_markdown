@@ -1,0 +1,52 @@
+# name: test/sql/frontmatter_raw_and_json_escape.test
+# description: md_extract_frontmatter raw block (#17) + table-cell JSON escaping (#21)
+# group: [sql]
+
+require markdown
+
+# json_valid (below) lives in the json extension.
+require json
+
+# =============================================================================
+# md_extract_frontmatter: the RAW frontmatter block between the --- fences, for
+# callers who want to hand it to duckdb_yaml rather than the line-split MAP.
+# Newlines are built with chr(10) — sqllogictest does not allow literal newlines
+# inside a SQL string literal.
+# =============================================================================
+
+# Single-line body compared directly.
+query I
+SELECT md_extract_frontmatter('---' || chr(10) || 'title: Hello' || chr(10) || '---' || chr(10) || '# Body') = 'title: Hello';
+----
+true
+
+# Multi-line frontmatter returned verbatim (delimiters excluded).
+query I
+SELECT md_extract_frontmatter('---' || chr(10) || 'a: 1' || chr(10) || 'b: 2' || chr(10) || '---' || chr(10) || 'body') = 'a: 1' || chr(10) || 'b: 2';
+----
+true
+
+# No frontmatter block -> NULL (not empty string).
+query I
+SELECT md_extract_frontmatter('# Just a heading, no frontmatter') IS NULL;
+----
+true
+
+# NULL input -> NULL.
+query I
+SELECT md_extract_frontmatter(NULL::VARCHAR) IS NULL;
+----
+true
+
+# =============================================================================
+# Table-cell JSON escaping (#21): a literal tab in a cell must still produce
+# VALID JSON in the `encoding='json'` block content. Pre-fix the table path
+# escaped only " \ \n, so a tab emitted a raw byte and broke the JSON.
+# =============================================================================
+
+query I
+SELECT bool_and(json_valid(content))
+FROM read_markdown_blocks('test/md/tab_in_cell.md')
+WHERE encoding = 'json';
+----
+true
