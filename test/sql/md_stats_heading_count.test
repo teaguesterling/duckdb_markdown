@@ -1,0 +1,48 @@
+# name: test/sql/md_stats_heading_count.test
+# description: md_stats().heading_count counts every ATX heading line (issue #17)
+# group: [markdown]
+
+require markdown
+
+# Core bug (#17): headings that do NOT open the document were previously missed
+# (a single-pass ^#{1,6} only anchors at string start), so this returned 0.
+query I
+SELECT (md_stats(E'Intro paragraph.\n\n# First heading\n\nBody.')).heading_count;
+----
+1
+
+# Every heading line is counted, at any level (h1..h6)
+query I
+SELECT (md_stats(E'# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6')).heading_count;
+----
+6
+
+# Headings inside a fenced code block are NOT counted
+query I
+SELECT (md_stats(E'# Real\n```\n# not a heading\n## also not\n```\n## Real2')).heading_count;
+----
+2
+
+# ~~~ fences are honored too
+query I
+SELECT (md_stats(E'# Real\n~~~\n# fenced\n~~~\n# Real2')).heading_count;
+----
+2
+
+# A run of '#' with no following space/tab is not a heading; >6 '#' is not a heading
+query I
+SELECT (md_stats(E'#nospace\n####### too many\n# yes')).heading_count;
+----
+1
+
+# No headings -> 0
+query I
+SELECT (md_stats(E'just some text\nwith no headings')).heading_count;
+----
+0
+
+# Tab after the '#' run also delimits a heading
+query I
+SELECT (md_stats(E'#\ttab heading')).heading_count;
+----
+1

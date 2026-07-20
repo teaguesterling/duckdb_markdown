@@ -358,18 +358,37 @@ MarkdownStats CalculateStats(const std::string &markdown_str) {
 	stats.char_count = markdown_str.length();
 	stats.line_count = static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
 
-	// Count headings. Faithful to the previous std::regex R"(^#{1,6}\s+)"
-	// which (default, non-multiline) only anchors at the START of the string,
-	// so this is 0 or 1: 1 iff the document opens with 1-6 '#' then whitespace.
+	// Count headings (#17: this previously returned 0 unless the document *opened* with a
+	// heading — a single-pass `^#{1,6}` only anchors at string start). Scan line-by-line,
+	// skipping fenced code blocks. Regex-free, matching this file's linear-scanning
+	// convention (#22, ReDoS hardening).
 	stats.heading_count = 0;
 	{
-		size_t h = 0;
-		while (h < markdown_str.size() && markdown_str[h] == '#') {
-			h++;
-		}
-		if (h >= 1 && h <= 6 && h < markdown_str.size() &&
-		    std::isspace(static_cast<unsigned char>(markdown_str[h]))) {
-			stats.heading_count = 1;
+		std::istringstream heading_stream(markdown_str);
+		std::string heading_line;
+		bool in_fence = false;
+		while (std::getline(heading_stream, heading_line)) {
+			// Fence toggle: optional leading whitespace then ``` or ~~~.
+			size_t p = 0;
+			while (p < heading_line.size() && (heading_line[p] == ' ' || heading_line[p] == '\t')) {
+				p++;
+			}
+			if (heading_line.compare(p, 3, "```") == 0 || heading_line.compare(p, 3, "~~~") == 0) {
+				in_fence = !in_fence;
+				continue;
+			}
+			if (in_fence) {
+				continue;
+			}
+			// Heading line: 1-6 '#' at column 0 then a space or tab.
+			size_t h = 0;
+			while (h < heading_line.size() && heading_line[h] == '#') {
+				h++;
+			}
+			if (h >= 1 && h <= 6 && h < heading_line.size() &&
+			    (heading_line[h] == ' ' || heading_line[h] == '\t')) {
+				stats.heading_count++;
+			}
 		}
 	}
 
