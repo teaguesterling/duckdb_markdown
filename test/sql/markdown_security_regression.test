@@ -117,13 +117,14 @@ SELECT t.num_rows FROM (
 ----
 2
 
-# md_stats on a normal doc keeps its (documented) counts
+# md_stats on a normal doc: heading_count now counts every heading line (#17), not just a
+# leading one. This doc has two headings (# H1, ## H2); the fenced ``` lines are not headings.
 query III
 SELECT (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```')).heading_count,
        (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```')).link_count,
        (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```')).code_block_count;
 ----
-1	2	1
+2	2	1
 
 # Reference-style and direct links both resolved
 query I
