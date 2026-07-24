@@ -41,3 +41,40 @@ jobs:
       ci_tools_version: main
       extension_name: markdown
       format_checks: 'format'
+
+  # Guards against the LINKED_LIBS class of WASM bug (issue #19): the reusable
+  # distribution workflow builds and uploads the .wasm but never inspects or
+  # loads it, so a side module with unresolved cmark-gfm symbols ships green.
+  # Two layers (see test/wasm/):
+  #   1. static symbol check (hard gate) — no duckdb-wasm runtime needed.
+  #   2. live load+query in duckdb-wasm (informational / continue-on-error) —
+  #      expected-red until an official duckdb-wasm ships a matching v1.5.4
+  #      build (a version/emscripten skew surfaces as an ABI mismatch on LOAD).
+  wasm-load-test:
+    name: WASM load test
+    needs: [duckdb-stable-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: markdown-v1.5.4-extension-wasm_*
+          path: wasm-artifacts
+      - name: Static symbol check (cmark-gfm must be linked, not unresolved)
+        run: bash test/wasm/run_wasm_checks.sh wasm-artifacts
+      - name: Live load test in duckdb-wasm (informational until engine matches)
+        continue-on-error: true
+        timeout-minutes: 10
+        working-directory: test/wasm
+        run: |
+          set -uo pipefail
+          timeout 300 npm install --no-save
+          mkdir -p repo/v1.5.4/wasm_eh
+          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v1.5.4-extension-wasm_eh/markdown.duckdb_extension.wasm" \
+             repo/v1.5.4/wasm_eh/
+          timeout 240 node load_test.cjs --repo repo --name markdown --platform eh \
+            --query "SELECT md_to_html('# H') AS h" --expect "<h1>"
