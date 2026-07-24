@@ -1535,6 +1535,181 @@ std::string NormalizeMarkdown(const std::string &markdown_str) {
 	return normalized;
 }
 
+std::vector<MarkdownWikilink> ExtractWikilinks(const std::string &markdown_str) {
+	std::vector<MarkdownWikilink> wikilinks;
+	if (markdown_str.empty()) {
+		return wikilinks;
+	}
+
+	// [[target]], [[target|alias]], [[target#heading]], [[target^block]], ![[embed]].
+	// Linear scan (no std::regex — see #22 ReDoS hardening). Per "[[": read the target
+	// (>=1 char, none of ] | # ^), an optional #/^ anchor (>=1 char, none of ] |), an
+	// optional |alias (up to ]), then require a closing "]]". cmark-gfm does not parse
+	// wiki links, so this is a lightweight standalone pass. Equivalent to the previous
+	// regex (!?)\[\[([^\]\|#\^]+)((?:#|\^)[^\]\|]+)?(?:\|([^\]]*))?\]\].
+	std::istringstream stream(markdown_str);
+	std::string line;
+	idx_t line_number = 0;
+	while (std::getline(stream, line)) {
+		line_number++;
+		const size_t len = line.size();
+		size_t i = 0;
+		while (i + 1 < len) {
+			if (!(line[i] == '[' && line[i + 1] == '[')) {
+				i++;
+				continue;
+			}
+			const size_t open = i;
+			size_t j = open + 2;
+			// target: >= 1 char, none of ] | # ^
+			const size_t target_start = j;
+			while (j < len && line[j] != ']' && line[j] != '|' && line[j] != '#' && line[j] != '^') {
+				j++;
+			}
+			// First terminator after "[[". If this "[[" fails to form a link, every "[["
+			// starting inside [open, target_stop) hits the same terminator and fails
+			// identically, so we can resume here — keeping the scan O(n) (no re-scanning the
+			// target on adversarial '[' runs). target_stop >= open+2, so i always advances.
+			const size_t target_stop = j;
+			bool matched = false;
+			if (j > target_start) {
+				std::string target = line.substr(target_start, j - target_start);
+				std::string anchor;
+				bool valid = true;
+				// optional anchor: (# or ^) then >= 1 char, none of ] |
+				if (j < len && (line[j] == '#' || line[j] == '^')) {
+					const size_t anchor_start = j;
+					j++; // consume # or ^
+					const size_t body_start = j;
+					while (j < len && line[j] != ']' && line[j] != '|') {
+						j++;
+					}
+					if (j == body_start) {
+						valid = false; // '#'/'^' with no body: the regex fails to match here
+					} else {
+						anchor = line.substr(anchor_start, j - anchor_start);
+					}
+				}
+				// optional alias: | then any chars up to ]
+				std::string alias;
+				if (valid && j < len && line[j] == '|') {
+					j++;
+					const size_t alias_start = j;
+					while (j < len && line[j] != ']') {
+						j++;
+					}
+					alias = line.substr(alias_start, j - alias_start);
+				}
+				// require closing ]]
+				if (valid && j + 1 < len && line[j] == ']' && line[j + 1] == ']') {
+					MarkdownWikilink wl;
+					wl.is_embed = (open > 0 && line[open - 1] == '!');
+					wl.target = target;
+					StringUtil::Trim(wl.target); // Trim modifies in place and returns void
+					wl.anchor = anchor;
+					wl.alias = alias;
+					StringUtil::Trim(wl.alias);
+					wl.line_number = line_number;
+					wikilinks.push_back(wl);
+					i = j + 2; // continue after the closing ]]
+					matched = true;
+				}
+			}
+			if (!matched) {
+				i = target_stop; // skip the scanned target region (see target_stop note)
+			}
+		}
+	}
+	return wikilinks;
+}
+
+// Blank out inline code spans (`...`) so '#' inside them doesn't produce tags. Equivalent
+// to std::regex_replace on `[^`]*` : each backtick-delimited span becomes a single space.
+static std::string ScrubInlineCode(const std::string &line) {
+	std::string scrubbed;
+	scrubbed.reserve(line.size());
+	size_t k = 0;
+	while (k < line.size()) {
+		if (line[k] == '`') {
+			size_t close = line.find('`', k + 1);
+			if (close != std::string::npos) {
+				scrubbed += ' '; // replace `...` span with a single space
+				k = close + 1;
+				continue;
+			}
+			// no closing backtick: not a code span, keep the char literally
+		}
+		scrubbed += line[k];
+		k++;
+	}
+	return scrubbed;
+}
+
+std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str) {
+	std::vector<MarkdownTag> tags;
+	if (markdown_str.empty()) {
+		return tags;
+	}
+
+	// Inline #tag / #nested/tag. v1 limitations (documented): tags inside link URLs or
+	// wikilink targets are not suppressed; fenced code blocks and inline code spans are.
+	// Linear scan (no std::regex — see #22 ReDoS hardening). A tag is '#' preceded by
+	// start-of-line or whitespace, then a letter/_ and tag chars (allowing nested '/'),
+	// excluding pure-numeric (#123) to avoid issue/anchor false positives.
+	std::istringstream stream(markdown_str);
+	std::string line;
+	idx_t line_number = 0;
+	bool in_fence = false;
+	while (std::getline(stream, line)) {
+		line_number++;
+		// Fence toggle: optional leading whitespace then ``` or ~~~.
+		size_t f = 0;
+		while (f < line.size() && std::isspace(static_cast<unsigned char>(line[f]))) {
+			f++;
+		}
+		if (line.compare(f, 3, "```") == 0 || line.compare(f, 3, "~~~") == 0) {
+			in_fence = !in_fence;
+			continue;
+		}
+		if (in_fence) {
+			continue;
+		}
+		const std::string scrubbed = ScrubInlineCode(line);
+		for (size_t k = 0; k < scrubbed.size(); k++) {
+			if (scrubbed[k] != '#') {
+				continue;
+			}
+			// '#' must be at start-of-line or preceded by whitespace.
+			if (k > 0 && !std::isspace(static_cast<unsigned char>(scrubbed[k - 1]))) {
+				continue;
+			}
+			size_t t = k + 1;
+			if (t >= scrubbed.size()) {
+				continue;
+			}
+			const char c0 = scrubbed[t];
+			if (!(std::isalpha(static_cast<unsigned char>(c0)) || c0 == '_')) {
+				continue; // first tag char must be a letter or underscore
+			}
+			const size_t tag_start = t;
+			while (t < scrubbed.size()) {
+				const char c = scrubbed[t];
+				if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '/' || c == '-') {
+					t++;
+				} else {
+					break;
+				}
+			}
+			MarkdownTag tag;
+			tag.tag = scrubbed.substr(tag_start, t - tag_start);
+			tag.line_number = line_number;
+			tags.push_back(tag);
+			k = t - 1; // resume after the tag (the for-loop's ++ advances to t)
+		}
+	}
+	return tags;
+}
+
 } // namespace markdown_utils
 
 } // namespace duckdb

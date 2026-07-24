@@ -40,6 +40,90 @@ struct MarkdownReadBlocksBindData : public TableFunctionData {
 // Helper Functions
 //===--------------------------------------------------------------------===//
 
+//===--------------------------------------------------------------------===//
+// Optional add-on extractor columns (extract_extensions param)
+//===--------------------------------------------------------------------===//
+// Shared between binds (which add LIST<STRUCT> columns to the output schema
+// when the corresponding option is enabled) and executes (which populate those
+// columns from each row's content via the same primitives the scalar
+// md_extract_wikilinks / md_extract_tags functions use).
+
+static LogicalType WikilinkStructType() {
+	child_list_t<LogicalType> fields;
+	fields.push_back({"target", LogicalType(LogicalTypeId::VARCHAR)});
+	fields.push_back({"alias", LogicalType(LogicalTypeId::VARCHAR)});
+	fields.push_back({"anchor", LogicalType(LogicalTypeId::VARCHAR)});
+	fields.push_back({"is_embed", LogicalType(LogicalTypeId::BOOLEAN)});
+	fields.push_back({"line_number", LogicalType(LogicalTypeId::BIGINT)});
+	return LogicalType::STRUCT(fields);
+}
+
+static LogicalType TagStructType() {
+	child_list_t<LogicalType> fields;
+	fields.push_back({"tag", LogicalType(LogicalTypeId::VARCHAR)});
+	fields.push_back({"line_number", LogicalType(LogicalTypeId::BIGINT)});
+	return LogicalType::STRUCT(fields);
+}
+
+// Strip backslash-escapes from the inline characters our regex matches on
+// (`[`, `]`, `#`, `^`, `|`, `!`). `ExtractSections` / block extraction routes
+// per-row content through cmark's plaintext rendering, which escapes markdown
+// special characters — so `[[Meeting^abc]]` arrives as `\[\[Meeting\^abc\]\]`
+// and the wikilink regex won't match. Per-file content (read_markdown's raw
+// file bytes) has no escapes, so this is idempotent there.
+static std::string UnescapeMarkdownInline(const std::string &in) {
+	std::string out;
+	out.reserve(in.size());
+	for (size_t i = 0; i < in.size(); i++) {
+		if (in[i] == '\\' && i + 1 < in.size()) {
+			char next = in[i + 1];
+			if (next == '[' || next == ']' || next == '#' || next == '^' ||
+			    next == '|' || next == '!' || next == '\\') {
+				out.push_back(next);
+				i++;
+				continue;
+			}
+		}
+		out.push_back(in[i]);
+	}
+	return out;
+}
+
+static Value BuildWikilinksValue(const std::string &content) {
+	auto wikilinks = markdown_utils::ExtractWikilinks(UnescapeMarkdownInline(content));
+	vector<Value> rows;
+	for (const auto &wl : wikilinks) {
+		child_list_t<Value> sc;
+		sc.push_back({"target", Value(wl.target)});
+		sc.push_back({"alias", wl.alias.empty() ? Value(LogicalType::VARCHAR) : Value(wl.alias)});
+		sc.push_back({"anchor", wl.anchor.empty() ? Value(LogicalType::VARCHAR) : Value(wl.anchor)});
+		sc.push_back({"is_embed", Value(wl.is_embed)});
+		sc.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(wl.line_number))});
+		rows.push_back(Value::STRUCT(sc));
+	}
+	if (rows.empty()) {
+		// Empty list with a typed element so the vector cast against the bind schema works
+		// (same pattern as md_extract_links's empty case in markdown_extraction_functions.cpp).
+		return Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {});
+	}
+	return Value::LIST(rows);
+}
+
+static Value BuildTagsValue(const std::string &content) {
+	auto tags = markdown_utils::ExtractTags(UnescapeMarkdownInline(content));
+	vector<Value> rows;
+	for (const auto &t : tags) {
+		child_list_t<Value> sc;
+		sc.push_back({"tag", Value(t.tag)});
+		sc.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(t.line_number))});
+		rows.push_back(Value::STRUCT(sc));
+	}
+	if (rows.empty()) {
+		return Value::LIST(LogicalType::LIST(LogicalType::STRUCT({})), {});
+	}
+	return Value::LIST(rows);
+}
+
 static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::MarkdownReadOptions &options) {
 	for (const auto &kv : input.named_parameters) {
 		if (kv.first == "extract_metadata") {
@@ -86,6 +170,34 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 			}
 		} else if (kv.first == "max_content_length") {
 			options.max_content_length = UBigIntValue::Get(kv.second);
+		} else if (kv.first == "extract_extensions") {
+			// Opt-in add-on extractors. Comma-separated VARCHAR — each token is a flavor
+			// ('obsidian' → wikilinks + tags) or a feature ('wikilinks', 'tags').
+			// NULL/unset is the default (no extensions); unknown tokens throw, matching
+			// the existing `flavor` param's strictness.
+			if (!kv.second.IsNull()) {
+				auto raw = StringValue::Get(kv.second);
+				auto tokens = StringUtil::Split(raw, ",");
+				for (auto &tok : tokens) {
+					StringUtil::Trim(tok);
+					if (tok.empty()) {
+						continue;
+					}
+					if (tok == "obsidian") {
+						options.extract_wikilinks = true;
+						options.extract_tags = true;
+					} else if (tok == "wikilinks") {
+						options.extract_wikilinks = true;
+					} else if (tok == "tags") {
+						options.extract_tags = true;
+					} else {
+						throw InvalidInputException(
+						    "Unknown extract_extensions feature: '%s'. Known: 'obsidian' "
+						    "(flavor expanding to wikilinks+tags), 'wikilinks', 'tags'.",
+						    tok);
+					}
+				}
+			}
 		} else {
 			throw InvalidInputException("Unknown parameter for read_markdown: %s", kv.first);
 		}
@@ -147,6 +259,16 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
 		return_types.emplace_back(LogicalType::STRUCT(stats_struct));
 	}
 
+	// Optional add-on extractor columns (extract_extensions param)
+	if (result->options.extract_wikilinks) {
+		names.emplace_back("wikilinks");
+		return_types.emplace_back(LogicalType::LIST(WikilinkStructType()));
+	}
+	if (result->options.extract_tags) {
+		names.emplace_back("tags");
+		return_types.emplace_back(LogicalType::LIST(TagStructType()));
+	}
+
 	return std::move(result);
 }
 
@@ -203,6 +325,16 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 				    std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
 
 				output.data[column_idx].SetValue(output_idx, Value::STRUCT(struct_values));
+				column_idx++;
+			}
+
+			// Optional add-on extractor columns
+			if (bind_data.options.extract_wikilinks) {
+				output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(content));
+				column_idx++;
+			}
+			if (bind_data.options.extract_tags) {
+				output.data[column_idx].SetValue(output_idx, BuildTagsValue(content));
 				column_idx++;
 			}
 
@@ -378,6 +510,16 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 	names.emplace_back("end_line");
 	return_types.emplace_back(LogicalType(LogicalTypeId::BIGINT));
 
+	// Optional add-on extractor columns (per-section: extracted from section.content)
+	if (result->options.extract_wikilinks) {
+		names.emplace_back("wikilinks");
+		return_types.emplace_back(LogicalType::LIST(WikilinkStructType()));
+	}
+	if (result->options.extract_tags) {
+		names.emplace_back("tags");
+		return_types.emplace_back(LogicalType::LIST(TagStructType()));
+	}
+
 	return std::move(result);
 }
 
@@ -423,6 +565,17 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 		output.data[column_idx].SetValue(output_idx, Value::BIGINT(static_cast<int64_t>(section.start_line)));
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, Value::BIGINT(static_cast<int64_t>(section.end_line)));
+		column_idx++;
+
+		// Optional add-on extractor columns (extracted from this section's content)
+		if (bind_data.options.extract_wikilinks) {
+			output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(section.content));
+			column_idx++;
+		}
+		if (bind_data.options.extract_tags) {
+			output.data[column_idx].SetValue(output_idx, BuildTagsValue(section.content));
+			column_idx++;
+		}
 
 		output_idx++;
 		bind_data.current_section_index++;
@@ -494,6 +647,16 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 	names.emplace_back("element_order");
 	return_types.emplace_back(LogicalType(LogicalTypeId::INTEGER));
 
+	// Optional add-on extractor columns (per-block: extracted from block.content)
+	if (result->options.extract_wikilinks) {
+		names.emplace_back("wikilinks");
+		return_types.emplace_back(LogicalType::LIST(WikilinkStructType()));
+	}
+	if (result->options.extract_tags) {
+		names.emplace_back("tags");
+		return_types.emplace_back(LogicalType::LIST(TagStructType()));
+	}
+
 	return std::move(result);
 }
 
@@ -552,6 +715,17 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 
 		// element_order (was block_order)
 		output.data[column_idx].SetValue(output_idx, Value::INTEGER(block.block_order));
+		column_idx++;
+
+		// Optional add-on extractor columns (extracted from this block's content)
+		if (bind_data.options.extract_wikilinks) {
+			output.data[column_idx].SetValue(output_idx, BuildWikilinksValue(block.content));
+			column_idx++;
+		}
+		if (bind_data.options.extract_tags) {
+			output.data[column_idx].SetValue(output_idx, BuildTagsValue(block.content));
+			column_idx++;
+		}
 
 		output_idx++;
 		bind_data.current_block_index++;
@@ -574,6 +748,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_markdown_func.named_parameters["include_stats"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_markdown_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_markdown_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
+	read_markdown_func.named_parameters["extract_extensions"] = LogicalType(LogicalTypeId::VARCHAR);
 	read_markdown_func.named_parameters["flavor"] = LogicalType(LogicalTypeId::VARCHAR);
 	read_markdown_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_markdown_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
@@ -590,6 +765,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_sections_func.named_parameters["include_stats"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_sections_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_sections_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
+	read_sections_func.named_parameters["extract_extensions"] = LogicalType(LogicalTypeId::VARCHAR);
 	read_sections_func.named_parameters["flavor"] = LogicalType(LogicalTypeId::VARCHAR);
 	read_sections_func.named_parameters["include_content"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_sections_func.named_parameters["min_level"] = LogicalType(LogicalTypeId::INTEGER);
@@ -614,6 +790,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_blocks_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_blocks_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_blocks_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
+	read_blocks_func.named_parameters["extract_extensions"] = LogicalType(LogicalTypeId::VARCHAR);
 	read_blocks_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_blocks_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 

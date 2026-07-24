@@ -44,6 +44,14 @@ public:
 		bool include_filepath = false;   // Whether to include file_path column
 		bool content_as_varchar = false; // Whether content should be varchar instead of markdown
 
+		// Optional add-on extractors enabled via the `extract_extensions` named param.
+		// When set, the reader appends LIST<STRUCT> columns populated from each row's
+		// content. These cover the Obsidian/wiki superset that cmark-gfm cannot parse —
+		// opt-in (linear scan). Implementations use markdown_utils::ExtractWikilinks /
+		// ExtractTags (the same primitives behind md_extract_wikilinks / md_extract_tags).
+		bool extract_wikilinks = false; // Adds `wikilinks` column ([[X]], ![[X]], #h, ^b, |alias)
+		bool extract_tags = false;      // Adds `tags` column (#tag, #nested/tag)
+
 		// Section reader specific
 		bool include_content = true;         // Whether to include section content
 		int32_t min_level = 1;               // Minimum heading level

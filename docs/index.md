@@ -26,6 +26,25 @@ SELECT title, level, content
 FROM read_markdown_sections('README.md', content_mode := 'full');
 ```
 
+## Wiki / Obsidian Extraction (opt-in)
+
+`cmark-gfm` only parses CommonMark + GFM, so `[[wikilinks]]`, `![[embeds]]`, and inline `#tags`
+are not part of the default output. They are exposed two ways:
+
+```sql
+-- 1. Scalar functions on a markdown string
+SELECT md_extract_wikilinks('see [[Architecture]] and ![[diagram.png]]');
+SELECT md_extract_tags('#planning #q2/goals');
+
+-- 2. As opt-in add-on columns on the readers, via `extract_extensions`
+SELECT wikilinks, tags
+FROM read_markdown('vault/**/*.md', extract_extensions := 'obsidian');
+--                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+--                                  flavor; also accepts 'wikilinks,tags' or a single token
+```
+
+See the [README](https://github.com/teaguesterling/duckdb_markdown#optional-add-on-extractors-extract_extensions) for the full add-on catalog, semantics, and v1 limitations.
+
 ## Duck Block Functions
 
 Convert blocks to/from Markdown:
