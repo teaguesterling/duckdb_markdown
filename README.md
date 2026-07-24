@@ -110,7 +110,7 @@ Reads Markdown files and returns one row per file.
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
-- `extract_metadata := true` - Extract frontmatter metadata
+- `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:`, typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For full YAML fidelity, read the raw block with `md_extract_frontmatter` and parse it with [`duckdb_yaml`](https://github.com/teaguesterling/duckdb_yaml).
 - `normalize_content := true` - Normalize Markdown content
 - `extract_extensions := NULL` - Opt-in add-on extractors (comma-separated VARCHAR; see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds `wikilinks` and/or `tags` `LIST<STRUCT>` columns to the output
 
