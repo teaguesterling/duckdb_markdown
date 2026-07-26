@@ -107,16 +107,21 @@ std::string ExtractSection(const std::string &markdown_str, const std::string &s
 //===--------------------------------------------------------------------===//
 
 struct MarkdownBlock {
-	std::string block_type; // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
-	std::string content;    // Primary content
-	int32_t level;          // Heading level (1-6), nesting depth, or 0
-	std::string encoding;   // text, json, yaml, base64
+	std::string kind = "block"; // 'block' or 'inline' (structured inline children)
+	std::string block_type;     // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
+	std::string content;        // Primary content ("" for containers with structured children)
+	int32_t level;              // Heading level (1-6), nesting depth, or 0
+	std::string encoding;       // text, json, yaml, base64
 	std::map<std::string, std::string> attributes; // language, id, class, etc.
 	int32_t block_order;                           // Optional ordering for table storage
 };
 
-// Parse document into blocks (block-level AST)
-std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str);
+// Parse document into blocks (block-level AST). When structured_inlines is true,
+// formatted paragraphs/headings emit their rich text as kind='inline' child
+// blocks (bold/italic/code/link/text at level+1) instead of markdown-in-content;
+// a block whose inline content is a single plain-text run keeps that text in
+// `content` (per the duck_blocks spec's content rules).
+std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool structured_inlines = false);
 
 //===--------------------------------------------------------------------===//
 // Content Extraction

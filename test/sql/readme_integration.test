@@ -89,7 +89,7 @@ heading	DuckDB Markdown Extension
 query I
 SELECT
     bool_and(element_type IN ('heading', 'paragraph', 'list', 'code', 'blockquote', 'table', 'hr', 'html', 'frontmatter'))
-FROM read_markdown_blocks('README.md');
+FROM read_markdown_blocks('README.md') WHERE kind = 'block';
 ----
 true
 
@@ -99,9 +99,9 @@ SELECT min(element_order) FROM read_markdown_blocks('README.md');
 ----
 1
 
-# All blocks should have valid kind
+# All rows should have a valid kind (blocks, plus structured inline children)
 query I
-SELECT bool_and(kind = 'block') FROM read_markdown_blocks('README.md');
+SELECT bool_and(kind IN ('block', 'inline')) FROM read_markdown_blocks('README.md');
 ----
 true
 

@@ -519,3 +519,50 @@ SELECT duck_block_to_md({
 }) LIKE '%| A | B | C |%|---|---|---|%| 1 | 2 | 3 |%';
 ----
 true
+
+# =============================================================================
+# Test: parse_markdown_to_duck_blocks - markdown -> canonical structured blocks
+# Rich text becomes kind='inline' children, NOT markdown syntax in content.
+# =============================================================================
+
+# a plain heading keeps its text in content (single plain-text child)
+query TTT
+SELECT b.kind, b.element_type, b.content
+FROM (SELECT unnest(parse_markdown_to_duck_blocks('# Title')) AS b);
+----
+block	heading	Title
+
+# a formatted paragraph decomposes into structured inline children in order
+query T
+SELECT string_agg(b.element_type, ',' ORDER BY b.element_order)
+FROM (SELECT unnest(parse_markdown_to_duck_blocks('Plain **bold** and *em* and `code`.')) AS b);
+----
+paragraph,text,bold,text,italic,text,code,text
+
+# the paragraph container has NULL content; children carry the literal text
+query I
+SELECT b.content IS NULL
+FROM (SELECT unnest(parse_markdown_to_duck_blocks('a **b**')) AS b) WHERE b.element_type = 'paragraph';
+----
+true
+
+# no markdown syntax leaks into inline content (bold child is 'bold', not '**bold**')
+query T
+SELECT b.content
+FROM (SELECT unnest(parse_markdown_to_duck_blocks('**bold**')) AS b) WHERE b.element_type = 'bold';
+----
+bold
+
+# links carry href in attributes and the label in content
+query TT
+SELECT b.content, b.attributes['href']
+FROM (SELECT unnest(parse_markdown_to_duck_blocks('[site](https://x.io)')) AS b) WHERE b.element_type = 'link';
+----
+site	https://x.io
+
+# inline children are at level 2 (parent block is level 1)
+query I
+SELECT DISTINCT b.level
+FROM (SELECT unnest(parse_markdown_to_duck_blocks('a **b**')) AS b) WHERE b.kind = 'inline';
+----
+2
