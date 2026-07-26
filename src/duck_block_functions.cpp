@@ -1,5 +1,6 @@
 #include "duck_block_functions.hpp"
 #include "markdown_types.hpp"
+#include "markdown_utils.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/exception.hpp"
@@ -1166,10 +1167,59 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 // Register All Functions
 //===--------------------------------------------------------------------===//
 
+// Build a duck_block STRUCT Value from a parsed MarkdownBlock. Empty content
+// becomes NULL (the spec's convention for containers with structured children).
+static Value MakeDuckBlockValue(const markdown_utils::MarkdownBlock &b) {
+	child_list_t<Value> fields;
+	fields.emplace_back("kind", Value(b.kind));
+	fields.emplace_back("element_type", Value(b.block_type));
+	fields.emplace_back("content", b.content.empty() ? Value(LogicalType::VARCHAR) : Value(b.content));
+	fields.emplace_back("level", b.level >= 0 ? Value::INTEGER(b.level) : Value(LogicalType::INTEGER));
+	fields.emplace_back("encoding", Value(b.encoding));
+	vector<Value> keys, vals;
+	for (const auto &a : b.attributes) {
+		keys.push_back(Value(a.first));
+		vals.push_back(Value(a.second));
+	}
+	fields.emplace_back("attributes", Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, keys, vals));
+	fields.emplace_back("element_order", Value::INTEGER(b.block_order));
+	return Value::STRUCT(fields);
+}
+
+// parse_markdown_to_duck_blocks(md VARCHAR) -> LIST(duck_block)
+// Scalar counterpart of read_markdown_blocks that emits the canonical structured
+// representation: rich text as kind='inline' children, not markdown-in-content.
+static void RegisterParseMarkdownToDuckBlocks(ExtensionLoader &loader) {
+	auto duck_block_type = MarkdownTypes::DuckBlockType();
+	auto duck_block_list_type = LogicalType::LIST(duck_block_type);
+
+	ScalarFunction fn("parse_markdown_to_duck_blocks", {LogicalType::VARCHAR}, duck_block_list_type,
+	                  [](DataChunk &args, ExpressionState &state, Vector &result) {
+		                  auto &in = args.data[0];
+		                  auto dtype = MarkdownTypes::DuckBlockType();
+		                  for (idx_t i = 0; i < args.size(); i++) {
+			                  auto v = in.GetValue(i);
+			                  if (v.IsNull()) {
+				                  result.SetValue(i, Value());
+				                  continue;
+			                  }
+			                  auto blocks = markdown_utils::ParseBlocks(v.ToString(), /*structured_inlines=*/true);
+			                  vector<Value> vals;
+			                  vals.reserve(blocks.size());
+			                  for (const auto &b : blocks) {
+				                  vals.push_back(MakeDuckBlockValue(b));
+			                  }
+			                  result.SetValue(i, Value::LIST(dtype, vals));
+		                  }
+	                  });
+	loader.RegisterFunction(fn);
+}
+
 void DuckBlockFunctions::Register(ExtensionLoader &loader) {
 	RegisterDuckBlockToMdFunction(loader);
 	RegisterDuckBlocksToMdFunction(loader);
 	RegisterDuckBlocksToSectionsFunction(loader);
+	RegisterParseMarkdownToDuckBlocks(loader);
 }
 
 } // namespace duckdb

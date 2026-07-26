@@ -32,8 +32,8 @@ namespace markdown_utils {
 // Result of locating a leading YAML-style frontmatter block.
 struct FrontmatterMatch {
 	bool found = false;
-	size_t body_start = 0; // offset of first byte of the frontmatter body
-	size_t body_len = 0;   // length of the body (delimiters excluded)
+	size_t body_start = 0;  // offset of first byte of the frontmatter body
+	size_t body_len = 0;    // length of the body (delimiters excluded)
 	size_t after_close = 0; // offset just past the closing "---"
 };
 
@@ -385,8 +385,7 @@ MarkdownStats CalculateStats(const std::string &markdown_str) {
 			while (h < heading_line.size() && heading_line[h] == '#') {
 				h++;
 			}
-			if (h >= 1 && h <= 6 && h < heading_line.size() &&
-			    (heading_line[h] == ' ' || heading_line[h] == '\t')) {
+			if (h >= 1 && h <= 6 && h < heading_line.size() && (heading_line[h] == ' ' || heading_line[h] == '\t')) {
 				stats.heading_count++;
 			}
 		}
@@ -883,7 +882,118 @@ static std::string GetInlineText(cmark_node *node, int depth = 0) {
 	return result;
 }
 
-std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
+// True if `container`'s inline content is a single plain-text run (or empty),
+// in which case `text` holds it and no structured decomposition is needed.
+static bool SingleTextChild(cmark_node *container, std::string &text) {
+	cmark_node *c = cmark_node_first_child(container);
+	if (!c) {
+		text.clear();
+		return true;
+	}
+	if (cmark_node_next(c) != nullptr) {
+		return false;
+	}
+	if (cmark_node_get_type(c) != CMARK_NODE_TEXT) {
+		return false;
+	}
+	const char *lit = cmark_node_get_literal(c);
+	text = lit ? lit : "";
+	return true;
+}
+
+// Walk `container`'s inline children, appending kind='inline' MarkdownBlocks
+// (bold/italic/code/link/image/text) at `level`. Containers with formatting emit
+// an empty-content element then their children at level+1; a leaf with a single
+// text run carries that run in `content`.
+static void WalkInlines(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                        int depth = 0) {
+	if (depth > MAX_INLINE_DEPTH) {
+		throw InvalidInputException("Markdown inline nesting exceeds maximum supported depth (%d)", MAX_INLINE_DEPTH);
+	}
+	for (cmark_node *c = cmark_node_first_child(container); c; c = cmark_node_next(c)) {
+		cmark_node_type t = cmark_node_get_type(c);
+		MarkdownBlock ib;
+		ib.kind = "inline";
+		ib.level = level;
+		ib.encoding = "text";
+		ib.block_order = order++;
+		const char *lit = cmark_node_get_literal(c);
+
+		switch (t) {
+		case CMARK_NODE_TEXT:
+			ib.block_type = "text";
+			ib.content = lit ? lit : "";
+			out.push_back(ib);
+			break;
+		case CMARK_NODE_CODE:
+			ib.block_type = "code";
+			ib.content = lit ? lit : "";
+			out.push_back(ib);
+			break;
+		case CMARK_NODE_SOFTBREAK:
+			ib.block_type = "text";
+			ib.content = " ";
+			out.push_back(ib);
+			break;
+		case CMARK_NODE_LINEBREAK:
+			ib.block_type = "linebreak";
+			ib.content = "";
+			out.push_back(ib);
+			break;
+		case CMARK_NODE_STRONG:
+		case CMARK_NODE_EMPH: {
+			ib.block_type = (t == CMARK_NODE_STRONG) ? "bold" : "italic";
+			std::string simple;
+			if (SingleTextChild(c, simple)) {
+				ib.content = simple;
+				out.push_back(ib);
+			} else {
+				ib.content = "";
+				out.push_back(ib);
+				WalkInlines(c, level + 1, order, out, depth + 1);
+			}
+			break;
+		}
+		case CMARK_NODE_LINK:
+		case CMARK_NODE_IMAGE: {
+			bool is_image = (t == CMARK_NODE_IMAGE);
+			ib.block_type = is_image ? "image" : "link";
+			const char *url = cmark_node_get_url(c);
+			if (url && strlen(url) > 0) {
+				ib.attributes[is_image ? "src" : "href"] = url;
+			}
+			const char *title = cmark_node_get_title(c);
+			if (title && strlen(title) > 0) {
+				ib.attributes["title"] = title;
+			}
+			if (is_image) {
+				// image label is alt text; keep it in content, no children walked
+				ib.content = GetInlineText(c);
+				out.push_back(ib);
+			} else {
+				std::string simple;
+				if (SingleTextChild(c, simple)) {
+					ib.content = simple;
+					out.push_back(ib);
+				} else {
+					ib.content = "";
+					out.push_back(ib);
+					WalkInlines(c, level + 1, order, out, depth + 1);
+				}
+			}
+			break;
+		}
+		default:
+			// Unknown inline node: fall back to its flattened text.
+			ib.block_type = "text";
+			ib.content = GetInlineText(c);
+			out.push_back(ib);
+			break;
+		}
+	}
+}
+
+std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool structured_inlines) {
 	std::vector<MarkdownBlock> blocks;
 
 	if (markdown_str.empty()) {
@@ -934,33 +1044,45 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
 		block.encoding = "text";
 		block.level = 1; // Document-level blocks have level=1
 		block.block_order = block_order++;
+		bool emit_inlines = false;            // structured inline children follow this block
+		cmark_node *inline_container = child; // node whose inline children to walk
 
 		switch (node_type) {
 		case CMARK_NODE_HEADING: {
 			block.block_type = "heading";
 			int heading_level = cmark_node_get_heading_level(child);
+			// Headings keep their title as plain text (title semantics: TOC and
+			// heading extraction want a string). Inline formatting in a heading is
+			// flattened rather than decomposed into structured children.
 			block.content = GetInlineText(child);
 
 			// Store heading level as attribute (H1=1, H2=2, etc.)
 			block.attributes["heading_level"] = std::to_string(heading_level);
 
-			// Generate ID from heading text
+			// Generate ID from the heading text
 			std::unordered_map<std::string, int32_t> id_counts;
-			std::string id = GenerateSectionId(block.content, id_counts);
-			block.attributes["id"] = id;
+			block.attributes["id"] = GenerateSectionId(block.content, id_counts);
 			break;
 		}
 
 		case CMARK_NODE_PARAGRAPH: {
 			block.block_type = "paragraph";
-			// Render paragraph to markdown to preserve inline formatting
-			char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
-			if (md) {
-				block.content = md;
-				free(md);
-				// Trim trailing newlines
-				while (!block.content.empty() && (block.content.back() == '\n' || block.content.back() == '\r')) {
-					block.content.pop_back();
+			std::string simple;
+			if (structured_inlines && !SingleTextChild(child, simple)) {
+				block.content = ""; // rich text carried by inline children
+				emit_inlines = true;
+			} else if (structured_inlines) {
+				block.content = simple; // single plain-text run
+			} else {
+				// Legacy path: render inline formatting back to markdown text.
+				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+				if (md) {
+					block.content = md;
+					free(md);
+					// Trim trailing newlines
+					while (!block.content.empty() && (block.content.back() == '\n' || block.content.back() == '\r')) {
+						block.content.pop_back();
+					}
 				}
 			}
 			break;
@@ -992,30 +1114,48 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
 		case CMARK_NODE_BLOCK_QUOTE: {
 			block.block_type = "blockquote";
 			block.level = 1; // Could calculate nesting depth
-			// Render blockquote content without the > prefix
-			char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
-			if (md) {
-				block.content = md;
-				free(md);
-				// Remove leading > and trim
-				std::string result;
-				std::istringstream iss(block.content);
-				std::string line;
-				while (std::getline(iss, line)) {
-					// Remove leading "> " or ">"
-					if (line.length() >= 2 && line[0] == '>' && line[1] == ' ') {
-						result += line.substr(2) + "\n";
-					} else if (line.length() >= 1 && line[0] == '>') {
-						result += line.substr(1) + "\n";
-					} else {
-						result += line + "\n";
+			cmark_node *first = cmark_node_first_child(child);
+			bool single_para =
+			    first && cmark_node_get_type(first) == CMARK_NODE_PARAGRAPH && cmark_node_next(first) == nullptr;
+			if (structured_inlines && single_para) {
+				// Common case: a single paragraph -> emit its inlines structurally.
+				inline_container = first;
+				std::string simple;
+				if (SingleTextChild(first, simple)) {
+					block.content = simple;
+				} else {
+					block.content = "";
+					emit_inlines = true;
+				}
+			} else if (structured_inlines) {
+				// Multi-block blockquote: flatten to plain text (no markdown syntax).
+				block.content = GetInlineText(child);
+			} else {
+				// Legacy path: render blockquote content back to markdown, strip '>'.
+				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
+				if (md) {
+					block.content = md;
+					free(md);
+					// Remove leading > and trim
+					std::string result;
+					std::istringstream iss(block.content);
+					std::string line;
+					while (std::getline(iss, line)) {
+						// Remove leading "> " or ">"
+						if (line.length() >= 2 && line[0] == '>' && line[1] == ' ') {
+							result += line.substr(2) + "\n";
+						} else if (line.length() >= 1 && line[0] == '>') {
+							result += line.substr(1) + "\n";
+						} else {
+							result += line + "\n";
+						}
 					}
+					// Trim trailing newlines
+					while (!result.empty() && result.back() == '\n') {
+						result.pop_back();
+					}
+					block.content = result;
 				}
-				// Trim trailing newlines
-				while (!result.empty() && result.back() == '\n') {
-					result.pop_back();
-				}
-				block.content = result;
 			}
 			break;
 		}
@@ -1167,6 +1307,9 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str) {
 		}
 
 		blocks.push_back(block);
+		if (emit_inlines) {
+			WalkInlines(inline_container, block.level + 1, block_order, blocks);
+		}
 		child = cmark_node_next(child);
 	}
 

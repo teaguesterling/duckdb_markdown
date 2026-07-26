@@ -157,15 +157,24 @@ block	heading	true	1	text	true	1
 # =============================================================================
 
 query I
-SELECT count(*) FROM read_markdown_blocks('test/data/blocks_nested.md');
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE kind = 'block';
 ----
 11
 
 # Verify all expected block types are present
 query I
-SELECT count(DISTINCT element_type) FROM read_markdown_blocks('test/data/blocks_nested.md');
+SELECT count(DISTINCT element_type) FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE kind = 'block';
 ----
 7
+
+# Rich text is emitted as structured kind='inline' children at level 2 (not
+# markdown syntax inside content); the blockquote decomposes into inline rows
+query II
+SELECT count(*) > 0, bool_and(level = 2)
+FROM read_markdown_blocks('test/data/blocks_nested.md')
+WHERE kind = 'inline';
+----
+true	true
 
 # Check heading levels (heading_level attribute, all have level=1 as document-level blocks)
 query III
@@ -195,9 +204,11 @@ SELECT content FROM read_markdown_blocks('test/data/blocks_special.md') WHERE el
 ----
 Heading with bold and italic
 
-# Paragraph with inline code and links
+# Paragraph with inline code and a link decomposes into structured inline
+# children; the code span carries its literal text (no backticks in content)
 query I
-SELECT content LIKE '%inline code%' FROM read_markdown_blocks('test/data/blocks_special.md') WHERE element_type = 'paragraph';
+SELECT bool_or(element_type = 'code' AND content = 'inline code')
+FROM read_markdown_blocks('test/data/blocks_special.md') WHERE kind = 'inline';
 ----
 true
 
@@ -206,7 +217,7 @@ true
 # =============================================================================
 
 query I
-SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md');
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md') WHERE kind = 'block';
 ----
 33
 

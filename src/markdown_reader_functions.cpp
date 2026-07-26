@@ -608,7 +608,9 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 	for (const auto &file_path : result->files) {
 		try {
 			string content = ReadMarkdownFile(context, file_path, result->options);
-			auto blocks = markdown_utils::ParseBlocks(content);
+			// Emit the canonical structured representation: rich text as kind='inline'
+			// child rows, not markdown syntax inside `content`.
+			auto blocks = markdown_utils::ParseBlocks(content, /*structured_inlines=*/true);
 			for (auto &block : blocks) {
 				result->all_blocks.push_back({file_path, block});
 			}
@@ -681,16 +683,17 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 			column_idx++;
 		}
 
-		// kind (always 'block' for read_markdown_blocks)
-		output.data[column_idx].SetValue(output_idx, Value("block"));
+		// kind ('block', or 'inline' for structured rich-text children)
+		output.data[column_idx].SetValue(output_idx, Value(block.kind));
 		column_idx++;
 
 		// element_type (was block_type)
 		output.data[column_idx].SetValue(output_idx, Value(block.block_type));
 		column_idx++;
 
-		// content
-		output.data[column_idx].SetValue(output_idx, Value(block.content));
+		// content (NULL for containers whose text lives in structured inline children)
+		output.data[column_idx].SetValue(output_idx,
+		                                 block.content.empty() ? Value(LogicalType::VARCHAR) : Value(block.content));
 		column_idx++;
 
 		// level (NULL if -1, meaning "not applicable")
