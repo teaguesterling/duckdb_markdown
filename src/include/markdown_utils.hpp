@@ -204,6 +204,37 @@ std::vector<MarkdownSection> ExtractHeadings(const std::string &markdown_str, in
 // Utility Functions
 //===--------------------------------------------------------------------===//
 
+// UTF-8-safe whitespace trim. Use this instead of StringUtil::Trim on anything
+// derived from document text.
+//
+// Issue #32: duckdb::StringUtil::RTrim scans backwards with the predicate
+// `[](char ch) { return ch > 0 && !CharacterIsSpace(ch); }` (duckdb/src/common/
+// string_util.cpp:97-100). `char` is signed on x86-64 and on Apple's arm64 ABI,
+// so every UTF-8 continuation/lead byte >= 0x80 is negative, fails `ch > 0`, and
+// is treated as "keep trimming". A cell ending in `é` (C3 A9) lost both bytes; a
+// cell holding only `🎆` (F0 9F 8E 86) was erased entirely. Silent, and only
+// visible when the *last* byte of the string is non-ASCII.
+//
+// This version only ever removes the six ASCII whitespace bytes, by explicit
+// comparison, so it is independent of char signedness, <cctype> and the locale.
+inline bool IsAsciiSpace(char c) {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+}
+
+inline void TrimWhitespace(std::string &str) {
+	size_t begin = 0;
+	size_t end = str.size();
+	while (begin < end && IsAsciiSpace(str[begin])) {
+		begin++;
+	}
+	while (end > begin && IsAsciiSpace(str[end - 1])) {
+		end--;
+	}
+	if (begin != 0 || end != str.size()) {
+		str = str.substr(begin, end - begin);
+	}
+}
+
 // Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
 // Parameters: markdown_content - the markdown document
 //             section_id - the target section ID (lowercase)

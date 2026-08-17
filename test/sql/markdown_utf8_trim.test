@@ -1,0 +1,124 @@
+# name: test/sql/markdown_utf8_trim.test
+# description: Regression for #32 - trailing multi-byte UTF-8 must survive whitespace trimming
+# group: [sql]
+
+require markdown
+
+#===================================================================
+# Issue #32: table cells lose their final character when multi-byte
+#
+# DuckDB's StringUtil::RTrim scans back with `ch > 0 && !CharacterIsSpace(ch)`
+# on a signed `char`, so every trailing byte >= 0x80 tests as "keep trimming".
+# Any cell ending in a non-ASCII character silently lost it; a cell holding
+# only an emoji was erased entirely.
+#===================================================================
+
+# The exact reproducer from the issue.
+query II
+SELECT r.row_index, r.cell_value
+FROM (
+  SELECT UNNEST(md_extract_table_rows(
+    E'| a | b |\n|---|---|\n|aé|x|\n|aa|x|\n|x🎆y|x|\n|🎆|x|\n'
+  )) AS r
+)
+WHERE r.row_type = 'data' AND r.column_index = 0
+ORDER BY 1;
+----
+1	aé
+2	aa
+3	x🎆y
+4	🎆
+
+# Real-world case from the issue: `HO Vrchlabí` was stored as `HO Vrchlab`.
+query I
+SELECT r.cell_value
+FROM (
+  SELECT UNNEST(md_extract_table_rows(
+    E'| club |\n|---|\n| HO Vrchlabí |\n'
+  )) AS r
+)
+WHERE r.row_type = 'data';
+----
+HO Vrchlabí
+
+# Character and byte counts, so a truncation cannot hide behind display width.
+query II
+SELECT length(r.cell_value), strlen(r.cell_value)
+FROM (
+  SELECT UNNEST(md_extract_table_rows(E'| a |\n|---|\n|🎆|\n')) AS r
+)
+WHERE r.row_type = 'data';
+----
+1	4
+
+# Padded and unpadded cells must agree (the reporter noted removing the spaces
+# did not help — both go through the same trim).
+query II
+SELECT
+  (md_extract_table_rows(E'| a |\n|---|\n| aé |\n'))[2].cell_value,
+  (md_extract_table_rows(E'| a |\n|---|\n|aé|\n'))[2].cell_value;
+----
+aé	aé
+
+# Headers are on the same code path as data cells.
+query I
+SELECT r.cell_value
+FROM (
+  SELECT UNNEST(md_extract_table_rows(E'| Klíč |\n|---|\n| v |\n')) AS r
+)
+WHERE r.row_type = 'header';
+----
+Klíč
+
+# md_extract_tables_json shares markdown_utils::ExtractTables.
+query II
+SELECT t.headers[1], t.table_data[1][1]
+FROM (SELECT UNNEST(md_extract_tables_json(E'| hé |\n|---|\n| vé |\n')) AS t);
+----
+hé	vé
+
+# A trailing ASCII character is unaffected, and the trim still has to work.
+query II
+SELECT r.column_index, r.cell_value
+FROM (
+  SELECT UNNEST(md_extract_table_rows(E'| a | b |\n|---|---|\n|  éa  |  x  |\n')) AS r
+)
+WHERE r.row_type = 'data'
+ORDER BY 1;
+----
+0	éa
+1	x
+
+# Discriminator: the old behaviour stripped *every* trailing non-ASCII byte, so
+# `aéé` collapsed to `a` and `ééé` to the empty string — it was not "drop one
+# character". Trailing whitespace after a multi-byte char must still go.
+query III
+SELECT r.column_index, r.cell_value, hex(r.cell_value)
+FROM (
+  SELECT UNNEST(md_extract_table_rows(
+    E'| a | b | c |\n|---|---|---|\n| aéé | ééé | aé  |\n'
+  )) AS r
+)
+WHERE r.row_type = 'data'
+ORDER BY 1;
+----
+0	aéé	61C3A9C3A9
+1	ééé	C3A9C3A9C3A9
+2	aé	61C3A9
+
+#===================================================================
+# Sibling call sites of the same unsafe trim
+#===================================================================
+
+# Frontmatter values (ExtractMetadata trims both key and value).
+query I
+SELECT md_extract_metadata(E'---\ntitle: Vrchlabí\n---\n\nbody\n')['title'];
+----
+Vrchlabí
+
+# Wikilink target and alias are trimmed the same way.
+query II
+SELECT w.target, w.alias
+FROM (SELECT UNNEST(md_extract_wikilinks('[[ Vrchlabí | klub 🎆 ]]')) AS w);
+----
+Vrchlabí	klub 🎆

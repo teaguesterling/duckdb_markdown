@@ -93,7 +93,9 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 		if (dot_pos != string::npos) {
 			extension = file.substr(dot_pos + 1);
 		}
-		std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+		// ASCII-only: a path byte >= 0x80 is negative as a signed char, which ::tolower
+		// is not defined for.
+		extension = StringUtil::Lower(extension);
 
 		if (extension == "md" || extension == "markdown") {
 			try {

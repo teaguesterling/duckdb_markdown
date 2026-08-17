@@ -170,7 +170,7 @@ static std::vector<std::string> SplitTableCells(const std::string &line) {
 	std::string cur;
 	auto flush = [&]() {
 		if (!cur.empty()) {
-			StringUtil::Trim(cur);
+			TrimWhitespace(cur);
 			cells.push_back(cur);
 		}
 		cur.clear();
@@ -287,8 +287,8 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 			if (colon_pos != std::string::npos) {
 				std::string key = line.substr(0, colon_pos);
 				std::string value = line.substr(colon_pos + 1);
-				StringUtil::Trim(key);
-				StringUtil::Trim(value);
+				TrimWhitespace(key);
+				TrimWhitespace(value);
 
 				// Remove surrounding quotes if present (guard against empty value)
 				if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
@@ -454,8 +454,12 @@ std::string GenerateSectionId(const std::string &heading_text,
 	// Generate GitHub-style anchor IDs
 	std::string id = heading_text;
 
-	// Convert to lowercase
-	std::transform(id.begin(), id.end(), id.begin(), ::tolower);
+	// Convert to lowercase. StringUtil::Lower is ASCII-only and byte-safe; passing a
+	// raw `char` to ::tolower is undefined for any UTF-8 byte >= 0x80 (signed char ->
+	// negative, which is neither EOF nor a valid unsigned char) — see the note on
+	// TrimWhitespace in markdown_utils.hpp. Non-ASCII bytes are mapped to '-' below
+	// either way, so this is behaviour-preserving.
+	id = StringUtil::Lower(id);
 
 	// Linear replacement for the three std::regex passes that previously ran
 	// on (untrusted, possibly large) heading text:
@@ -567,7 +571,7 @@ std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str, const 
 				}
 
 				// Trim whitespace
-				StringUtil::Trim(language);
+				TrimWhitespace(language);
 			}
 			block.language = language;
 
@@ -1539,7 +1543,7 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 			if (!IsPipeTableLine(l)) {
 				break;
 			}
-			StringUtil::Trim(l);
+			TrimWhitespace(l);
 			if (!l.empty()) {
 				table_lines.push_back(l);
 			}
@@ -1748,10 +1752,10 @@ std::vector<MarkdownWikilink> ExtractWikilinks(const std::string &markdown_str) 
 					MarkdownWikilink wl;
 					wl.is_embed = (open > 0 && line[open - 1] == '!');
 					wl.target = target;
-					StringUtil::Trim(wl.target); // Trim modifies in place and returns void
+					TrimWhitespace(wl.target); // trims in place and returns void
 					wl.anchor = anchor;
 					wl.alias = alias;
-					StringUtil::Trim(wl.alias);
+					TrimWhitespace(wl.alias);
 					wl.line_number = line_number;
 					wikilinks.push_back(wl);
 					i = j + 2; // continue after the closing ]]
