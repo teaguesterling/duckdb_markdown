@@ -1,0 +1,81 @@
+# name: test/sql/markdown_list_input.test
+# description: Readers accept LIST(VARCHAR) of paths/globs (issue #30)
+# group: [sql]
+
+require markdown
+
+#===================================================================
+# read_markdown
+#===================================================================
+
+query I
+SELECT count(*) FROM read_markdown(['test/docs/*.md', 'test/markdown/*.md']);
+----
+13
+
+# The list form must equal the UNION ALL of the separate calls
+query I
+SELECT (SELECT count(*) FROM read_markdown(['test/docs/*.md', 'test/markdown/*.md']))
+     = (SELECT count(*) FROM (
+           SELECT * FROM read_markdown('test/docs/*.md')
+           UNION ALL
+           SELECT * FROM read_markdown('test/markdown/*.md')));
+----
+true
+
+# Named parameters work identically for the list form
+query I
+SELECT count(DISTINCT file_path) FROM read_markdown(['test/docs/*.md', 'test/markdown/*.md'], include_filepath := true);
+----
+13
+
+# A list of explicit files
+query I
+SELECT count(*) FROM read_markdown(['test/markdown/simple.md', 'test/markdown/links.md']);
+----
+2
+
+#===================================================================
+# read_markdown_sections
+#===================================================================
+
+query I
+SELECT (SELECT count(*) FROM read_markdown_sections(['test/docs/*.md', 'test/markdown/*.md']))
+     = (SELECT count(*) FROM (
+           SELECT * FROM read_markdown_sections('test/docs/*.md')
+           UNION ALL
+           SELECT * FROM read_markdown_sections('test/markdown/*.md')));
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections(['test/docs/*.md', 'test/markdown/*.md'], include_content := true);
+----
+true
+
+#===================================================================
+# read_markdown_blocks
+#===================================================================
+
+query I
+SELECT (SELECT count(*) FROM read_markdown_blocks(['test/docs/*.md', 'test/markdown/*.md']))
+     = (SELECT count(*) FROM (
+           SELECT * FROM read_markdown_blocks('test/docs/*.md')
+           UNION ALL
+           SELECT * FROM read_markdown_blocks('test/markdown/*.md')));
+----
+true
+
+query I
+SELECT count(DISTINCT file_path) FROM read_markdown_blocks(['test/docs/*.md', 'test/markdown/*.md'], include_filepath := true);
+----
+13
+
+#===================================================================
+# Existing single-VARCHAR behavior unchanged
+#===================================================================
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md');
+----
+1
