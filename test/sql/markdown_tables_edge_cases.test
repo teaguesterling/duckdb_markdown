@@ -53,3 +53,170 @@ query I
 SELECT len(md_extract_tables_json('||' || chr(10) || '|-|')) >= 0;
 ----
 true
+
+# =============================================================================
+# One parser (#21). md_extract_tables_json / md_extract_table_rows used to go
+# through a hand-rolled pipe-table line scanner while read_markdown_blocks /
+# parse_markdown_to_duck_blocks used cmark-gfm's GFM table extension, so the
+# same document could yield different tables depending on which function was
+# called. Both now use cmark. The assertions below pin the cases where that
+# actually changes the answer.
+# =============================================================================
+
+# An escaped pipe is one cell, not two. The old scanner split on every '|'.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x ' || chr(92) || '| z | y |')) t);
+----
+[[x | z, y]]
+
+# ... and the two surfaces now agree on that cell.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x ' || chr(92) || '| z | y |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a", "b"], "rows": [["x | z", "y"]]}
+
+# A table inside a fenced code block is code, not a table.
+query I
+SELECT len(md_extract_tables_json(
+        '```' || chr(10) || '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x | y |' || chr(10) || '```'));
+----
+0
+
+# A table inside a blockquote IS a table (the old scanner required the line to
+# start with '|', so a '>' prefix hid it entirely).
+query II
+SELECT t.headers, t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '> | a | b |' || chr(10) || '> |---|---|' || chr(10) || '> | x | y |')) t);
+----
+[a, b]	[[x, y]]
+
+# A table indented up to three spaces is still a table.
+query I
+SELECT len(md_extract_tables_json(
+        '   | a | b |' || chr(10) || '   |---|---|' || chr(10) || '   | x | y |'));
+----
+1
+
+# GFM allows a table without leading/trailing pipes.
+query II
+SELECT t.headers, t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        'a | b' || chr(10) || '--- | ---' || chr(10) || 'x | y')) t);
+----
+[a, b]	[[x, y]]
+
+# No delimiter row -> not a table.
+query I
+SELECT len(md_extract_tables_json('| a | b |' || chr(10) || '| x | y |'));
+----
+0
+
+# Delimiter row cell count must match the header row.
+query I
+SELECT len(md_extract_tables_json(
+        '| a | b | c |' || chr(10) || '|---|---|' || chr(10) || '| x | y | z |'));
+----
+0
+
+# A row with more cells than the header is truncated to the column count
+# (GFM: "excess cells are ignored"). The old scanner emitted the extra cell.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) || '| x | y | z |')) t);
+----
+[[x, y]]
+
+# A row with fewer cells is padded with empty strings.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b | c |' || chr(10) || '|---|---|---|' || chr(10) || '| x |')) t);
+----
+[[x, '', '']]
+
+# An all-empty data row is a data row, not an alignment row.
+query II
+SELECT t.num_rows, t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) || '|  |  |')) t);
+----
+1	[['', '']]
+
+# Inline markup in a cell is flattened to text, matching the duck_blocks table
+# JSON exactly. NOTE: this loses a link's URL -- see the report on #21.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| **bold** | [text](http://example.com) |')) t);
+----
+[[bold, text]]
+
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| **bold** | [text](http://example.com) |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a", "b"], "rows": [["bold", "text"]]}
+
+# Entities and backslash escapes are resolved, as cmark resolves them
+# everywhere else in this extension.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| &amp; | ' || chr(92) || '* |')) t);
+----
+[[&, *]]
+
+# line_number comes from cmark's native line tracking, so a table further down
+# the document reports its real line (the old scanner reported 1 for the first
+# table in a document regardless of where it started).
+query I
+SELECT t.line_number
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '# Heading' || chr(10) || chr(10) || 'Some text.' || chr(10) || chr(10) ||
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) || '| x | y |')) t);
+----
+5
+
+# Two tables keep distinct line numbers.
+query I
+SELECT list(t.line_number ORDER BY t.table_index)
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) || '| 1 |' || chr(10) || chr(10) ||
+        '| b |' || chr(10) || '|---|' || chr(10) || '| 2 |')) t);
+----
+[1, 5]
+
+# Column alignments from the delimiter row are parsed (internal today -- the
+# public structs do not expose alignment -- but a table with an alignment row
+# must still extract cleanly).
+query II
+SELECT t.headers, t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b | c |' || chr(10) || '|:--|:-:|--:|' || chr(10) || '| x | y | z |')) t);
+----
+[a, b, c]	[[x, y, z]]
+
+# UTF-8 cells survive intact (#32 regression: trailing multi-byte characters
+# were eaten by StringUtil::Trim). Now asserted through the cmark path, which
+# is the one serving tables.
+query II
+SELECT t.headers, t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| naïve | 🎆 |' || chr(10) || '|---|---|' || chr(10) || '| café | é |')) t);
+----
+[naïve, 🎆]	[[café, é]]

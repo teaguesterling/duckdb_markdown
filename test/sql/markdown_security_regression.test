@@ -42,16 +42,30 @@ SELECT len(md_extract_tables_json(repeat('|x', 30000) || '|'));
 0
 
 # Many table rows: tripped the (...)+ grouping. Resolves to one table.
+#
+# NOTE (#21): the fixture gained a delimiter row when table extraction moved
+# onto cmark-gfm's table extension. `|x|` repeated 30000 times has no
+# delimiter row, so it is not a GFM table at all and now yields 0 tables --
+# which would have quietly stopped exercising the large-input path this test
+# exists for. The delimiter row keeps a genuinely large table (30 K rows)
+# flowing through the extractor. The delimiter-less input is asserted just
+# below, so both shapes stay covered.
 query I
-SELECT len(md_extract_tables_json(repeat('|x|' || chr(10), 30000)));
+SELECT len(md_extract_tables_json('|x|' || chr(10) || '|-|' || chr(10) || repeat('|y|' || chr(10), 30000)));
 ----
 1
 
-# Same input via md_extract_table_rows -> all rows emitted, no crash.
+# Same input via md_extract_table_rows -> header cell + all row cells, no crash.
 query I
-SELECT len(md_extract_table_rows(repeat('|x|' || chr(10), 30000)));
+SELECT len(md_extract_table_rows('|x|' || chr(10) || '|-|' || chr(10) || repeat('|y|' || chr(10), 30000)));
 ----
-30000
+30001
+
+# 30 K pipe lines with no delimiter row: not a GFM table, still O(n), no crash.
+query I
+SELECT len(md_extract_tables_json(repeat('|x|' || chr(10), 30000)));
+----
+0
 
 #===================================================================
 # md_stats scanners: link / heading regex over long input
