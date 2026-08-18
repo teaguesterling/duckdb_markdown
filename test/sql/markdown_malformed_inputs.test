@@ -111,10 +111,13 @@ para
 #===================================================================
 # Byte order mark
 #
-# cmark strips a leading UTF-8 BOM, so every cmark-backed extractor is
-# unaffected. The remaining line scanners do not, so a BOM changes their
-# answer. Both halves are asserted; the second half is a KNOWN BUG, recorded
-# here rather than silently left untested.
+# A BOM is an encoding marker, not content. cmark skips it, so every
+# cmark-backed extractor was always immune. The linear scanners in
+# markdown_utils.cpp did not, so md_stats.heading_count, md_extract_frontmatter,
+# md_extract_metadata and md_extract_tags all disagreed with cmark on the same
+# document -- a BOM-prefixed post silently got no frontmatter and no tags.
+# Fixed in #21; every scanner now skips it, and the counts below are asserted
+# against their BOM-less controls.
 #===================================================================
 
 # cmark-backed: heading, section id, tables and HTML are all correct.
@@ -140,33 +143,55 @@ SELECT md_valid(chr(65279) || '# T');
 ----
 true
 
-# KNOWN BUG (#21): the line scanners in md_stats, the frontmatter finder and
-# the tag scanner do not skip a leading BOM, so they disagree with cmark on
-# the very same document.
+# The line scanners now skip it too: heading counting, the frontmatter
+# finder (and so md_extract_metadata) and the tag scanner.
 query I
 SELECT (md_stats(chr(65279) || '# Title' || chr(10) || 'body')).heading_count;
 ----
-0
+1
 
 query I
 SELECT md_extract_frontmatter(
-  chr(65279) || '---' || chr(10) || 'a: 1' || chr(10) || '---') IS NULL;
+  chr(65279) || '---' || chr(10) || 'a: 1' || chr(10) || '---');
 ----
-true
+a: 1
+
+query I
+SELECT md_extract_metadata(
+  chr(65279) || '---' || chr(10) || 'title: X' || chr(10) || '---' || chr(10) || 'b')['title'];
+----
+X
 
 query I
 SELECT len(md_extract_tags(chr(65279) || '#tag'));
 ----
-0
+1
 
-# Without the BOM all three agree with cmark, which is what makes the above a
-# BOM bug rather than a difference of definition.
+# The BOM-less controls, which the above must now match exactly.
 query III
 SELECT (md_stats('# Title' || chr(10) || 'body')).heading_count,
        md_extract_frontmatter('---' || chr(10) || 'a: 1' || chr(10) || '---'),
        len(md_extract_tags('#tag'));
 ----
 1	a: 1	1
+
+# StripFrontmatter is reached through the same finder, so a BOM-prefixed
+# frontmatter block no longer leaks into the body.
+query I
+SELECT len(md_extract_sections(
+  chr(65279) || '---' || chr(10) || 'a: 1' || chr(10) || '---' || chr(10) || '# H'));
+----
+1
+
+# The BOM is not counted as document content either: three bytes of encoding
+# marker must not inflate char_count. Compare against the same text without it.
+query IIII
+SELECT (md_stats(chr(65279) || 'abc')).char_count,
+       (md_stats('abc')).char_count,
+       (md_stats(chr(65279) || 'abc')).word_count,
+       (md_stats('abc')).word_count;
+----
+3	3	1	1
 
 #===================================================================
 # Very long lines and very large documents

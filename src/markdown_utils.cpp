@@ -37,17 +37,31 @@ struct FrontmatterMatch {
 	size_t after_close = 0; // offset just past the closing "---"
 };
 
+// A leading UTF-8 BOM (EF BB BF) is an encoding marker, not content. cmark
+// skips it, so every cmark-backed extractor here was always immune; the linear
+// scanners in this file have to skip it explicitly or they disagree with cmark
+// on the very same document -- a BOM-prefixed post silently got no frontmatter
+// and no tags (#21). Returns the offset of the first content byte.
+static size_t SkipBOM(const std::string &s) {
+	if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF && static_cast<unsigned char>(s[1]) == 0xBB &&
+	    static_cast<unsigned char>(s[2]) == 0xBF) {
+		return 3;
+	}
+	return 0;
+}
+
 // Faithful linear replacement for R"(^---\r?\n([\s\S]*?)\r?\n---)".
 // Requires the string to begin with "---" then \r?\n, then finds the earliest
 // following "\r?\n---". Returns the body between the delimiters. O(n), no
 // recursion.
 static FrontmatterMatch FindFrontmatter(const std::string &s) {
 	FrontmatterMatch m;
-	// Opening delimiter: "---" then \r?\n
-	if (s.size() < 4 || s[0] != '-' || s[1] != '-' || s[2] != '-') {
+	// Opening delimiter: an optional BOM, then "---" then \r?\n
+	const size_t b = SkipBOM(s);
+	if (s.size() < b + 4 || s[b] != '-' || s[b + 1] != '-' || s[b + 2] != '-') {
 		return m;
 	}
-	size_t p = 3;
+	size_t p = b + 3;
 	if (p < s.size() && s[p] == '\r') {
 		p++;
 	}
@@ -285,8 +299,15 @@ Value MetadataToMap(const MarkdownMetadata &metadata) {
 	return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(keys), std::move(values));
 }
 
-MarkdownStats CalculateStats(const std::string &markdown_str) {
+MarkdownStats CalculateStats(const std::string &markdown_str_in) {
 	MarkdownStats stats = {};
+
+	// Skip a leading BOM before counting anything: it is an encoding marker,
+	// not a character of the document, and cmark does not see it either. Only
+	// copies when a BOM is actually present (#21).
+	const size_t bom = SkipBOM(markdown_str_in);
+	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
+	const std::string &markdown_str = bom ? bom_stripped : markdown_str_in;
 
 	// Word count (approximate)
 	std::istringstream stream(markdown_str);
@@ -1791,11 +1812,17 @@ static std::string ScrubInlineCode(const std::string &line) {
 	return scrubbed;
 }
 
-std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str) {
+std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str_in) {
 	std::vector<MarkdownTag> tags;
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return tags;
 	}
+
+	// A leading BOM is not whitespace, so without this the '#' of a first-line
+	// tag looks preceded by a non-space character and the tag is missed (#21).
+	const size_t bom = SkipBOM(markdown_str_in);
+	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
+	const std::string &markdown_str = bom ? bom_stripped : markdown_str_in;
 
 	// Inline #tag / #nested/tag. v1 limitations (documented): tags inside link URLs or
 	// wikilink targets are not suppressed; fenced code blocks and inline code spans are.
