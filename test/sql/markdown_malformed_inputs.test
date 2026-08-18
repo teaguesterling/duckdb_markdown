@@ -1,0 +1,319 @@
+# name: test/sql/markdown_malformed_inputs.test
+# description: Malformed, large and deeply-nested inputs across the extraction surface (#21)
+# group: [sql]
+
+# The review that produced #21 noted the test suite was happy-path only, and
+# that this is how the std::regex stack-overflow in the private advisory
+# shipped. These are assertions about what the extension *does* with hostile
+# input, not smoke tests -- "does not crash" is stated as an explicit
+# assertion only where the correct output is genuinely a judgement call.
+
+require markdown
+
+#===================================================================
+# Unterminated and nested code fences
+#===================================================================
+
+# An unterminated ``` fence is a code block running to EOF (CommonMark 4.5:
+# "a fenced code block ... may be closed by the end of the document").
+query III
+SELECT c.language, replace(c.code, chr(10), '<LF>'), c.line_number
+FROM (SELECT UNNEST(md_extract_code_blocks('```sql' || chr(10) || 'SELECT 1')) c);
+----
+sql	SELECT 1<LF>	1
+
+# Same for a ~~~ fence, including the rest of the info string.
+query II
+SELECT c.language, c.info_string
+FROM (SELECT UNNEST(md_extract_code_blocks('~~~py extra' || chr(10) || 'x')) c);
+----
+py	py extra
+
+# A ``` fence nested inside a longer ```` fence is content, not a second block.
+query I
+SELECT len(md_extract_code_blocks(
+  '````' || chr(10) || '```' || chr(10) || 'x' || chr(10) || '```' || chr(10) || '````'));
+----
+1
+
+# KNOWN DIVERGENCE (#21 item 4): md_stats counts ``` occurrences and divides by
+# two, so it sees no code block at all in an unterminated fence, and does not
+# know ~~~ fences exist. cmark sees one in each case. Asserted as-is so the
+# divergence is visible and cannot widen unnoticed.
+query II
+SELECT (md_stats('```sql' || chr(10) || 'SELECT 1')).code_block_count,
+       (md_stats('~~~py' || chr(10) || 'x')).code_block_count;
+----
+0	0
+
+query II
+SELECT len(md_extract_code_blocks('```sql' || chr(10) || 'SELECT 1')),
+       len(md_extract_code_blocks('~~~py' || chr(10) || 'x'));
+----
+1	1
+
+# An unterminated frontmatter block is not frontmatter, and does not swallow
+# the document (this shape crashed the old std::regex scanner).
+query II
+SELECT md_extract_frontmatter('---' || chr(10) || repeat('a: b' || chr(10), 100)) IS NULL,
+       cardinality(md_extract_metadata('---' || chr(10) || repeat('a: b' || chr(10), 100)));
+----
+true	0
+
+#===================================================================
+# CRLF line endings
+#===================================================================
+
+# Headings, frontmatter and tables all survive CRLF, and no CR leaks into the
+# extracted values.
+query II
+SELECT s.title, s.level
+FROM (SELECT UNNEST(md_extract_sections(
+  '# A' || chr(13) || chr(10) || 'body' || chr(13) || chr(10) ||
+  '## B' || chr(13) || chr(10) || 'more')) s)
+ORDER BY s.start_line;
+----
+A	1
+B	2
+
+query I
+SELECT md_extract_metadata(
+  '---' || chr(13) || chr(10) || 'title: X' || chr(13) || chr(10) ||
+  '---' || chr(13) || chr(10) || 'body')['title'];
+----
+X
+
+query I
+SELECT r.cell_value
+FROM (SELECT UNNEST(md_extract_table_rows(
+  '| a |' || chr(13) || chr(10) || '|---|' || chr(13) || chr(10) ||
+  '| x |' || chr(13) || chr(10))) r)
+WHERE r.row_type = 'data';
+----
+x
+
+# Code block content is normalised to LF, so no bare CR survives.
+query I
+SELECT strpos((md_extract_code_blocks(
+  '```' || chr(10) || 'a' || chr(13) || chr(10) || 'b' || chr(10) || '```'))[1].code, chr(13));
+----
+0
+
+# A paragraph split by a CRLF blank line is two blocks with clean content.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+  'para' || chr(13) || chr(10) || chr(13) || chr(10) || 'para2')) b)
+WHERE b.element_order = 1;
+----
+para
+
+#===================================================================
+# Byte order mark
+#
+# cmark strips a leading UTF-8 BOM, so every cmark-backed extractor is
+# unaffected. The remaining line scanners do not, so a BOM changes their
+# answer. Both halves are asserted; the second half is a KNOWN BUG, recorded
+# here rather than silently left untested.
+#===================================================================
+
+# cmark-backed: heading, section id, tables and HTML are all correct.
+query II
+SELECT s.title, s.section_id
+FROM (SELECT UNNEST(md_extract_sections(chr(65279) || '# Title' || chr(10) || 'body')) s);
+----
+Title	title
+
+query I
+SELECT len(md_extract_tables_json(
+  chr(65279) || '| a |' || chr(10) || '|---|' || chr(10) || '| x |'));
+----
+1
+
+query I
+SELECT replace(md_to_html(chr(65279) || '# Title'), chr(10), '<LF>');
+----
+<h1>Title</h1><LF>
+
+query I
+SELECT md_valid(chr(65279) || '# T');
+----
+true
+
+# KNOWN BUG (#21): the line scanners in md_stats, the frontmatter finder and
+# the tag scanner do not skip a leading BOM, so they disagree with cmark on
+# the very same document.
+query I
+SELECT (md_stats(chr(65279) || '# Title' || chr(10) || 'body')).heading_count;
+----
+0
+
+query I
+SELECT md_extract_frontmatter(
+  chr(65279) || '---' || chr(10) || 'a: 1' || chr(10) || '---') IS NULL;
+----
+true
+
+query I
+SELECT len(md_extract_tags(chr(65279) || '#tag'));
+----
+0
+
+# Without the BOM all three agree with cmark, which is what makes the above a
+# BOM bug rather than a difference of definition.
+query III
+SELECT (md_stats('# Title' || chr(10) || 'body')).heading_count,
+       md_extract_frontmatter('---' || chr(10) || 'a: 1' || chr(10) || '---'),
+       len(md_extract_tags('#tag'));
+----
+1	a: 1	1
+
+#===================================================================
+# Very long lines and very large documents
+#
+# These are the shapes that overflowed the stack in the old std::regex
+# extractors (GHSA-qv83-qqvf-72v9). They must resolve in bounded memory.
+#===================================================================
+
+# A 1 MB single line with no structure.
+query III
+SELECT (md_stats(repeat('a', 1000000))).char_count,
+       (md_stats(repeat('a', 1000000))).line_count,
+       len(md_extract_links(repeat('a', 1000000)));
+----
+1000000	1	0
+
+# A 200 K-token single line still renders.
+query I
+SELECT length(md_to_html(repeat('word ', 200000))) > 0;
+----
+true
+
+# An unterminated '[' 200 KB long: no link, no crash.
+query II
+SELECT len(md_extract_links('[' || repeat('b', 200000))),
+       len(md_extract_images('![' || repeat('b', 200000)));
+----
+0	0
+
+# An unterminated wikilink 100 KB long.
+query I
+SELECT len(md_extract_wikilinks('[[' || repeat('a', 100000)));
+----
+0
+
+# 10 000 consecutive pipes is not a table.
+query I
+SELECT len(md_extract_tables_json(repeat('|', 10000)));
+----
+0
+
+# 2 000 headings: every one is found, by both the section extractor and the
+# block parser.
+query II
+SELECT len(md_extract_sections(md)), len(parse_markdown_to_duck_blocks(md))
+FROM (SELECT string_agg('# H' || i, chr(10) ORDER BY i) AS md FROM range(0, 2000) t(i));
+----
+2000	2000
+
+#===================================================================
+# Deep nesting
+#===================================================================
+
+# 500 levels of blockquote around a heading: the heading is still found.
+query II
+SELECT s.title, s.level
+FROM (SELECT UNNEST(md_extract_sections(repeat('> ', 500) || '# H')) s);
+----
+H	1
+
+# 1 000 levels of blockquote still render.
+query I
+SELECT length(md_to_html(repeat('> ', 1000) || 'x')) > 0;
+----
+true
+
+# 500 levels of list nesting is one top-level list block, and round-trips
+# back to markdown without throwing.
+query II
+SELECT len(parse_markdown_to_duck_blocks(md)),
+       length(duck_blocks_to_md(parse_markdown_to_duck_blocks(md))) > 0
+FROM (SELECT string_agg(repeat('  ', i) || '- i', chr(10) ORDER BY i) AS md
+      FROM range(0, 500) t(i));
+----
+1	true
+
+# 200 nested emphasis delimiters on each side: GetInlineText walks this with a
+# depth guard (MAX_INLINE_DEPTH) rather than recursing without bound.
+query I
+SELECT len(parse_markdown_to_duck_blocks(repeat('*', 200) || 'x' || repeat('*', 200))) > 0;
+----
+true
+
+# 1 000 levels of blockquote through the block parser.
+query I
+SELECT len(parse_markdown_to_duck_blocks(repeat('> ', 1000) || 'deep')) > 0;
+----
+true
+
+#===================================================================
+# Mixed and invalid UTF-8
+#===================================================================
+
+# Mixed scripts, an emoji and a combining mark all survive extraction intact.
+query I
+SELECT s.title FROM (SELECT UNNEST(md_extract_sections('# héllo 世界 🎆' || chr(10) || 'x')) s);
+----
+héllo 世界 🎆
+
+# Section ids are ASCII slugs: every non-[a-z0-9_-] byte becomes '-', runs
+# collapse, and leading/trailing hyphens are trimmed -- so a heading that is
+# entirely non-ASCII after the first character slugs down hard. Pinned because
+# it is surprising, not because it is ideal.
+query I
+SELECT s.section_id FROM (SELECT UNNEST(md_extract_sections('# héllo 世界 🎆' || chr(10) || 'x')) s);
+----
+h-llo
+
+# A combining acute (U+0301) is not whitespace and must not be trimmed away.
+query II
+SELECT hex(r.cell_value), strlen(r.cell_value)
+FROM (SELECT UNNEST(md_extract_table_rows(
+  '| a |' || chr(10) || '|---|' || chr(10) || '| e' || chr(769) || ' |')) r)
+WHERE r.row_type = 'data';
+----
+65CC81	3
+
+# A file that is not valid UTF-8 is rejected with a catchable user error, not
+# an internal error and not a crash. test/md/invalid_utf8.md holds a lone
+# Latin-1 byte and a stray FF FE pair.
+statement error
+SELECT content FROM read_markdown('test/md/invalid_utf8.md');
+----
+Invalid unicode
+
+#===================================================================
+# Degenerate documents
+#===================================================================
+
+# Empty document: every extractor returns empty, nothing throws.
+query I
+SELECT len(md_extract_sections('')) + len(md_extract_links('')) + len(md_extract_images(''))
+     + len(md_extract_code_blocks('')) + len(md_extract_tables_json(''))
+     + len(md_extract_table_rows('')) + len(md_extract_tags(''))
+     + len(md_extract_wikilinks(''));
+----
+0
+
+# Whitespace-only document.
+query I
+SELECT len(md_extract_sections(repeat(' ', 100) || chr(10) || repeat(chr(9), 100)));
+----
+0
+
+# Asking for a section that does not exist yields empty strings, not an error.
+query II
+SELECT md_extract_section('# A' || chr(10) || 'x', 'nope'),
+       md_section_breadcrumb('# A', 'nope');
+----
+(empty)	(empty)
