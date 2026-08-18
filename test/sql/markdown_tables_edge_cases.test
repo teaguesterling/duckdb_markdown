@@ -1,0 +1,55 @@
+# name: test/sql/markdown_tables_edge_cases.test
+# description: Table extraction edge cases (#21) -- degenerate tables must not crash
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# A table with a header but no data rows made md_extract_tables_json build its
+# `table_data` list with the single-argument Value::LIST overload on an empty
+# vector, which is an assertion failure inside DuckDB:
+#
+#   INTERNAL Error: Value::LIST(values) cannot be used to make an empty list
+#
+# An INTERNAL error is not a catchable user error -- it aborts the query and
+# tells the user to file a DuckDB bug. There was no test for a table with zero
+# data rows, so this shipped.
+# =============================================================================
+
+# Header row only.
+query III
+SELECT t.num_columns, t.num_rows, t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json('| a | b |' || chr(10) || '|---|---|')) t);
+----
+2	0	[]
+
+# Header row only, single column.
+query II
+SELECT t.num_columns, t.num_rows
+FROM (SELECT UNNEST(md_extract_tables_json('| only |' || chr(10) || '|------|')) t);
+----
+1	0
+
+# md_extract_table_rows on the same input still yields just the header cells.
+query I
+SELECT len(md_extract_table_rows('| a | b |' || chr(10) || '|---|---|'));
+----
+2
+
+# A data row whose cells are all empty reaches the same empty-list assertion by
+# a different route: the line-scanning parser classifies it as an alignment
+# row (it contains only '|' and spaces), so the table ends up with zero data
+# rows. Whether that row *should* count as data is a separate question -- this
+# assertion is only that the query completes.
+query II
+SELECT t.num_columns, t.num_rows >= 0
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) || '|  |  |')) t);
+----
+2	true
+
+# A table with no columns at all is still not a crash.
+query I
+SELECT len(md_extract_tables_json('||' || chr(10) || '|-|')) >= 0;
+----
+true

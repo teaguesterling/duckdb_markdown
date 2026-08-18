@@ -367,7 +367,11 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
 			const auto &headers = table.headers;
 			const auto &rows = table.rows;
 
-			// Create header values
+			// Create header values. Always use the (child_type, values) overload:
+			// the single-argument Value::LIST infers the child type from the
+			// elements and throws an INTERNAL error on an empty vector. A table
+			// with a header but no data rows, or a row with no cells, is a
+			// perfectly ordinary document and must not abort the query (#21).
 			vector<Value> header_values;
 			for (const auto &header : headers) {
 				header_values.push_back(Value(header));
@@ -380,7 +384,7 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
 				for (const auto &cell : row) {
 					cell_values.push_back(Value(cell));
 				}
-				row_values.push_back(Value::LIST(cell_values));
+				row_values.push_back(Value::LIST(LogicalType::VARCHAR, std::move(cell_values)));
 			}
 
 			// Create struct for this table
@@ -389,8 +393,9 @@ static void TableJSONExtractionFunction(DataChunk &args, ExpressionState &state,
 			table_struct_children.push_back({"line_number", Value::BIGINT(static_cast<int64_t>(table.line_number))});
 			table_struct_children.push_back({"num_columns", Value::BIGINT(static_cast<int64_t>(headers.size()))});
 			table_struct_children.push_back({"num_rows", Value::BIGINT(static_cast<int64_t>(rows.size()))});
-			table_struct_children.push_back({"headers", Value::LIST(header_values)});
-			table_struct_children.push_back({"table_data", Value::LIST(row_values)});
+			table_struct_children.push_back({"headers", Value::LIST(LogicalType::VARCHAR, std::move(header_values))});
+			table_struct_children.push_back(
+			    {"table_data", Value::LIST(LogicalType::LIST(LogicalType::VARCHAR), std::move(row_values))});
 
 			struct_values.push_back(Value::STRUCT(table_struct_children));
 		}
@@ -439,8 +444,8 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	                                                 {"is_embed", LogicalType(LogicalTypeId::BOOLEAN)},
 	                                                 {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
 
-	auto tag_struct_type = LogicalType::STRUCT({{"tag", LogicalType(LogicalTypeId::VARCHAR)},
-	                                            {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
+	auto tag_struct_type = LogicalType::STRUCT(
+	    {{"tag", LogicalType(LogicalTypeId::VARCHAR)}, {"line_number", LogicalType(LogicalTypeId::BIGINT)}});
 
 	auto table_row_struct_type = LogicalType::STRUCT({{"table_index", LogicalType(LogicalTypeId::BIGINT)},
 	                                                  {"row_type", LogicalType(LogicalTypeId::VARCHAR)},
@@ -480,8 +485,8 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	loader.RegisterFunction(wikilinks_func);
 
 	// Register md_extract_tags scalar function (inline #tags)
-	ScalarFunction tags_func("md_extract_tags", {MarkdownTypes::MarkdownType()},
-	                         LogicalType::LIST(tag_struct_type), TagExtractionFunction);
+	ScalarFunction tags_func("md_extract_tags", {MarkdownTypes::MarkdownType()}, LogicalType::LIST(tag_struct_type),
+	                         TagExtractionFunction);
 	loader.RegisterFunction(tags_func);
 
 	// Register md_extract_table_rows scalar function (renamed from md_extract_tables)
