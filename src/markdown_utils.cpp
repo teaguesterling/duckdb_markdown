@@ -800,7 +800,21 @@ static std::string RenderNodeContent(cmark_node *node) {
 // adversarially deep nesting.
 static constexpr int MAX_INLINE_DEPTH = 1000;
 
-// Helper to get text content from inline children
+// Flatten a node's inline children to a string.
+//
+// Formatting that carries no information beyond its text -- emphasis, strong,
+// code spans, strikethrough -- is dropped, so `**bold**` becomes `bold`. Nodes
+// that carry a URL are NOT dropped: a link or an image is written back out in
+// markdown form, because the URL cannot be recovered from the text and losing
+// it silently is a data loss, not a formatting choice (#21). A cell holding
+// `[DuckDB](https://duckdb.org)` therefore still yields
+// `[DuckDB](https://duckdb.org)`, byte for byte what v1.5.2 produced from the
+// raw source.
+//
+// Autolinks: cmark represents `<https://x>` as a link whose text equals its
+// URL, which is indistinguishable from an explicitly written
+// `[https://x](https://x)`. That shape is emitted as `<https://x>` -- lossless
+// either way, and the form the source is usually written in.
 static std::string GetInlineText(cmark_node *node, int depth = 0) {
 	if (depth > MAX_INLINE_DEPTH) {
 		throw InvalidInputException("Markdown inline nesting exceeds maximum supported depth (%d)", MAX_INLINE_DEPTH);
@@ -817,8 +831,27 @@ static std::string GetInlineText(cmark_node *node, int depth = 0) {
 			result += " ";
 		} else if (type == CMARK_NODE_LINEBREAK) {
 			result += "\n";
+		} else if (type == CMARK_NODE_LINK || type == CMARK_NODE_IMAGE) {
+			const char *url_c = cmark_node_get_url(child);
+			const char *title_c = cmark_node_get_title(child);
+			std::string url = url_c ? url_c : "";
+			std::string title = title_c ? title_c : "";
+			std::string label = GetInlineText(child, depth + 1);
+			if (type == CMARK_NODE_LINK && title.empty() && !url.empty() && label == url) {
+				result += "<" + url + ">"; // autolink shape
+			} else {
+				if (type == CMARK_NODE_IMAGE) {
+					result += "!";
+				}
+				result += "[" + label + "](" + url;
+				if (!title.empty()) {
+					result += " \"" + title + "\"";
+				}
+				result += ")";
+			}
 		} else {
-			// Recursively get text from nested nodes
+			// Emphasis, strong, strikethrough, and anything else whose text is
+			// its whole content: recurse and keep only the text.
 			result += GetInlineText(child, depth + 1);
 		}
 		child = cmark_node_next(child);

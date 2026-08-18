@@ -153,14 +153,16 @@ FROM (SELECT UNNEST(md_extract_tables_json(
 1	[['', '']]
 
 # Inline markup in a cell is flattened to text, matching the duck_blocks table
-# JSON exactly. NOTE: this loses a link's URL -- see the report on #21.
+# JSON exactly -- except for URL-bearing nodes, which are written back out in
+# markdown so the URL is not lost. See the dedicated section at the end of
+# this file.
 query I
 SELECT t.table_data
 FROM (SELECT UNNEST(md_extract_tables_json(
         '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
         '| **bold** | [text](http://example.com) |')) t);
 ----
-[[bold, text]]
+[[bold, '[text](http://example.com)']]
 
 query I
 SELECT b.content
@@ -169,7 +171,7 @@ FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
         '| **bold** | [text](http://example.com) |')) b)
 WHERE b.element_type = 'table';
 ----
-{"headers": ["a", "b"], "rows": [["bold", "text"]]}
+{"headers": ["a", "b"], "rows": [["bold", "[text](http://example.com)"]]}
 
 # Entities and backslash escapes are resolved, as cmark resolves them
 # everywhere else in this extension.
@@ -220,3 +222,139 @@ FROM (SELECT UNNEST(md_extract_tables_json(
         '| naïve | 🎆 |' || chr(10) || '|---|---|' || chr(10) || '| café | é |')) t);
 ----
 [naïve, 🎆]	[[café, é]]
+
+# =============================================================================
+# URL-bearing inline nodes must survive cell extraction (#21 follow-up).
+#
+# Consolidating onto cmark initially flattened a cell to its plain text, so
+# `| [DuckDB](https://duckdb.org) |` came out as `DuckDB` and the URL was
+# gone -- a silent data loss, and a net regression against v1.5.2 for anyone
+# pulling links out of tables. The inline serialiser now reconstructs markdown
+# for the node types that carry information plain text does not: links and
+# images. Emphasis, code spans and escaped pipes keep whatever cmark gives
+# them.
+#
+# The compatibility bar is the v1.5.2 output for a plain link, reproduced
+# exactly.
+# =============================================================================
+
+# v1.5.2 compatibility: a plain link cell comes back byte for byte.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x | [DuckDB](https://duckdb.org) |')) t);
+----
+[[x, '[DuckDB](https://duckdb.org)']]
+
+# The URL is recoverable from the extracted cell, which is the actual point.
+query I
+SELECT t.table_data[1][2] LIKE '%https://duckdb.org%'
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x | [DuckDB](https://duckdb.org) |')) t);
+----
+true
+
+# A titled link keeps its title.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) ||
+        '| [D](https://duckdb.org "The Duck") |')) t);
+----
+[['[D](https://duckdb.org "The Duck")']]
+
+# An image cell keeps its src -- same argument as links.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) ||
+        '| ![logo](https://duckdb.org/logo.png) |')) t);
+----
+[['![logo](https://duckdb.org/logo.png)']]
+
+# A titled image keeps both.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) ||
+        '| ![logo](/l.png "Logo") |')) t);
+----
+[['![logo](/l.png "Logo")']]
+
+# An autolink round trips as an autolink. cmark represents <https://x> as a
+# link whose text equals its URL, which is ambiguous with an explicit
+# [https://x](https://x); the serialiser emits the <url> form for that shape,
+# which is lossless either way and matches how the source is usually written.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) ||
+        '| <https://duckdb.org> |')) t);
+----
+[['<https://duckdb.org>']]
+
+# A link nested inside emphasis keeps the URL; the emphasis markers are still
+# dropped (cmark's plain text), as specified.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) ||
+        '| **[D](https://duckdb.org)** |')) t);
+----
+[['[D](https://duckdb.org)']]
+
+# Emphasis and code spans without URLs are unchanged: still flattened.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| **bold** | `code` |')) t);
+----
+[[bold, code]]
+
+# An escaped pipe inside a link label still yields one cell, with the URL.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| a |' || chr(10) || '|---|' || chr(10) ||
+        '| [a ' || chr(92) || '| b](https://x) |')) t);
+----
+[['[a | b](https://x)']]
+
+# A relative link, the common case in documentation tables.
+query I
+SELECT t.table_data
+FROM (SELECT UNNEST(md_extract_tables_json(
+        '| doc |' || chr(10) || '|---|' || chr(10) || '| [spec](./spec.md) |')) t);
+----
+[['[spec](./spec.md)']]
+
+# md_extract_table_rows exposes the same cell value.
+query I
+SELECT r.cell_value
+FROM (SELECT UNNEST(md_extract_table_rows(
+        '| a |' || chr(10) || '|---|' || chr(10) || '| [D](https://duckdb.org) |')) r)
+WHERE r.row_type = 'data';
+----
+[D](https://duckdb.org)
+
+# ... and the duck_blocks table JSON still agrees cell for cell, which is the
+# invariant the consolidation exists to establish.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a |' || chr(10) || '|---|' || chr(10) || '| [D](https://duckdb.org) |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a"], "rows": [["[D](https://duckdb.org)"]]}
+
+# A link in a list item is serialised the same way (the list path shares the
+# inline serialiser).
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks('- see [D](https://duckdb.org)')) b)
+WHERE b.element_type = 'list';
+----
+["see [D](https://duckdb.org)"]
