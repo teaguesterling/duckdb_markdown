@@ -1,0 +1,137 @@
+# name: test/sql/markdown_json_escape.test
+# description: JSON string escaping/unescaping symmetry for encoding='json' blocks (#21)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# ESCAPE side (#21, fixed in v1.5.0 by the shared EscapeJSONString).
+#
+# The table-cell path used to escape only " \ \n while the list path also
+# escaped \r and \t, so a literal tab or CR in a table cell emitted a raw
+# control byte inside a JSON string -- invalid JSON out of an encoding='json'
+# field. These assertions pin the emitted text exactly, so they hold whichever
+# parser produces the cells and without needing the json extension loaded.
+#
+# Newlines/tabs are built with chr() -- sqllogictest forbids literal newlines
+# inside a SQL string literal.
+# =============================================================================
+
+# Tab in a table cell -> \t, never a raw 0x09 byte.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x' || chr(9) || 'y | z |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a", "b"], "rows": [["x\ty", "z"]]}
+
+# NOTE: a literal CR cannot reach a cell from Markdown source -- cmark
+# normalises CR and CRLF to LF before parsing, so `| x<CR>y | z |` is two
+# lines, not a cell containing a CR:
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x' || chr(13) || 'y | z |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a", "b"], "rows": [["x", ""], ["y", "z"]]}
+
+# CR is still escaped correctly when it does occur (blocks can also be built by
+# hand and handed to duck_block_to_md), and must decode back to a real CR.
+query I
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'table', 'content':
+        '{"headers": ["a"], "rows": [["x' || chr(92) || 'ry"]]}', 'level': 1,
+        'encoding': 'json', 'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+        'element_order': 1}) LIKE '%x' || chr(13) || 'y%';
+----
+true
+
+# Control character (0x01) in a table cell -> \u0001, not a raw byte.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x' || chr(1) || 'y | z |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a", "b"], "rows": [["x\u0001y", "z"]]}
+
+# Quote and backslash in a table cell.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| he said "hi" | c:' || chr(92) || chr(92) || 'tmp |')) b)
+WHERE b.element_type = 'table';
+----
+{"headers": ["a", "b"], "rows": [["he said \"hi\"", "c:\\tmp"]]}
+
+# The list path escapes the same set (it always did) -- kept so the two paths
+# are pinned side by side and cannot drift apart again.
+query I
+SELECT b.content
+FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
+        '- x' || chr(9) || 'y' || chr(10) || '- z' || chr(1) || 'w')) b)
+WHERE b.element_type = 'list';
+----
+["x\ty", "z\u0001w"]
+
+# =============================================================================
+# UNESCAPE side: the mirror-image gap. duck_blocks_to_md has to read those
+# JSON strings back. ParseJsonListItems handles \n \t \r; ParseJsonTable did
+# not decode anything -- it dropped the backslash and kept the letter, so a
+# tab in a cell round-tripped as a literal 't'. Same class of bug as #21, on
+# the decode side, and only reachable through the table path.
+# =============================================================================
+
+# Tab survives a blocks -> markdown round trip through the table path.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x' || chr(9) || 'y | z |')) LIKE '%x' || chr(9) || 'y%';
+----
+true
+
+# ... and is not mangled into a literal 't'.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x' || chr(9) || 'y | z |')) LIKE '%xty%';
+----
+false
+
+# Backslash and quote survive the table round trip.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| he said "hi" | c:' || chr(92) || chr(92) || 'tmp |')) LIKE '%c:' || chr(92) || 'tmp%';
+----
+true
+
+# A control character round trips through \u0001 rather than being dropped or
+# turned into the letter 'u'.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+        '| a | b |' || chr(10) || '|---|---|' || chr(10) ||
+        '| x' || chr(1) || 'y | z |')) LIKE '%x' || chr(1) || 'y%';
+----
+true
+
+# The list path round trips too (regression guard for the shared decoder).
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+        '- x' || chr(9) || 'y')) LIKE '%x' || chr(9) || 'y%';
+----
+true
+
+# \u escapes above the BMP-ASCII range decode to UTF-8, not to bytes.
+query I
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'table', 'content':
+        '{"headers": ["a"], "rows": [["caf\u00e9"]]}', 'level': 1,
+        'encoding': 'json', 'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+        'element_order': 1}) LIKE '%café%';
+----
+true
