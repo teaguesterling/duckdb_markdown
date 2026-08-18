@@ -4,6 +4,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/string_util.hpp"
 #include <sstream>
 
 namespace duckdb {
@@ -1124,9 +1125,9 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 					    current_section_id = GetAttribute(attributes, "id");
 					    if (current_section_id.empty()) {
 						    // Generate ID from title
-						    current_section_id = content;
-						    std::transform(current_section_id.begin(), current_section_id.end(),
-						                   current_section_id.begin(), ::tolower);
+						    // ASCII-only lowercase: ::tolower on a raw (signed) char is UB for
+						    // any UTF-8 byte >= 0x80, and this id keeps its non-ASCII bytes.
+						    current_section_id = StringUtil::Lower(content);
 						    std::replace(current_section_id.begin(), current_section_id.end(), ' ', '-');
 					    }
 					    current_content.clear();

@@ -179,7 +179,7 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 				auto raw = StringValue::Get(kv.second);
 				auto tokens = StringUtil::Split(raw, ",");
 				for (auto &tok : tokens) {
-					StringUtil::Trim(tok);
+					markdown_utils::TrimWhitespace(tok);
 					if (tok.empty()) {
 						continue;
 					}
