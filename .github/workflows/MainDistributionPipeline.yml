@@ -12,8 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Forward-compatibility canary: builds against DuckDB main to give advance warning
+  # of upstream API changes. It is EXPECTED to go red whenever DuckDB main breaks an
+  # API this extension uses, so it must not gate merges -- the extension targets the
+  # stable release below. Outstanding breaks are tracked as a checklist; see the
+  # "DuckDB main API breaks" issue. Distinct name so it is not mistaken for the
+  # stable build in the checks list.
   duckdb-next-build:
-    name: Build extension binaries
+    name: Canary — build against DuckDB main (non-blocking)
+    continue-on-error: true
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       duckdb_version: main
