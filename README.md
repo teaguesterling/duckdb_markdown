@@ -110,7 +110,7 @@ Reads Markdown files and returns one row per file.
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
-- `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:`, typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For full YAML fidelity, read the raw block with `md_extract_frontmatter` and parse it with [`duckdb_yaml`](https://github.com/teaguesterling/duckdb_yaml).
+- `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:`, typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For real YAML, use the `yaml` extension's `read_yaml_frontmatter` — see [Frontmatter Handling](#frontmatter-handling).
 - `normalize_content := true` - Normalize Markdown content
 - `extract_extensions := NULL` - Opt-in add-on extractors (comma-separated VARCHAR; see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds `wikilinks` and/or `tags` `LIST<STRUCT>` columns to the output
 
@@ -175,7 +175,7 @@ Reads Markdown files and parses them into hierarchical sections.
 **Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `include_filepath := true` adds `file_path VARCHAR` column.
 
 **Notes:**
-- When `extract_metadata := true`, YAML frontmatter is included as a special section with `level=0`, `section_id='frontmatter'`, and the raw YAML content (without `---` delimiters) as the content.
+- When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` delimiters as the content. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
 - The `section_path` column provides hierarchical navigation paths like `"parent/child/grandchild"`.
 - Fragment syntax `'file.md#section-id'` returns the matching section and all its descendants.
 
@@ -227,12 +227,103 @@ Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unkno
 - **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
 - **`md_valid(markdown)`** - Validate markdown content and return boolean
 - **`md_stats(markdown)`** - Get document statistics (word count, reading time, etc.)
-- **`md_extract_metadata(markdown)`** - Extract frontmatter as `MAP(VARCHAR, VARCHAR)`. This is a lightweight **line-split key/value** reader (each line split on the first `:`), *not* a full YAML parser — nested maps, lists, and multiline scalars are not interpreted. For full YAML fidelity, extract the raw block with `md_extract_frontmatter` (below) and hand it to the [`duckdb_yaml`](https://github.com/teaguesterling/duckdb_yaml) extension (`yaml`/`read_yaml_frontmatter`).
+- **`md_extract_metadata(markdown)`** - Extract frontmatter as `MAP(VARCHAR, VARCHAR)`. This is a lightweight **line-split key/value** reader (each line split on the first `:`), *not* a full YAML parser — nested maps, lists, and multiline scalars are not interpreted. For real YAML — nested maps, lists, `|`/`>` blocks — use the `yaml` extension's `read_yaml_frontmatter`; see [Frontmatter Handling](#frontmatter-handling).
 - **`md_extract_frontmatter(markdown)`** - Extract the **raw** frontmatter block (the text between the `---` fences) as `VARCHAR`, or `NULL` when there is no frontmatter. Composes with `duckdb_yaml` for real YAML parsing without this extension carrying a YAML parser: e.g. `SELECT yaml(md_extract_frontmatter(content))`.
 - **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. With `include_subsections := true`, includes all nested content (full mode); default is minimal mode.
 - **`md_extract_sections(markdown, [min_level, max_level, content_mode])`** - Extract all sections as a list. Supports optional level filtering and content_mode ('minimal', 'full', 'smart').
 - **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
 - **`value_to_md(value)`** - Convert any value to markdown representation
+
+### Frontmatter Handling
+
+**This extension does not parse YAML.** Frontmatter — the block between the leading `---`
+delimiters — is read as **flat `key: value` pairs**: each line is split on its *first* `:`,
+both halves are whitespace-trimmed, and a pair of surrounding double quotes is stripped from
+the value. The result is typed `MAP(VARCHAR, VARCHAR)`.
+
+That is a deliberate design choice, not an approximation waiting to be upgraded. Keeping a
+YAML parser out of this extension is what lets it accept arbitrary untrusted documents
+without inheriting a YAML implementation's parsing surface (billion-laughs style alias
+expansion, custom tags, and so on). Markdown parsing goes to cmark-gfm; YAML parsing goes to
+the `yaml` extension; this extension does neither by hand.
+
+**What that means in practice.** Given this frontmatter:
+
+```yaml
+---
+title: My Post
+tags:
+  - duckdb
+  - markdown
+author:
+  name: Ada
+  email: ada@example.com
+summary: |
+  A multiline
+  summary.
+quoted: "double quoted"
+single: 'single quoted'
+url: https://example.com/a:b
+---
+```
+
+`md_extract_metadata` returns:
+
+| key | value | why |
+|---|---|---|
+| `title` | `My Post` | flat pair, as expected |
+| `tags` | *(empty string)* | the sequence below it is not read; `tags` just has no value |
+| `author` | *(empty string)* | the nested map is flattened away |
+| `name` | `Ada` | a nested key is hoisted to the top level, where it can collide |
+| `email` | `ada@example.com` | split on the *first* `:`, so the rest of the line survives |
+| `summary` | `\|` | the block-scalar indicator is taken as the literal value |
+| `quoted` | `double quoted` | a *paired* `"` is stripped |
+| `single` | `'single quoted'` | single quotes are **not** stripped |
+| `url` | `https://example.com/a:b` | first-`:` split keeps the remainder intact |
+
+Lines with no `:` at all — `- duckdb`, `- markdown`, and the body of the `|` block — produce
+no entry and are silently dropped. A sequence of mappings (`- name: Ada`) does produce an
+entry, under the key `- name`.
+
+So: **nested maps, lists, multiline `|`/`>` block scalars, single-quoted values, and anchors
+or aliases are not interpreted.** Flat `key: value` documents — the overwhelming majority of
+blog/Obsidian/Hugo frontmatter — come through exactly right.
+
+**If you need real YAML, use the `yaml` extension.** It ships `read_yaml_frontmatter`, which
+reads Markdown files and parses their frontmatter with an actual YAML parser:
+
+```sql
+INSTALL yaml FROM community;
+LOAD yaml;
+
+-- Fully typed frontmatter fields, nested structures included
+SELECT title, tags FROM read_yaml_frontmatter('posts/*.md');
+
+-- Keep the whole frontmatter document as a YAML/JSON-navigable value
+SELECT frontmatter FROM read_yaml_frontmatter('posts/*.md', as_yaml_objects := true);
+
+-- Frontmatter plus the Markdown body in one pass
+SELECT title, content FROM read_yaml_frontmatter('posts/*.md', content := true);
+```
+
+`read_yaml_frontmatter` takes `ANY`, so a single path, a glob, or a `LIST` of either all work,
+and it accepts the named parameters `as_yaml_objects`, `content`, and `filename`. See
+[`duckdb_yaml`](https://github.com/teaguesterling/duckdb_yaml).
+
+The two extensions compose in both directions:
+
+```sql
+-- markdown extension finds the documents and the body; yaml extension types the frontmatter
+SELECT y.title, y.tags, md_stats(m.content).word_count
+FROM read_yaml_frontmatter('posts/*.md', filename := true) y
+JOIN read_markdown('posts/*.md', include_filepath := true) m ON m.file_path = y.filename;
+
+-- or hand a single raw block to the YAML parser yourself
+SELECT yaml(md_extract_frontmatter(content)) FROM read_markdown('posts/*.md');
+```
+
+Use `md_extract_metadata` when you want a cheap flat `MAP` and your frontmatter is flat.
+Use `read_yaml_frontmatter` when the frontmatter is real YAML.
 
 ### Duck Block Functions
 
@@ -431,13 +522,13 @@ COPY sections TO 'doc.md' (FORMAT MARKDOWN,
     title_column 'title',      -- Column with heading text (default: 'title')
     content_column 'content',  -- Column with section body (default: 'content')
     frontmatter 'title: My Doc
-author: Me',                   -- Optional YAML frontmatter
+author: Me',                   -- Optional frontmatter block, emitted verbatim
     blank_lines 1              -- Blank lines between sections (default: 1)
 );
 ```
 
 **Level 0 as Frontmatter:**
-Rows with `level = 0` are rendered as YAML frontmatter blocks:
+Rows with `level = 0` are rendered as frontmatter blocks (the content is written between `---` delimiters verbatim; it is not validated as YAML):
 
 ```sql
 INSERT INTO doc VALUES (0, '', 'title: Generated Doc');
@@ -494,7 +585,7 @@ COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
 - `list` - JSON array rendered as bullet/numbered list (uses `attributes['ordered']`)
 - `table` - JSON object rendered as markdown table
 - `hr` - Horizontal rule `---`
-- `frontmatter` - YAML block between `---` delimiters
+- `frontmatter` - Raw block between `---` delimiters (emitted verbatim, not YAML-validated)
 
 **Inline Rendering (`kind = 'inline'`):**
 - `bold` / `strong` - `**text**`

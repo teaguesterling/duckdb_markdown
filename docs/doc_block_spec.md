@@ -113,7 +113,7 @@ These element types MUST be recognized by all compliant extensions:
 | `table` | Tabular data | json | NULL | - |
 | `hr` | Thematic break | text (empty) | NULL | - |
 | `metadata` | Document metadata | yaml or json | 0 | - |
-| `frontmatter` | Document metadata | yaml | 0 | - |
+| `frontmatter` | Document metadata (raw block text; this extension does not parse YAML) | yaml | 0 | - |
 | `image` | Block-level image | text (empty) | NULL | `src`, `alt`, `title` |
 | `raw` | Raw format-specific content | varies | NULL | `format` |
 

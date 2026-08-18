@@ -47,8 +47,8 @@ STRUCT(
 | `list` | `-`, `*`, `1.` lists | JSON array of items |
 | `table` | GFM tables | JSON `{headers, rows}` |
 | `hr` | `---`, `***`, `___` | Normalized to `---` on output |
-| `metadata` | YAML frontmatter | Level 0, encoding 'yaml' |
-| `frontmatter` | YAML frontmatter | Alias for `metadata` |
+| `metadata` | Frontmatter block (raw text, not YAML-parsed) | Level 0, encoding 'yaml' |
+| `frontmatter` | Frontmatter block (raw text, not YAML-parsed) | Alias for `metadata` |
 | `image` | `![alt](src "title")` | Details in attributes |
 | `raw` | Raw HTML | Preserved HTML in markdown |
 | `html` | Raw HTML | Alias for raw |
