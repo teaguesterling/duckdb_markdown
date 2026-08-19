@@ -7,9 +7,14 @@ on:
   workflow_dispatch:
     inputs:
       duckdb_wasm_version:
-        description: 'duckdb-wasm npm version to test'
+        description: 'duckdb-wasm npm version to test (overrides the compatibility check)'
         required: false
-        default: '1.32.0'
+
+# The DuckDB version the distribution pipeline builds this extension against.
+# Keep in step with duckdb-stable-build in MainDistributionPipeline.yml -- the
+# artifact name is derived from it, and it decides which duckdb-wasm can load it.
+env:
+  EXTENSION_DUCKDB_VERSION: v1.5.4
 
 jobs:
   test-wasm-browser:
@@ -18,10 +23,38 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
+      # DuckDB refuses to load an extension built for a different version, so the
+      # duckdb-wasm bundle must embed exactly EXTENSION_DUCKDB_VERSION. The npm
+      # version does not encode that, so the pairing is recorded here explicitly.
+      #
+      #   duckdb-wasm 1.32.0 / 1.33.0  -> duckdb d1dc88f950 (v1.4.x)
+      #   duckdb-wasm 1.33.1-dev*      -> duckdb d8cdaa33fd (v1.5.5), built from main
+      #
+      # There is currently NO published duckdb-wasm carrying v1.5.4, so this job
+      # skips rather than failing. Add the pairing below when one ships, or pass
+      # duckdb_wasm_version on a manual run to override.
+      - name: Resolve a compatible duckdb-wasm
+        id: pair
+        run: |
+          override="${{ inputs.duckdb_wasm_version }}"
+          if [ -n "$override" ]; then
+            echo "wasm=$override" >> "$GITHUB_OUTPUT"
+            echo "compatible=true" >> "$GITHUB_OUTPUT"
+            echo "Using manually specified duckdb-wasm $override"
+            exit 0
+          fi
+          case "$EXTENSION_DUCKDB_VERSION" in
+            v1.4.3) echo "wasm=1.32.0" >> "$GITHUB_OUTPUT"; echo "compatible=true" >> "$GITHUB_OUTPUT" ;;
+            *)      echo "compatible=false" >> "$GITHUB_OUTPUT"
+                    echo "No published duckdb-wasm bundles DuckDB $EXTENSION_DUCKDB_VERSION; skipping." ;;
+          esac
+
       - name: Checkout repository
+        if: steps.pair.outputs.compatible == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: steps.pair.outputs.compatible == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -29,33 +62,34 @@ jobs:
       - name: Download WASM extension artifact
         uses: actions/download-artifact@v4
         with:
-          # Use v1.4.3 extension to match duckdb-wasm 1.32.0 (stable release)
-          name: markdown-v1.4.3-extension-wasm_eh
+          name: markdown-${{ env.EXTENSION_DUCKDB_VERSION }}-extension-wasm_eh
           path: wasm-ext
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
-        if: github.event_name == 'workflow_run'
+        if: steps.pair.outputs.compatible == 'true' && github.event_name == 'workflow_run'
 
       - name: Download WASM extension (manual trigger)
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.pair.outputs.compatible == 'true' && github.event_name == 'workflow_dispatch'
         run: |
           mkdir -p wasm-ext
-          # Use v1.4.3 extension to match duckdb-wasm 1.32.0 (stable release)
-          gh run download --name markdown-v1.4.3-extension-wasm_eh --dir wasm-ext || echo "No artifact found, will skip extension test"
+          gh run download --name "markdown-${EXTENSION_DUCKDB_VERSION}-extension-wasm_eh" --dir wasm-ext || echo "No artifact found, will skip extension test"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create test directory
+        if: steps.pair.outputs.compatible == 'true'
         run: mkdir -p wasm-test
 
       - name: Install dependencies
+        if: steps.pair.outputs.compatible == 'true'
         working-directory: wasm-test
         run: |
           npm init -y
-          npm install @duckdb/duckdb-wasm@${{ inputs.duckdb_wasm_version || '1.32.0' }} playwright
+          npm install @duckdb/duckdb-wasm@${{ steps.pair.outputs.wasm }} playwright
           npx playwright install chromium
 
       - name: Copy extension to duckdb-wasm dist
+        if: steps.pair.outputs.compatible == 'true'
         run: |
           if [ -f wasm-ext/markdown.duckdb_extension.wasm ]; then
             cp wasm-ext/markdown.duckdb_extension.wasm wasm-test/node_modules/@duckdb/duckdb-wasm/dist/
@@ -65,6 +99,7 @@ jobs:
           fi
 
       - name: Create browser test
+        if: steps.pair.outputs.compatible == 'true'
         run: |
           cat > wasm-test/test-browser.mjs << 'TESTSCRIPT'
           import { chromium } from 'playwright';
@@ -249,6 +284,7 @@ jobs:
           TESTSCRIPT
 
       - name: Run browser tests
+        if: steps.pair.outputs.compatible == 'true'
         working-directory: wasm-test
         run: node test-browser.mjs
         timeout-minutes: 5
@@ -256,9 +292,20 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          if [ "${{ steps.pair.outputs.compatible }}" != "true" ]; then
+            echo "## WASM Integration Test — SKIPPED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No published \`duckdb-wasm\` bundles DuckDB ${{ env.EXTENSION_DUCKDB_VERSION }}, and DuckDB" >> $GITHUB_STEP_SUMMARY
+            echo "refuses to load an extension built for a different version, so there is no" >> $GITHUB_STEP_SUMMARY
+            echo "compatible pair to test. This is a skip, **not** a pass — the browser guard" >> $GITHUB_STEP_SUMMARY
+            echo "for the LINKED_LIBS bug (#19) is not running." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Add the pairing in the *Resolve a compatible duckdb-wasm* step when one ships." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
           echo "## WASM Integration Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "- duckdb-wasm: ${{ inputs.duckdb_wasm_version || '1.32.0' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Extension built for: DuckDB v1.4.3" >> $GITHUB_STEP_SUMMARY
+          echo "- duckdb-wasm: ${{ steps.pair.outputs.wasm || 'n/a (skipped)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Extension built for: DuckDB ${{ env.EXTENSION_DUCKDB_VERSION }}" >> $GITHUB_STEP_SUMMARY
           echo "- Test type: Browser (Playwright + Chromium)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Functions Tested" >> $GITHUB_STEP_SUMMARY
