@@ -18,17 +18,19 @@ jobs:
   # outstanding breaks are tracked as a checklist in the "DuckDB main API breaks"
   # issue.
   #
-  # It is skipped on pull_request so it cannot make a PR look broken. `if` is used
-  # rather than `continue-on-error` because a job that calls a REUSABLE WORKFLOW
-  # accepts only name/needs/if/permissions/uses/with/secrets/strategy/concurrency --
-  # `continue-on-error` is not among them, and adding it makes the whole workflow
-  # fail to parse (zero jobs scheduled, run marked failed).
+  # It runs ONLY on pushes to main (and on demand). Skipping `pull_request` alone was
+  # not enough: pushing to a branch fires a push run AND a pull_request run against the
+  # same commit, and a PR's check rollup includes both -- so the canary still showed as
+  # a red check on every PR. Upstream drift is a property of main, not of a branch, so
+  # main is where it belongs.
   #
-  # The canary therefore still runs on every push to a branch and on main, which is
-  # where the warning is actually wanted.
+  # `if` is used rather than `continue-on-error` because a job calling a REUSABLE
+  # WORKFLOW accepts only name/needs/if/permissions/uses/with/secrets/strategy/
+  # concurrency -- `continue-on-error` is not among them, and adding it makes the whole
+  # workflow fail to PARSE (zero jobs scheduled, run marked failed).
   duckdb-next-build:
     name: Canary — build against DuckDB main (advisory)
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       duckdb_version: main
