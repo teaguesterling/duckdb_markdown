@@ -203,6 +203,48 @@ FROM (SELECT UNNEST(md_extract_tables_json(
 ----
 [1, 5]
 
+# KNOWN DIVERGENCE (#21 item 4): a GFM table may interrupt a paragraph, and when
+# it does cmark reports the table's start_line as the paragraph's FIRST line
+# rather than the header row's. The error is as large as the paragraph is long:
+# below the header row is line 4 and cmark says 1.
+#
+# Investigated and deliberately not fixed. cmark does not expose the header
+# row's line anywhere: the table_header child node carries the same wrong
+# start_line as the table itself, and in this case the interrupting paragraph
+# node's own start_line/end_line come back as 0, so there is nothing correct to
+# add to. The only derivation available is arithmetic off the first body row
+# (header = first body row - 2, the delimiter being between them), which is a
+# heuristic on a sibling node and has no answer at all for a header-only table
+# -- see the second case below, which has no body row. Re-scanning the source
+# for the header line was ruled out. Asserted as-is so the divergence is visible
+# and cannot widen unnoticed.
+query I
+SELECT t.line_number
+FROM (SELECT UNNEST(md_extract_tables_json(
+        'line one' || chr(10) || 'line two' || chr(10) || 'line three' || chr(10) ||
+        '| A | B |' || chr(10) || '|---|---|' || chr(10) || '| 1 | 2 |')) t);
+----
+1
+
+# Header-only interrupting table: no body row exists, so even the arithmetic
+# workaround has nothing to work from. Header row is line 2; cmark says 1.
+query I
+SELECT t.line_number
+FROM (SELECT UNNEST(md_extract_tables_json(
+        'Some paragraph text' || chr(10) || '| A | B |' || chr(10) || '|---|---|')) t);
+----
+1
+
+# A table that does NOT interrupt a paragraph is exact -- the divergence is
+# specific to the interrupting case.
+query I
+SELECT t.line_number
+FROM (SELECT UNNEST(md_extract_tables_json(
+        'Some paragraph text' || chr(10) || chr(10) ||
+        '| A | B |' || chr(10) || '|---|---|' || chr(10) || '| 1 | 2 |')) t);
+----
+3
+
 # Column alignments from the delimiter row are parsed (internal today -- the
 # public structs do not expose alignment -- but a table with an alignment row
 # must still extract cleanly).

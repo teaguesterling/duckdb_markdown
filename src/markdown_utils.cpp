@@ -1596,6 +1596,13 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 		}
 
 		MarkdownTable table;
+		// Exact except when the table interrupts a paragraph, where cmark reports
+		// the paragraph's first line instead of the header row's (#21 item 4).
+		// Not fixable cleanly: the table_header child carries the same wrong
+		// start_line, the interrupting paragraph node's own line numbers come back
+		// as 0, and deriving the header line from the first body row is a
+		// heuristic with no answer for a header-only table. Pinned in
+		// test/sql/markdown_tables_edge_cases.test.
 		table.line_number = static_cast<idx_t>(cmark_node_get_start_line(node));
 
 		uint16_t n_columns = cmark_gfm_extensions_get_table_columns(node);
