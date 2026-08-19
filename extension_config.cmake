@@ -11,5 +11,7 @@ duckdb_extension_load(markdown
     LINKED_LIBS "$<TARGET_FILE:libcmark-gfm-extensions_static>;$<TARGET_FILE:libcmark-gfm_static>"
 )
 
-# Any extra extensions that should be built
-# e.g.: duckdb_extension_load(json)
+# Any extra extensions that should be built.
+# json: test/sql/table_cell_json_valid.test uses json_valid() behind a file-level
+# `require json`. Without this line that whole file is silently skipped (issue #36).
+duckdb_extension_load(json)

@@ -1,0 +1,130 @@
+# name: test/sql/duck_block_table_json_brackets.test
+# description: duck_block_to_md must not split the JSON rows array on brackets inside cells (#21)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# ParseJsonTable used to locate the headers/rows arrays with plain
+# content.find('[') / content.find(']'), which treats a bracket inside a cell
+# string as structure. A cell containing ']' truncated (or deleted) its row, a
+# stray '[' could start a phantom row, and a ']' in a header killed the whole
+# table -- headers came back empty, so the renderer fell through and emitted the
+# raw JSON. Brackets inside JSON strings are text; the parser must say so.
+# =============================================================================
+
+# A ']' in a body cell: the row keeps both cells, and the following row survives.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["a]b", "c"], ["d", "e"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| A | B |%| a]b | c |%| d | e |%';
+----
+true
+
+# A '[' in a body cell.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["a[b", "c"], ["d", "e"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| a[b | c |%| d | e |%';
+----
+true
+
+# ']' in one cell and '[' in the next: the ']' used to end the row early and the
+# '[' was then read as the start of a phantom row, losing a real row entirely.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["a]b", "c[d"], ["e", "f"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| a]b | c[d |%| e | f |%';
+----
+true
+
+# A ']' in a HEADER cell: headers came back empty, so nothing was rendered as a
+# table at all and the raw JSON was emitted verbatim.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["a]b", "Age"], "rows": [["Alice", "30"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| a]b | Age |%| Alice | 30 |%';
+----
+true
+
+# Both brackets plus an escaped quote in the same cell.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["x", "arr[0] = \"y\""], ["p", "q"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| x | arr[0] = "y" |%| p | q |%';
+----
+true
+
+# A cell whose text imitates the surrounding JSON. Locating "rows" with a plain
+# substring search would find the one inside the cell; the key lookup has to
+# honour string boundaries too.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["x", "], \"rows\": [[\"phantom\""], ["p", "q"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| p | q |%';
+----
+true
+
+# ...and the phantom cell must not appear as a row of its own.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["x", "], \"rows\": [[\"phantom\""], ["p", "q"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) NOT LIKE '%| phantom |%';
+----
+true
+
+# Escaped backslash before a quote must not be read as escaping the quote.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["back\\slash", "c]d"], ["e", "f"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| c]d |%| e | f |%';
+----
+true

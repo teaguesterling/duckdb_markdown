@@ -76,8 +76,25 @@ std::string StripFrontmatter(const std::string &markdown_str);
 // Convert metadata to DuckDB MAP value
 Value MetadataToMap(const MarkdownMetadata &metadata);
 
-// Calculate document statistics
-MarkdownStats CalculateStats(const std::string &markdown_str);
+// Calculate document statistics.
+//
+// `exact` selects how the three *structural* counts -- heading_count,
+// code_block_count and link_count -- are obtained (#21):
+//
+//   false (default): the historical line/character scanners. Kept bit-for-bit
+//     so md_stats(doc) never changes under existing callers. They count '```'
+//     fences in pairs and match a literal "[text](target)" anywhere in the
+//     document, so they see links inside code, count images as links, and miss
+//     reference links, autolinks, setext headings, indented code and ~~~ fences.
+//
+//   true: counted from cmark's AST, so they agree with what this extension's
+//     own extraction functions already report -- link_count equals
+//     len(md_extract_links(doc)) and code_block_count equals
+//     len(md_extract_code_blocks(doc)).
+//
+// word_count, char_count, line_count and reading_time_minutes are textual
+// measures with no AST counterpart and are identical under both.
+MarkdownStats CalculateStats(const std::string &markdown_str, bool exact = false);
 
 //===--------------------------------------------------------------------===//
 // Section Parsing

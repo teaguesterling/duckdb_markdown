@@ -299,7 +299,52 @@ Value MetadataToMap(const MarkdownMetadata &metadata) {
 	return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(keys), std::move(values));
 }
 
-MarkdownStats CalculateStats(const std::string &markdown_str_in) {
+// Structural counts taken from cmark's AST, for CalculateStats(..., exact=true).
+// Parsed with CMARK_OPT_DEFAULT and no extensions registered, which is exactly
+// what ExtractLinks and ExtractCodeBlocks do -- that is the point: in exact mode
+// md_stats must agree with md_extract_links / md_extract_code_blocks rather than
+// give a second opinion on the same document.
+static void CountStructuralNodes(const std::string &markdown_str, MarkdownStats &stats) {
+	stats.heading_count = 0;
+	stats.code_block_count = 0;
+	stats.link_count = 0;
+	if (markdown_str.empty()) {
+		return;
+	}
+
+	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
+	cmark_iter *iter = cmark_iter_new(doc);
+
+	cmark_event_type ev_type;
+	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+		if (ev_type != CMARK_EVENT_ENTER) {
+			continue;
+		}
+		switch (cmark_node_get_type(cmark_iter_get_node(iter))) {
+		case CMARK_NODE_HEADING:
+			stats.heading_count++;
+			break;
+		case CMARK_NODE_CODE_BLOCK:
+			stats.code_block_count++;
+			break;
+		case CMARK_NODE_LINK:
+			// Deliberately not CMARK_NODE_IMAGE: an image is not a link. The
+			// scanner counting them was one of the divergences in #21.
+			stats.link_count++;
+			break;
+		default:
+			break;
+		}
+	}
+
+	cmark_iter_free(iter);
+	cmark_node_free(doc);
+	cmark_parser_free(parser);
+}
+
+MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	MarkdownStats stats = {};
 
 	// Skip a leading BOM before counting anything: it is an encoding marker,
@@ -318,6 +363,16 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in) {
 
 	stats.char_count = markdown_str.length();
 	stats.line_count = static_cast<idx_t>(std::count(markdown_str.begin(), markdown_str.end(), '\n')) + 1;
+
+	// Exact mode: the three structural counts come from cmark's AST instead of
+	// the scanners below. Everything above (word/char/line) is textual and the
+	// same either way; reading_time_minutes is derived from word_count at the
+	// end, so it is unaffected too.
+	if (exact) {
+		CountStructuralNodes(markdown_str, stats);
+		stats.reading_time_minutes = static_cast<double>(stats.word_count) / 200.0;
+		return stats;
+	}
 
 	// Count headings (#17: this previously returned 0 unless the document *opened* with a
 	// heading — a single-pass `^#{1,6}` only anchors at string start). Scan line-by-line,
@@ -1541,6 +1596,13 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 		}
 
 		MarkdownTable table;
+		// Exact except when the table interrupts a paragraph, where cmark reports
+		// the paragraph's first line instead of the header row's (#21 item 4).
+		// Not fixable cleanly: the table_header child carries the same wrong
+		// start_line, the interrupting paragraph node's own line numbers come back
+		// as 0, and deriving the header line from the first body row is a
+		// heuristic with no answer for a header-only table. Pinned in
+		// test/sql/markdown_tables_edge_cases.test.
 		table.line_number = static_cast<idx_t>(cmark_node_get_start_line(node));
 
 		uint16_t n_columns = cmark_gfm_extensions_get_table_columns(node);

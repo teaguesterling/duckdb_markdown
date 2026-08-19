@@ -159,6 +159,90 @@ static void ParseJSONStringArrayBody(const string &body, vector<string> &out) {
 }
 
 //===--------------------------------------------------------------------===//
+// JSON array structure
+//
+// The table JSON produced by markdown_utils is {"headers": [...], "rows":
+// [[...], ...]}, but the cells inside it are arbitrary user text. Locating the
+// arrays with plain find('[') / find(']') treats a bracket inside a cell string
+// as structure: a ']' truncated its row (or, in a header, emptied the headers
+// array and killed the table), and a stray '[' could be read as the start of a
+// phantom row. Brackets and braces inside a JSON string are text, so every scan
+// below steps over strings rather than through them.
+//===--------------------------------------------------------------------===//
+
+// `open_quote` indexes the opening quote of a JSON string; returns the index of
+// its closing quote, or npos if the string is unterminated. Backslash escapes
+// are honoured, so \" does not end the string and \\ does not escape the quote
+// after it.
+static size_t FindJSONStringEnd(const string &src, size_t open_quote) {
+	for (size_t i = open_quote + 1; i < src.size(); i++) {
+		if (src[i] == '\\') {
+			i++; // skip whatever the backslash escapes, including another backslash
+		} else if (src[i] == '"') {
+			return i;
+		}
+	}
+	return string::npos;
+}
+
+// `open` indexes a '['; returns the index of the matching ']', or npos if the
+// array is unbalanced (or contains an unterminated string).
+static size_t FindMatchingBracket(const string &src, size_t open) {
+	int depth = 0;
+	for (size_t i = open; i < src.size(); i++) {
+		char c = src[i];
+		if (c == '"') {
+			size_t end = FindJSONStringEnd(src, i);
+			if (end == string::npos) {
+				return string::npos;
+			}
+			i = end;
+		} else if (c == '[') {
+			depth++;
+		} else if (c == ']') {
+			if (--depth == 0) {
+				return i;
+			}
+		}
+	}
+	return string::npos;
+}
+
+// Find the array that is the value of key `key`, returning the index of its
+// '[' or npos. Only a real key position matches: the scan skips over string
+// contents, so a cell whose text happens to read `"rows": [` is not mistaken
+// for the key, and the name must actually be followed by ':' and '['.
+static size_t FindJSONArrayValue(const string &src, const string &key) {
+	const string quoted = "\"" + key + "\"";
+	for (size_t i = 0; i < src.size(); i++) {
+		if (src[i] != '"') {
+			continue;
+		}
+		size_t end = FindJSONStringEnd(src, i);
+		if (end == string::npos) {
+			return string::npos;
+		}
+		if (end == i + quoted.size() - 1 && src.compare(i, quoted.size(), quoted) == 0) {
+			size_t j = end + 1;
+			while (j < src.size() && StringUtil::CharacterIsSpace(src[j])) {
+				j++;
+			}
+			if (j < src.size() && src[j] == ':') {
+				j++;
+				while (j < src.size() && StringUtil::CharacterIsSpace(src[j])) {
+					j++;
+				}
+				if (j < src.size() && src[j] == '[') {
+					return j;
+				}
+			}
+		}
+		i = end;
+	}
+	return string::npos;
+}
+
+//===--------------------------------------------------------------------===//
 // Helper Functions
 //===--------------------------------------------------------------------===//
 
@@ -211,40 +295,50 @@ vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 }
 
 void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows) {
-	// Find headers array
-	size_t headers_start = content.find("\"headers\":");
-	if (headers_start != string::npos) {
-		size_t arr_start = content.find('[', headers_start);
-		size_t arr_end = content.find(']', arr_start);
-		if (arr_start != string::npos && arr_end != string::npos) {
-			string headers_str = content.substr(arr_start + 1, arr_end - arr_start - 1);
-			ParseJSONStringArrayBody(headers_str, headers);
+	// Headers: a flat array of strings.
+	size_t headers_open = FindJSONArrayValue(content, "headers");
+	if (headers_open != string::npos) {
+		size_t headers_close = FindMatchingBracket(content, headers_open);
+		if (headers_close != string::npos) {
+			ParseJSONStringArrayBody(content.substr(headers_open + 1, headers_close - headers_open - 1), headers);
 		}
 	}
 
-	// Find rows array
-	size_t rows_start = content.find("\"rows\":");
-	if (rows_start != string::npos) {
-		size_t outer_start = content.find('[', rows_start);
-		if (outer_start != string::npos) {
-			size_t pos = outer_start + 1;
-			while (pos < content.size()) {
-				size_t row_start = content.find('[', pos);
-				if (row_start == string::npos)
-					break;
-				size_t row_end = content.find(']', row_start);
-				if (row_end == string::npos)
-					break;
-
-				string row_str = content.substr(row_start + 1, row_end - row_start - 1);
-				vector<string> row;
-				ParseJSONStringArrayBody(row_str, row);
-				if (!row.empty()) {
-					rows.push_back(row);
-				}
-				pos = row_end + 1;
+	// Rows: an array of arrays. Walk the outer array's body, stepping over any
+	// string so that brackets inside cells stay text.
+	size_t rows_open = FindJSONArrayValue(content, "rows");
+	if (rows_open == string::npos) {
+		return;
+	}
+	size_t rows_close = FindMatchingBracket(content, rows_open);
+	if (rows_close == string::npos) {
+		return;
+	}
+	size_t pos = rows_open + 1;
+	while (pos < rows_close) {
+		char c = content[pos];
+		if (c == '"') {
+			size_t str_end = FindJSONStringEnd(content, pos);
+			if (str_end == string::npos) {
+				break;
 			}
+			pos = str_end + 1;
+			continue;
 		}
+		if (c != '[') {
+			pos++;
+			continue;
+		}
+		size_t row_close = FindMatchingBracket(content, pos);
+		if (row_close == string::npos || row_close > rows_close) {
+			break;
+		}
+		vector<string> row;
+		ParseJSONStringArrayBody(content.substr(pos + 1, row_close - pos - 1), row);
+		if (!row.empty()) {
+			rows.push_back(row);
+		}
+		pos = row_close + 1;
 	}
 }
 

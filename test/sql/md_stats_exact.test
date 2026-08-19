@@ -1,0 +1,144 @@
+# name: test/sql/md_stats_exact.test
+# description: md_stats(doc, exact) — opt-in cmark-derived structural counts (#21)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# md_stats(doc) counts headings, code blocks and links with line/character
+# scanners. They diverge from cmark: they see links inside code spans and fenced
+# code, count images as links, and miss reference links, autolinks, setext
+# headings, indented code blocks and ~~~ fences.
+#
+# md_stats(doc) is NOT changed — same return type, same values. The second
+# argument opts into counts taken from cmark's AST, which by construction agree
+# with this extension's own extractors (md_extract_links,
+# md_extract_code_blocks) instead of giving a second opinion on the same doc.
+#
+# Every assertion below that uses one argument is the pre-existing behaviour and
+# must keep its value.
+# =============================================================================
+
+statement ok
+CREATE TEMPORARY MACRO doc() AS (E'# Title\nInline [a](http://a) and image ![i](http://i.png).\nRef [b][ref] and auto <http://c>.\nCode span `[x](http://x)`.\n\n```md\n[y](http://y)\n[z](http://z)\n```\n\n[ref]: http://b\n');
+
+# The headline divergence. The scanner finds five "[text](target)" matches: the
+# real link, the image, the one in a code span and the two inside the fence. It
+# finds neither the reference link nor the autolink. cmark sees three links.
+query II
+SELECT (md_stats(doc())).link_count, (md_stats(doc(), true)).link_count;
+----
+5	3
+
+# Exact mode agrees with the extractors — that is the contract, not a
+# coincidence of this document.
+query II
+SELECT (md_stats(doc(), true)).link_count = len(md_extract_links(doc())),
+       (md_stats(doc(), true)).code_block_count = len(md_extract_code_blocks(doc()));
+----
+true	true
+
+# An image is not a link. It is counted by the scanner and not by exact mode,
+# and md_extract_images finds exactly the one the scanner over-counted.
+query I
+SELECT (md_stats(doc())).link_count - (md_stats(doc(), true)).link_count
+       >= len(md_extract_images(doc()));
+----
+true
+
+# The `exact :=` spelling binds to the same overload. DuckDB does not validate
+# named-argument labels for scalar functions, so this is sugar, not a contract;
+# asserted so the documented call form is known to work.
+query I
+SELECT (md_stats(doc(), exact := true)).link_count;
+----
+3
+
+# =============================================================================
+# The divergences already asserted elsewhere in the suite, now with the exact
+# column beside them. Left value = existing behaviour, unchanged.
+# =============================================================================
+
+# markdown_malformed_inputs.test: an unterminated ``` fence, and a ~~~ fence.
+# The scanner counts ``` in pairs and does not know ~~~ exists, so it sees no
+# code block in either; cmark sees one in each.
+query IIII
+SELECT (md_stats('```sql' || chr(10) || 'SELECT 1')).code_block_count,
+       (md_stats('```sql' || chr(10) || 'SELECT 1', true)).code_block_count,
+       (md_stats('~~~py' || chr(10) || 'x')).code_block_count,
+       (md_stats('~~~py' || chr(10) || 'x', true)).code_block_count;
+----
+0	1	0	1
+
+# A setext heading is a heading to cmark; the ATX line scanner cannot see one.
+query II
+SELECT (md_stats(E'Setext\n======\ntext')).heading_count,
+       (md_stats(E'Setext\n======\ntext', true)).heading_count;
+----
+0	1
+
+# An indented code block is a code block to cmark; the fence counter cannot see one.
+query II
+SELECT (md_stats(E'    indented code')).code_block_count,
+       (md_stats(E'    indented code', true)).code_block_count;
+----
+0	1
+
+# markdown_security_regression.test: a document where the two agree. Exact mode
+# is not a general shift in the numbers — it only moves where the scanners were
+# wrong.
+query III
+SELECT (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```', true)).heading_count,
+       (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```', true)).link_count,
+       (md_stats(E'# H1\n## H2\ntext [a](b) and [c](d)\n```\ncode\n```', true)).code_block_count;
+----
+2	2	1
+
+# markdown_security_regression.test: the long unterminated "[" that used to trip
+# the old regex still costs nothing in exact mode.
+query I
+SELECT (md_stats(repeat('a', 5) || '[' || repeat('b', 300000), true)).link_count;
+----
+0
+
+# =============================================================================
+# The textual fields are the same under both modes — "exact" is scoped to the
+# three structural counts and claims nothing about word or character counting.
+# =============================================================================
+
+query I
+SELECT (md_stats(doc())).word_count = (md_stats(doc(), true)).word_count
+   AND (md_stats(doc())).char_count = (md_stats(doc(), true)).char_count
+   AND (md_stats(doc())).line_count = (md_stats(doc(), true)).line_count
+   AND (md_stats(doc())).reading_time_minutes = (md_stats(doc(), true)).reading_time_minutes;
+----
+true
+
+# exact := false is exactly the one-argument function.
+query I
+SELECT md_stats(doc(), false) = md_stats(doc());
+----
+true
+
+# =============================================================================
+# Edge cases
+# =============================================================================
+
+# NULL document -> NULL struct, as with one argument.
+query II
+SELECT md_stats(NULL::VARCHAR, true) IS NULL, md_stats(NULL::VARCHAR) IS NULL;
+----
+true	true
+
+# Empty document -> all zeros.
+query II
+SELECT (md_stats('', true)).link_count, (md_stats('', true)).code_block_count;
+----
+0	0
+
+# The flag does not have to be a constant: it is read per row.
+query II
+SELECT f, (md_stats(doc(), f)).link_count FROM (VALUES (false), (true)) t(f) ORDER BY f;
+----
+false	5
+true	3
