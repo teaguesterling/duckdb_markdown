@@ -12,8 +12,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Forward-compatibility canary: builds against DuckDB main to give advance warning
+  # of upstream API changes. It is EXPECTED to go red whenever DuckDB main breaks an
+  # API this extension uses -- the extension targets the stable release below, and
+  # outstanding breaks are tracked as a checklist in the "DuckDB main API breaks"
+  # issue.
+  #
+  # It is skipped on pull_request so it cannot make a PR look broken. `if` is used
+  # rather than `continue-on-error` because a job that calls a REUSABLE WORKFLOW
+  # accepts only name/needs/if/permissions/uses/with/secrets/strategy/concurrency --
+  # `continue-on-error` is not among them, and adding it makes the whole workflow
+  # fail to parse (zero jobs scheduled, run marked failed).
+  #
+  # The canary therefore still runs on every push to a branch and on main, which is
+  # where the warning is actually wanted.
   duckdb-next-build:
-    name: Build extension binaries
+    name: Canary — build against DuckDB main (advisory)
+    if: github.event_name != 'pull_request'
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       duckdb_version: main
