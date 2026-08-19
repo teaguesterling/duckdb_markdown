@@ -1,0 +1,25 @@
+# name: test/sql/table_cell_json_valid.test
+# description: table-cell JSON escaping (#21) validated with the json extension
+# group: [sql]
+
+require markdown
+
+# json_valid (below) lives in the json extension. This `require` is file-level,
+# so everything in this file is skipped where json is not loaded — keep only
+# genuinely json-dependent assertions here (issue #36). The escaper itself is
+# also covered, without json, by markdown_json_escape.test; this file is the
+# independent check that what we emit really parses as JSON.
+require json
+
+# =============================================================================
+# Table-cell JSON escaping (#21): a literal tab in a cell must still produce
+# VALID JSON in the `encoding='json'` block content. Pre-fix the table path
+# escaped only " \ \n, so a tab emitted a raw byte and broke the JSON.
+# =============================================================================
+
+query I
+SELECT bool_and(json_valid(content))
+FROM read_markdown_blocks('test/md/tab_in_cell.md')
+WHERE encoding = 'json';
+----
+true
