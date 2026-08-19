@@ -37,17 +37,31 @@ struct FrontmatterMatch {
 	size_t after_close = 0; // offset just past the closing "---"
 };
 
+// A leading UTF-8 BOM (EF BB BF) is an encoding marker, not content. cmark
+// skips it, so every cmark-backed extractor here was always immune; the linear
+// scanners in this file have to skip it explicitly or they disagree with cmark
+// on the very same document -- a BOM-prefixed post silently got no frontmatter
+// and no tags (#21). Returns the offset of the first content byte.
+static size_t SkipBOM(const std::string &s) {
+	if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF && static_cast<unsigned char>(s[1]) == 0xBB &&
+	    static_cast<unsigned char>(s[2]) == 0xBF) {
+		return 3;
+	}
+	return 0;
+}
+
 // Faithful linear replacement for R"(^---\r?\n([\s\S]*?)\r?\n---)".
 // Requires the string to begin with "---" then \r?\n, then finds the earliest
 // following "\r?\n---". Returns the body between the delimiters. O(n), no
 // recursion.
 static FrontmatterMatch FindFrontmatter(const std::string &s) {
 	FrontmatterMatch m;
-	// Opening delimiter: "---" then \r?\n
-	if (s.size() < 4 || s[0] != '-' || s[1] != '-' || s[2] != '-') {
+	// Opening delimiter: an optional BOM, then "---" then \r?\n
+	const size_t b = SkipBOM(s);
+	if (s.size() < b + 4 || s[b] != '-' || s[b + 1] != '-' || s[b + 2] != '-') {
 		return m;
 	}
-	size_t p = 3;
+	size_t p = b + 3;
 	if (p < s.size() && s[p] == '\r') {
 		p++;
 	}
@@ -120,71 +134,11 @@ static std::string EscapeJSONString(const std::string &s) {
 	return out;
 }
 
-// True if a single line (without its trailing '\n') is a GFM pipe-table row:
-// starts with '|', has at least two '|', and only spaces/tabs after the last
-// '|'. Faithful to R"(\|[^\n]*\|[ \t]*)" applied per line. A trailing '\r'
-// (CRLF input) is tolerated, matching the original regex behaviour.
-static bool IsPipeTableLine(const std::string &line_in) {
-	std::string line = line_in;
-	if (!line.empty() && line.back() == '\r') {
-		line.pop_back();
-	}
-	if (line.empty() || line[0] != '|') {
-		return false;
-	}
-	size_t last = line.rfind('|');
-	if (last == 0) {
-		return false; // only one '|'
-	}
-	for (size_t i = last + 1; i < line.size(); i++) {
-		if (line[i] != ' ' && line[i] != '\t') {
-			return false;
-		}
-	}
-	return true;
-}
-
-// True if a (trimmed, non-empty) table line is an alignment/separator row:
-// contains only '-', '|', ':', and whitespace, with at least one of '-|:'.
-// Linear replacement for R"(^\s*\|?\s*[-|:\s]+\s*\|?\s*$)" restricted to the
-// non-empty lines the table scanner actually feeds it.
-static bool IsSeparatorLine(const std::string &line) {
-	bool has_core = false;
-	for (char c : line) {
-		if (c == '-' || c == '|' || c == ':') {
-			has_core = true;
-		} else if (c == ' ' || c == '\t' || c == '\r') {
-			// allowed whitespace
-		} else {
-			return false;
-		}
-	}
-	return has_core;
-}
-
-// Split a table row into cells. Faithful to the previous R"([^|]+)" iterator:
-// split on '|', drop segments that are empty *before* trimming, then trim each
-// kept segment. Leading/trailing pipes therefore produce no empty cells.
-static std::vector<std::string> SplitTableCells(const std::string &line) {
-	std::vector<std::string> cells;
-	std::string cur;
-	auto flush = [&]() {
-		if (!cur.empty()) {
-			TrimWhitespace(cur);
-			cells.push_back(cur);
-		}
-		cur.clear();
-	};
-	for (char c : line) {
-		if (c == '|') {
-			flush();
-		} else {
-			cur += c;
-		}
-	}
-	flush();
-	return cells;
-}
+// NOTE: the hand-rolled pipe-table line scanner that used to live here
+// (IsPipeTableLine / IsSeparatorLine / SplitTableCells) was retired in favour
+// of cmark-gfm's table extension -- see ExtractTables below (#21).
+// TrimWhitespace stays: frontmatter parsing, wikilinks, tags and code-fence
+// info strings all still use it.
 
 //===--------------------------------------------------------------------===//
 // Core Conversion Functions
@@ -345,8 +299,15 @@ Value MetadataToMap(const MarkdownMetadata &metadata) {
 	return Value::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR, std::move(keys), std::move(values));
 }
 
-MarkdownStats CalculateStats(const std::string &markdown_str) {
+MarkdownStats CalculateStats(const std::string &markdown_str_in) {
 	MarkdownStats stats = {};
+
+	// Skip a leading BOM before counting anything: it is an encoding marker,
+	// not a character of the document, and cmark does not see it either. Only
+	// copies when a BOM is actually present (#21).
+	const size_t bom = SkipBOM(markdown_str_in);
+	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
+	const std::string &markdown_str = bom ? bom_stripped : markdown_str_in;
 
 	// Word count (approximate)
 	std::istringstream stream(markdown_str);
@@ -860,7 +821,21 @@ static std::string RenderNodeContent(cmark_node *node) {
 // adversarially deep nesting.
 static constexpr int MAX_INLINE_DEPTH = 1000;
 
-// Helper to get text content from inline children
+// Flatten a node's inline children to a string.
+//
+// Formatting that carries no information beyond its text -- emphasis, strong,
+// code spans, strikethrough -- is dropped, so `**bold**` becomes `bold`. Nodes
+// that carry a URL are NOT dropped: a link or an image is written back out in
+// markdown form, because the URL cannot be recovered from the text and losing
+// it silently is a data loss, not a formatting choice (#21). A cell holding
+// `[DuckDB](https://duckdb.org)` therefore still yields
+// `[DuckDB](https://duckdb.org)`, byte for byte what v1.5.2 produced from the
+// raw source.
+//
+// Autolinks: cmark represents `<https://x>` as a link whose text equals its
+// URL, which is indistinguishable from an explicitly written
+// `[https://x](https://x)`. That shape is emitted as `<https://x>` -- lossless
+// either way, and the form the source is usually written in.
 static std::string GetInlineText(cmark_node *node, int depth = 0) {
 	if (depth > MAX_INLINE_DEPTH) {
 		throw InvalidInputException("Markdown inline nesting exceeds maximum supported depth (%d)", MAX_INLINE_DEPTH);
@@ -877,8 +852,27 @@ static std::string GetInlineText(cmark_node *node, int depth = 0) {
 			result += " ";
 		} else if (type == CMARK_NODE_LINEBREAK) {
 			result += "\n";
+		} else if (type == CMARK_NODE_LINK || type == CMARK_NODE_IMAGE) {
+			const char *url_c = cmark_node_get_url(child);
+			const char *title_c = cmark_node_get_title(child);
+			std::string url = url_c ? url_c : "";
+			std::string title = title_c ? title_c : "";
+			std::string label = GetInlineText(child, depth + 1);
+			if (type == CMARK_NODE_LINK && title.empty() && !url.empty() && label == url) {
+				result += "<" + url + ">"; // autolink shape
+			} else {
+				if (type == CMARK_NODE_IMAGE) {
+					result += "!";
+				}
+				result += "[" + label + "](" + url;
+				if (!title.empty()) {
+					result += " \"" + title + "\"";
+				}
+				result += ")";
+			}
 		} else {
-			// Recursively get text from nested nodes
+			// Emphasis, strong, strikethrough, and anything else whose text is
+			// its whole content: recurse and keep only the text.
 			result += GetInlineText(child, depth + 1);
 		}
 		child = cmark_node_next(child);
@@ -1501,99 +1495,125 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 		return tables;
 	}
 
-	// Locate GFM pipe-table blocks with a linear line scanner instead of a
-	// backtracking std::regex. A block is a maximal run of consecutive pipe
-	// table lines (see IsPipeTableLine); this replaces
-	// R"((?:^|\n)((?:\|[^\n]*\|[ \t]*\n?)+))" which could overflow the stack on
-	// a very long table line or many rows.
-	const std::string &s = markdown_str;
-	size_t n = s.size();
-	size_t i = 0;
+	// Tables come from cmark-gfm's GFM table extension -- the same parser
+	// ParseBlocks uses (#21). There used to be a second, hand-rolled pipe-table
+	// scanner here whose own comment called itself a fallback, so the same
+	// document could yield different tables depending on which function you
+	// called: it found "tables" inside fenced code blocks, missed tables inside
+	// blockquotes and list items, missed tables written without leading pipes,
+	// split cells on escaped `\|`, and accepted header/delimiter rows whose cell
+	// counts disagreed (not a GFM table). One parser now serves both.
+	//
+	// The document is parsed whole, without stripping frontmatter, so
+	// line_number is an absolute line in the input -- matching ExtractLinks and
+	// ExtractImages, which also use cmark's native line tracking.
+	cmark_gfm_core_extensions_ensure_registered();
+	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
+	if (!parser) {
+		return tables;
+	}
+	cmark_syntax_extension *table_ext = cmark_find_syntax_extension("table");
+	if (table_ext) {
+		cmark_parser_attach_syntax_extension(parser, table_ext);
+	}
+	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_node *doc = cmark_parser_finish(parser);
+	cmark_parser_free(parser);
+	if (!doc) {
+		return tables;
+	}
 
-	while (i < n) {
-		// Current line spans [line_start, line_end); nl is the '\n' index or npos.
-		size_t line_start = i;
-		size_t nl = s.find('\n', i);
-		size_t line_end = (nl == std::string::npos) ? n : nl;
-		std::string line = s.substr(line_start, line_end - line_start);
+	cmark_iter *iter = cmark_iter_new(doc);
+	if (!iter) {
+		cmark_node_free(doc);
+		return tables;
+	}
 
-		if (!IsPipeTableLine(line)) {
-			i = (nl == std::string::npos) ? n : nl + 1;
+	cmark_event_type ev_type;
+	while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+		if (ev_type != CMARK_EVENT_ENTER) {
+			continue;
+		}
+		cmark_node *node = cmark_iter_get_node(iter);
+		const char *type_string = cmark_node_get_type_string(node);
+		if (!type_string || strcmp(type_string, "table") != 0) {
 			continue;
 		}
 
-		// Faithful to the old regex's line_number: the match began at the '\n'
-		// preceding the block (or at offset 0), and newlines strictly before
-		// that position were counted.
-		idx_t line_number;
-		if (line_start == 0) {
-			line_number = 1;
-		} else {
-			line_number = 1 + static_cast<idx_t>(std::count(s.begin(), s.begin() + (line_start - 1), '\n'));
-		}
-
-		// Gather the maximal run of consecutive pipe-table lines.
-		std::vector<std::string> table_lines;
-		size_t j = i;
-		while (j < n) {
-			size_t ls = j;
-			size_t jnl = s.find('\n', j);
-			size_t le = (jnl == std::string::npos) ? n : jnl;
-			std::string l = s.substr(ls, le - ls);
-			if (!IsPipeTableLine(l)) {
-				break;
-			}
-			TrimWhitespace(l);
-			if (!l.empty()) {
-				table_lines.push_back(l);
-			}
-			j = (jnl == std::string::npos) ? n : jnl + 1;
-		}
-		i = j; // continue scanning after the block
-
-		if (table_lines.size() < 2) {
-			continue; // Need at least header and separator
-		}
-
 		MarkdownTable table;
-		table.line_number = line_number;
+		table.line_number = static_cast<idx_t>(cmark_node_get_start_line(node));
 
-		// Find header row (first non-separator line)
-		size_t header_idx = 0;
-		while (header_idx < table_lines.size() && IsSeparatorLine(table_lines[header_idx])) {
-			header_idx++;
+		uint16_t n_columns = cmark_gfm_extensions_get_table_columns(node);
+		table.num_columns = static_cast<idx_t>(n_columns);
+
+		// Column alignments: cmark reports 0 (none), 'l', 'c' or 'r'. The
+		// previous scanner ignored the delimiter row entirely and reported
+		// every column as "left"; unset columns keep that default.
+		table.alignments.assign(table.num_columns, "left");
+		uint8_t *align = cmark_gfm_extensions_get_table_alignments(node);
+		if (align) {
+			for (idx_t c = 0; c < table.num_columns; c++) {
+				switch (align[c]) {
+				case 'c':
+					table.alignments[c] = "center";
+					break;
+				case 'r':
+					table.alignments[c] = "right";
+					break;
+				case 'l':
+				default:
+					table.alignments[c] = "left";
+					break;
+				}
+			}
 		}
 
-		if (header_idx >= table_lines.size()) {
-			continue; // No valid header found
-		}
-
-		// Parse header row
-		table.headers = SplitTableCells(table_lines[header_idx]);
-		table.num_columns = table.headers.size();
-
-		// Find data rows (skip separator lines)
-		for (size_t k = header_idx + 1; k < table_lines.size(); k++) {
-			if (IsSeparatorLine(table_lines[k])) {
+		for (cmark_node *row = cmark_node_first_child(node); row; row = cmark_node_next(row)) {
+			// cmark-gfm reports the header row as "table_header" in some
+			// builds and as "table_row" with the is_header flag in others;
+			// accept both, as ParseBlocks does.
+			const char *row_type = cmark_node_get_type_string(row);
+			if (!row_type || (strcmp(row_type, "table_row") != 0 && strcmp(row_type, "table_header") != 0)) {
 				continue;
 			}
-			std::vector<std::string> row_data = SplitTableCells(table_lines[k]);
+			bool is_header =
+			    cmark_gfm_extensions_get_table_row_is_header(row) != 0 || strcmp(row_type, "table_header") == 0;
 
-			// Pad row to match header column count
-			while (row_data.size() < table.num_columns) {
-				row_data.push_back("");
+			std::vector<std::string> cells;
+			for (cmark_node *cell = cmark_node_first_child(row); cell; cell = cmark_node_next(cell)) {
+				const char *cell_type = cmark_node_get_type_string(cell);
+				if (!cell_type || strcmp(cell_type, "table_cell") != 0) {
+					continue;
+				}
+				// Same cell text as ParseBlocks' table JSON: inline content
+				// flattened to text, so both surfaces agree cell for cell.
+				cells.push_back(GetInlineText(cell));
+			}
+			// cmark already normalises a row to the table's column count, but a
+			// short row is padded here as well so the invariant holds for any
+			// input.
+			while (cells.size() < table.num_columns) {
+				cells.push_back("");
 			}
 
-			table.rows.push_back(row_data);
+			if (is_header && table.headers.empty()) {
+				table.headers = std::move(cells);
+			} else {
+				table.rows.push_back(std::move(cells));
+			}
 		}
 
+		// A GFM table always has a header row; fall back to the column count if
+		// cmark ever reports one without.
+		if (table.headers.empty()) {
+			table.headers.assign(table.num_columns, "");
+		}
 		table.num_rows = table.rows.size();
-
-		// Default to left alignment for now
-		table.alignments.resize(table.num_columns, "left");
-
-		tables.push_back(table);
+		tables.push_back(std::move(table));
 	}
+
+	cmark_iter_free(iter);
+	cmark_node_free(doc);
 
 	return tables;
 }
@@ -1792,11 +1812,17 @@ static std::string ScrubInlineCode(const std::string &line) {
 	return scrubbed;
 }
 
-std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str) {
+std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str_in) {
 	std::vector<MarkdownTag> tags;
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return tags;
 	}
+
+	// A leading BOM is not whitespace, so without this the '#' of a first-line
+	// tag looks preceded by a non-space character and the tag is missed (#21).
+	const size_t bom = SkipBOM(markdown_str_in);
+	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
+	const std::string &markdown_str = bom ? bom_stripped : markdown_str_in;
 
 	// Inline #tag / #nested/tag. v1 limitations (documented): tags inside link URLs or
 	// wikilink targets are not suppressed; fenced code blocks and inline code spans are.

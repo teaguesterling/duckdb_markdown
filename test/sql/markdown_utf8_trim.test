@@ -11,6 +11,14 @@ require markdown
 # on a signed `char`, so every trailing byte >= 0x80 tests as "keep trimming".
 # Any cell ending in a non-ASCII character silently lost it; a cell holding
 # only an emoji was erased entirely.
+#
+# NOTE (#21): table extraction has since moved onto cmark-gfm's table
+# extension, which strips cell padding itself and never calls TrimWhitespace.
+# These assertions are kept unchanged and deliberately still run through
+# md_extract_table_rows / md_extract_tables_json, so the #32 coverage follows
+# whichever parser serves tables rather than evaporating with the old scanner.
+# The frontmatter and wikilink cases at the bottom still exercise
+# TrimWhitespace directly.
 #===================================================================
 
 # The exact reproducer from the issue.

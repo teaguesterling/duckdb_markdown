@@ -206,9 +206,22 @@ SELECT len(md_extract_images('![Alt text(image.jpg)'));
 ----
 0
 
-# Test table with mismatched columns
+# Test table with mismatched columns.
+#
+# CHANGED in #21 (6 -> 0): the GFM spec requires the delimiter row to have the
+# same number of cells as the header row -- "if not, a table will not be
+# recognized". Three header cells against two delimiter cells is therefore not
+# a table, and GitHub renders it as a paragraph. The retired hand-rolled
+# scanner never looked at the delimiter row's cell count and reported a table
+# anyway. This is the parser becoming correct, not a test being relaxed.
 query I
 SELECT len(md_extract_table_rows(E'| A | B | C |\n|---|---|\n| 1 | 2 | 3 |'));
+----
+0
+
+# The same table with a matching delimiter row is still a table.
+query I
+SELECT len(md_extract_table_rows(E'| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |'));
 ----
 6
 

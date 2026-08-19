@@ -14,6 +14,151 @@ namespace duckdb {
 static constexpr int MAX_PANDOC_DEPTH = 1000;
 
 //===--------------------------------------------------------------------===//
+// JSON string decoding
+//
+// The counterpart to markdown_utils' EscapeJSONString, which emits the RFC 8259
+// short escapes (\" \\ \b \f \n \r \t) plus \u00XX for any other control byte.
+// Three hand-rolled decoders used to sit here, each understanding a different
+// subset: ParseJsonListItems knew \n \t \r, ExtractPandocText knew \n \t \" \\,
+// and ParseJsonTable knew nothing at all -- it dropped the backslash and kept
+// the following letter, so a tab in a table cell came back out as a literal
+// 't'. That is the mirror image of the under-escaping fixed in #21, on the
+// decode side. One decoder now serves all three.
+//
+// `esc` is the character that followed the backslash; `i` indexes it in `src`
+// and is advanced past everything consumed.
+//===--------------------------------------------------------------------===//
+
+// Append the UTF-8 encoding of a Unicode code point.
+static void AppendUTF8(string &out, uint32_t cp) {
+	if (cp < 0x80) {
+		out += static_cast<char>(cp);
+	} else if (cp < 0x800) {
+		out += static_cast<char>(0xC0 | (cp >> 6));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	} else if (cp < 0x10000) {
+		out += static_cast<char>(0xE0 | (cp >> 12));
+		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	} else {
+		out += static_cast<char>(0xF0 | (cp >> 18));
+		out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+		out += static_cast<char>(0x80 | (cp & 0x3F));
+	}
+}
+
+// Read exactly 4 hex digits at `pos`; returns false (and leaves `value`
+// untouched) if they are not all present.
+static bool ReadHex4(const string &src, size_t pos, uint32_t &value) {
+	if (pos + 4 > src.size()) {
+		return false;
+	}
+	uint32_t v = 0;
+	for (size_t k = 0; k < 4; k++) {
+		char c = src[pos + k];
+		uint32_t d;
+		if (c >= '0' && c <= '9') {
+			d = static_cast<uint32_t>(c - '0');
+		} else if (c >= 'a' && c <= 'f') {
+			d = static_cast<uint32_t>(c - 'a') + 10;
+		} else if (c >= 'A' && c <= 'F') {
+			d = static_cast<uint32_t>(c - 'A') + 10;
+		} else {
+			return false;
+		}
+		v = (v << 4) | d;
+	}
+	value = v;
+	return true;
+}
+
+// Decode one escape sequence. `i` points at the character after the backslash
+// and is left pointing at the last character consumed, so a `for`/`while` loop
+// that increments `i` afterwards lands on the next unread character.
+static void DecodeJSONEscape(const string &src, size_t &i, string &out) {
+	if (i >= src.size()) {
+		out += '\\'; // trailing backslash: keep it rather than losing a byte
+		return;
+	}
+	char esc = src[i];
+	switch (esc) {
+	case 'n':
+		out += '\n';
+		return;
+	case 't':
+		out += '\t';
+		return;
+	case 'r':
+		out += '\r';
+		return;
+	case 'b':
+		out += '\b';
+		return;
+	case 'f':
+		out += '\f';
+		return;
+	case '"':
+	case '\\':
+	case '/':
+		out += esc;
+		return;
+	case 'u': {
+		uint32_t cp;
+		if (!ReadHex4(src, i + 1, cp)) {
+			out += esc; // malformed \u: emit literally, consume nothing extra
+			return;
+		}
+		i += 4;
+		// Surrogate pair: \uD800-\uDBFF followed by \uDC00-\uDFFF.
+		if (cp >= 0xD800 && cp <= 0xDBFF && i + 2 < src.size() && src[i + 1] == '\\' && src[i + 2] == 'u') {
+			uint32_t lo;
+			if (ReadHex4(src, i + 3, lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
+				cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+				i += 6;
+			}
+		}
+		if (cp >= 0xD800 && cp <= 0xDFFF) {
+			cp = 0xFFFD; // lone surrogate is not encodable as UTF-8
+		}
+		AppendUTF8(out, cp);
+		return;
+	}
+	default:
+		// Not a JSON escape. Keep the character as-is (the pre-existing
+		// behaviour for unknown escapes) rather than dropping it.
+		out += esc;
+		return;
+	}
+}
+
+// Split the body of a JSON array of strings (the text between the outer
+// brackets) into its decoded elements. Elements that are not strings are
+// ignored, which matches what the previous ad-hoc scanners did.
+static void ParseJSONStringArrayBody(const string &body, vector<string> &out) {
+	bool in_string = false;
+	bool escape_next = false;
+	string current;
+	for (size_t i = 0; i < body.size(); i++) {
+		char c = body[i];
+		if (escape_next) {
+			DecodeJSONEscape(body, i, current);
+			escape_next = false;
+		} else if (c == '\\') {
+			escape_next = true;
+		} else if (c == '"') {
+			if (in_string) {
+				out.push_back(current);
+				current.clear();
+			}
+			in_string = !in_string;
+		} else if (in_string) {
+			current += c;
+		}
+	}
+}
+
+//===--------------------------------------------------------------------===//
 // Helper Functions
 //===--------------------------------------------------------------------===//
 
@@ -47,14 +192,7 @@ vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 	for (size_t i = 0; i < items_str.length(); i++) {
 		char c = items_str[i];
 		if (escape_next) {
-			if (c == 'n')
-				current_item += '\n';
-			else if (c == 't')
-				current_item += '\t';
-			else if (c == 'r')
-				current_item += '\r';
-			else
-				current_item += c;
+			DecodeJSONEscape(items_str, i, current_item);
 			escape_next = false;
 		} else if (c == '\\') {
 			escape_next = true;
@@ -80,25 +218,7 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 		size_t arr_end = content.find(']', arr_start);
 		if (arr_start != string::npos && arr_end != string::npos) {
 			string headers_str = content.substr(arr_start + 1, arr_end - arr_start - 1);
-			bool in_string = false;
-			bool escape_next = false;
-			string current;
-			for (char c : headers_str) {
-				if (escape_next) {
-					current += c;
-					escape_next = false;
-				} else if (c == '\\') {
-					escape_next = true;
-				} else if (c == '"') {
-					if (in_string) {
-						headers.push_back(current);
-						current.clear();
-					}
-					in_string = !in_string;
-				} else if (in_string) {
-					current += c;
-				}
-			}
+			ParseJSONStringArrayBody(headers_str, headers);
 		}
 	}
 
@@ -118,25 +238,7 @@ void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &h
 
 				string row_str = content.substr(row_start + 1, row_end - row_start - 1);
 				vector<string> row;
-				bool in_string = false;
-				bool escape_next = false;
-				string current;
-				for (char c : row_str) {
-					if (escape_next) {
-						current += c;
-						escape_next = false;
-					} else if (c == '\\') {
-						escape_next = true;
-					} else if (c == '"') {
-						if (in_string) {
-							row.push_back(current);
-							current.clear();
-						}
-						in_string = !in_string;
-					} else if (in_string) {
-						current += c;
-					}
-				}
+				ParseJSONStringArrayBody(row_str, row);
 				if (!row.empty()) {
 					rows.push_back(row);
 				}
@@ -174,26 +276,13 @@ string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
 			end++;
 		}
 		string text = content.substr(start + 1, end - start - 1);
-		// Unescape
+		// Unescape (shared decoder: the full RFC 8259 escape set, including
+		// \r, \b, \f and \uXXXX -- see DecodeJSONEscape above).
 		string unescaped;
 		for (size_t i = 0; i < text.size(); i++) {
 			if (text[i] == '\\' && i + 1 < text.size()) {
-				char next = text[i + 1];
-				if (next == 'n') {
-					unescaped += '\n';
-					i++;
-				} else if (next == 't') {
-					unescaped += '\t';
-					i++;
-				} else if (next == '"') {
-					unescaped += '"';
-					i++;
-				} else if (next == '\\') {
-					unescaped += '\\';
-					i++;
-				} else {
-					unescaped += text[i];
-				}
+				i++;
+				DecodeJSONEscape(text, i, unescaped);
 			} else {
 				unescaped += text[i];
 			}
