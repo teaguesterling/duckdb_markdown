@@ -77,8 +77,8 @@ static std::string UnescapeMarkdownInline(const std::string &in) {
 	for (size_t i = 0; i < in.size(); i++) {
 		if (in[i] == '\\' && i + 1 < in.size()) {
 			char next = in[i + 1];
-			if (next == '[' || next == ']' || next == '#' || next == '^' ||
-			    next == '|' || next == '!' || next == '\\') {
+			if (next == '[' || next == ']' || next == '#' || next == '^' || next == '|' || next == '!' ||
+			    next == '\\') {
 				out.push_back(next);
 				i++;
 				continue;
@@ -191,10 +191,9 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 					} else if (tok == "tags") {
 						options.extract_tags = true;
 					} else {
-						throw InvalidInputException(
-						    "Unknown extract_extensions feature: '%s'. Known: 'obsidian' "
-						    "(flavor expanding to wikilinks+tags), 'wikilinks', 'tags'.",
-						    tok);
+						throw InvalidInputException("Unknown extract_extensions feature: '%s'. Known: 'obsidian' "
+						                            "(flavor expanding to wikilinks+tags), 'wikilinks', 'tags'.",
+						                            tok);
 					}
 				}
 			}
@@ -741,6 +740,21 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 // Registration
 //===--------------------------------------------------------------------===//
 
+// Register a reader under both a single VARCHAR path and a LIST(VARCHAR) of paths.
+// MarkdownReader::GetFiles() already resolves either shape; only the binder needs
+// to be told the list form is legal (issue #30).
+static void RegisterPathAndListVariants(ExtensionLoader &loader, TableFunction function) {
+	TableFunctionSet function_set(function.name);
+
+	function.arguments = {LogicalType::VARCHAR};
+	function_set.AddFunction(function);
+
+	function.arguments = {LogicalType::LIST(LogicalType::VARCHAR)};
+	function_set.AddFunction(function);
+
+	loader.RegisterFunction(std::move(function_set));
+}
+
 void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	// Register read_markdown function
 	TableFunction read_markdown_func("read_markdown", {LogicalType(LogicalTypeId::VARCHAR)},
@@ -757,7 +771,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_markdown_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 	read_markdown_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
 
-	loader.RegisterFunction(read_markdown_func);
+	RegisterPathAndListVariants(loader, read_markdown_func);
 
 	// Register read_markdown_sections function
 	TableFunction read_sections_func("read_markdown_sections", {LogicalType(LogicalTypeId::VARCHAR)},
@@ -783,7 +797,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_sections_func.named_parameters["max_depth"] = LogicalType(LogicalTypeId::INTEGER);
 	read_sections_func.named_parameters["max_content_length"] = LogicalType(LogicalTypeId::UBIGINT);
 
-	loader.RegisterFunction(read_sections_func);
+	RegisterPathAndListVariants(loader, read_sections_func);
 
 	// Register read_markdown_blocks function
 	TableFunction read_blocks_func("read_markdown_blocks", {LogicalType(LogicalTypeId::VARCHAR)},
@@ -797,7 +811,7 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_blocks_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_blocks_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 
-	loader.RegisterFunction(read_blocks_func);
+	RegisterPathAndListVariants(loader, read_blocks_func);
 }
 
 } // namespace duckdb

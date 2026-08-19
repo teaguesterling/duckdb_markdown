@@ -1,0 +1,70 @@
+# name: test/sql/markdown_vfs_paths.test
+# description: The markdown-file guard tolerates VFS/URI decoration on the path (issue #31)
+# group: [sql]
+
+require markdown
+
+#===================================================================
+# A path whose final component carries VFS decoration (`name.md@REF`)
+# is still a markdown file. All three readers share the same guard in
+# MarkdownReader::GetFiles(), so all three must accept it.
+#===================================================================
+
+query I
+SELECT count(*) FROM read_markdown('test/data/vfs_decorated.md@HEAD');
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown_sections('test/data/vfs_decorated.md@HEAD') WHERE level > 0;
+----
+2
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/data/vfs_decorated.md@HEAD');
+----
+true
+
+# The content really is parsed, not just accepted
+query I
+SELECT title FROM read_markdown_sections('test/data/vfs_decorated.md@HEAD') WHERE level = 1;
+----
+VFS Decorated Doc
+
+# Decoration also survives inside a list argument
+query I
+SELECT count(*) FROM read_markdown(['test/data/vfs_decorated.md@HEAD', 'test/markdown/simple.md']);
+----
+2
+
+# The replacement scan shares the same recognition test, so a bare decorated
+# markdown path in FROM position is routed to read_markdown as well
+query I
+SELECT count(*) FROM 'test/data/vfs_decorated.md@HEAD';
+----
+1
+
+#===================================================================
+# The guard's intent is preserved: stripping decoration must not turn
+# a non-markdown file into a markdown one.
+#===================================================================
+
+statement error
+SELECT * FROM read_markdown('test/data/vfs_decorated.png@HEAD');
+----
+File is not a markdown file
+
+#===================================================================
+# Ordinary local filenames containing '@' keep working unchanged: the
+# literal name is tested before any decoration is stripped
+#===================================================================
+
+query I
+SELECT title FROM read_markdown_sections('test/data/local@name.md') WHERE level = 1;
+----
+Local At Name
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md');
+----
+1

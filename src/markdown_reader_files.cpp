@@ -13,6 +13,63 @@
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
+// Markdown File Name Recognition
+//===--------------------------------------------------------------------===//
+
+//! The final component of a path, i.e. everything after the last separator.
+static string PathFileName(const string &path) {
+	auto sep_pos = path.find_last_of("/\\");
+	return sep_pos == string::npos ? path : path.substr(sep_pos + 1);
+}
+
+//! Lowercased extension of a file name ("" when it has none).
+static string LowerExtension(const string &file_name) {
+	auto dot_pos = file_name.find_last_of('.');
+	if (dot_pos == string::npos) {
+		return string();
+	}
+	// ASCII-only: a path byte >= 0x80 is negative as a signed char, which ::tolower
+	// is not defined for.
+	return StringUtil::Lower(file_name.substr(dot_pos + 1));
+}
+
+static bool IsMarkdownExtension(const string &extension) {
+	return extension == "md" || extension == "markdown";
+}
+
+//! Does this path name a markdown file?
+//!
+//! Virtual filesystems supplied by other extensions decorate the path with a
+//! revision, query or fragment (`git://docs/SCHEMAS.md@HEAD`, `...md?version=2`,
+//! `...md#frag`), so the raw suffix is not `.md` even though the file behind it is
+//! markdown (issue #31). Two spellings of the file name are therefore accepted:
+//! the literal one, and the one with VFS decoration removed. Testing the literal
+//! name first means this check can only ever accept more than the plain suffix
+//! test did -- a local file that genuinely contains '@', '?' or '#' in its name,
+//! such as `my@file.md`, is still matched on its literal name and is never newly
+//! rejected.
+static bool IsMarkdownFileName(const string &path) {
+	// 1. The literal file name.
+	if (IsMarkdownExtension(LowerExtension(PathFileName(path)))) {
+		return true;
+	}
+
+	// 2. The same name with VFS decoration stripped. A query or fragment terminates
+	//    the path (RFC 3986) so it is cut from the whole string, while a '@revision'
+	//    suffix is cut from the final component only -- that way the '@' of a URI
+	//    authority such as `sftp://user@host/doc.md` is never mistaken for
+	//    decoration. Only this recognition test sees the stripped name -- the file is
+	//    always opened under the original, fully decorated path.
+	auto query_pos = path.find_first_of("?#");
+	auto undecorated = PathFileName(query_pos == string::npos ? path : path.substr(0, query_pos));
+	auto revision_pos = undecorated.find_last_of('@');
+	if (revision_pos != string::npos) {
+		undecorated = undecorated.substr(0, revision_pos);
+	}
+	return IsMarkdownExtension(LowerExtension(undecorated));
+}
+
+//===--------------------------------------------------------------------===//
 // File Path Resolution
 //===--------------------------------------------------------------------===//
 
@@ -87,17 +144,8 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 	vector<string> markdown_files;
 
 	for (const auto &file : result) {
-		// Check if file has markdown extension
-		string extension = "";
-		auto dot_pos = file.find_last_of('.');
-		if (dot_pos != string::npos) {
-			extension = file.substr(dot_pos + 1);
-		}
-		// ASCII-only: a path byte >= 0x80 is negative as a signed char, which ::tolower
-		// is not defined for.
-		extension = StringUtil::Lower(extension);
-
-		if (extension == "md" || extension == "markdown") {
+		// Check if the file names a markdown file (tolerating VFS decoration)
+		if (IsMarkdownFileName(file)) {
 			try {
 				if (fs.FileExists(file)) {
 					markdown_files.push_back(file);
@@ -232,8 +280,7 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Check if this looks like a markdown file or pattern
-	bool is_markdown_file = StringUtil::EndsWith(StringUtil::Lower(table_name), ".md") ||
-	                        StringUtil::EndsWith(StringUtil::Lower(table_name), ".markdown");
+	bool is_markdown_file = IsMarkdownFileName(table_name);
 
 	// Check if this is a glob pattern that might contain markdown files
 	bool is_glob_pattern = false;
