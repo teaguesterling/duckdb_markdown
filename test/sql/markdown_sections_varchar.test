@@ -1,6 +1,6 @@
 # name: test/sql/markdown_sections_varchar.test
 # description: md_extract_sections resolves on VARCHAR / md inputs (Issue: binder ambiguity)
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

@@ -15,3 +15,6 @@ test_*.sql
 test_*.md
 *.cpp.tmp
 SELECT*
+
+# clangd index
+.cache/

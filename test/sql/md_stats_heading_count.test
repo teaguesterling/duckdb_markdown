@@ -1,6 +1,6 @@
 # name: test/sql/md_stats_heading_count.test
 # description: md_stats().heading_count counts every ATX heading line (issue #17)
-# group: [markdown]
+# group: [sql]
 
 require markdown
 

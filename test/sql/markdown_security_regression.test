@@ -1,5 +1,7 @@
 # name: test/sql/markdown_security_regression.test
 # description: Regression tests for the linear-scanning extractors (GHSA-qv83-qqvf-72v9).
+# group: [sql]
+
 #              The previous hand-rolled std::regex extractors recursed while
 #              matching greedy quantifiers over untrusted input; an unclosed
 #              frontmatter block, a many-cell table, or a long unterminated "["
@@ -8,7 +10,6 @@
 #              inputs took down the base binary (verified out-of-process). The
 #              cases below all use BOUNDED inputs that tripped the old regexes
 #              and must now resolve cleanly in O(n).
-# group: [sql]
 
 require markdown
 
