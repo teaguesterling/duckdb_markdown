@@ -120,6 +120,72 @@ void MarkdownFunctions::RegisterMarkdownTypeFunctions(ExtensionLoader &loader) {
 	loader.RegisterFunction(value_to_md_fun);
 }
 
+namespace {
+
+// The all-zero stats struct returned for empty input and for any input that
+// throws, shared by both md_stats overloads.
+Value EmptyStatsValue() {
+	child_list_t<Value> struct_values;
+	struct_values.push_back(std::make_pair("word_count", Value::BIGINT(0)));
+	struct_values.push_back(std::make_pair("char_count", Value::BIGINT(0)));
+	struct_values.push_back(std::make_pair("line_count", Value::BIGINT(0)));
+	struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(0)));
+	struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(0)));
+	struct_values.push_back(std::make_pair("link_count", Value::BIGINT(0)));
+	struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(0.0)));
+	return Value::STRUCT(std::move(struct_values));
+}
+
+Value StatsValue(const markdown_utils::MarkdownStats &stats) {
+	child_list_t<Value> struct_values;
+	struct_values.push_back(std::make_pair("word_count", Value::BIGINT(stats.word_count)));
+	struct_values.push_back(std::make_pair("char_count", Value::BIGINT(stats.char_count)));
+	struct_values.push_back(std::make_pair("line_count", Value::BIGINT(stats.line_count)));
+	struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(stats.heading_count)));
+	struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(stats.code_block_count)));
+	struct_values.push_back(std::make_pair("link_count", Value::BIGINT(stats.link_count)));
+	struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
+	return Value::STRUCT(std::move(struct_values));
+}
+
+// `has_exact_arg` says whether this is the two-argument overload. The flag is
+// read per row, so a non-constant expression works. Both overloads use DuckDB's
+// default null handling, so a NULL in either argument yields a NULL struct
+// without the function running at all; the IsNull guard below is belt and
+// braces for the paths that do not fold.
+void ExecuteStats(DataChunk &args, Vector &result, bool has_exact_arg) {
+	auto &markdown_vector = args.data[0];
+
+	for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
+		try {
+			Value md_value = markdown_vector.GetValue(row_idx);
+
+			if (md_value.IsNull()) {
+				result.SetValue(row_idx, Value());
+				continue;
+			}
+
+			bool exact = false;
+			if (has_exact_arg) {
+				Value exact_value = args.data[1].GetValue(row_idx);
+				exact = !exact_value.IsNull() && BooleanValue::Get(exact_value);
+			}
+
+			string md_str = StringValue::Get(md_value);
+			if (md_str.empty()) {
+				result.SetValue(row_idx, EmptyStatsValue());
+				continue;
+			}
+
+			result.SetValue(row_idx, StatsValue(markdown_utils::CalculateStats(md_str, exact)));
+		} catch (const std::exception &e) {
+			result.SetValue(row_idx, EmptyStatsValue());
+		}
+	}
+}
+
+} // namespace
+
 void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
@@ -136,67 +202,27 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 	auto stats_struct_type = LogicalType::STRUCT(stats_struct_types);
 
 	ScalarFunction md_stats_fun(
-	    "md_stats", {markdown_type}, stats_struct_type, [](DataChunk &args, ExpressionState &state, Vector &result) {
-		    auto &markdown_vector = args.data[0];
-
-		    for (idx_t row_idx = 0; row_idx < args.size(); row_idx++) {
-			    try {
-				    Value md_value = markdown_vector.GetValue(row_idx);
-
-				    if (md_value.IsNull()) {
-					    result.SetValue(row_idx, Value());
-					    continue;
-				    }
-
-				    string md_str = StringValue::Get(md_value);
-
-				    if (md_str.empty()) {
-					    // Return empty stats struct
-					    child_list_t<Value> struct_values;
-					    struct_values.push_back(std::make_pair("word_count", Value::BIGINT(0)));
-					    struct_values.push_back(std::make_pair("char_count", Value::BIGINT(0)));
-					    struct_values.push_back(std::make_pair("line_count", Value::BIGINT(0)));
-					    struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(0)));
-					    struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(0)));
-					    struct_values.push_back(std::make_pair("link_count", Value::BIGINT(0)));
-					    struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(0.0)));
-
-					    result.SetValue(row_idx, Value::STRUCT(struct_values));
-					    continue;
-				    }
-
-				    auto stats = markdown_utils::CalculateStats(md_str);
-
-				    // Create struct value
-				    child_list_t<Value> struct_values;
-				    struct_values.push_back(std::make_pair("word_count", Value::BIGINT(stats.word_count)));
-				    struct_values.push_back(std::make_pair("char_count", Value::BIGINT(stats.char_count)));
-				    struct_values.push_back(std::make_pair("line_count", Value::BIGINT(stats.line_count)));
-				    struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(stats.heading_count)));
-				    struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(stats.code_block_count)));
-				    struct_values.push_back(std::make_pair("link_count", Value::BIGINT(stats.link_count)));
-				    struct_values.push_back(
-				        std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
-
-				    result.SetValue(row_idx, Value::STRUCT(struct_values));
-
-			    } catch (const std::exception &e) {
-				    // Return empty stats on error
-				    child_list_t<Value> struct_values;
-				    struct_values.push_back(std::make_pair("word_count", Value::BIGINT(0)));
-				    struct_values.push_back(std::make_pair("char_count", Value::BIGINT(0)));
-				    struct_values.push_back(std::make_pair("line_count", Value::BIGINT(0)));
-				    struct_values.push_back(std::make_pair("heading_count", Value::BIGINT(0)));
-				    struct_values.push_back(std::make_pair("code_block_count", Value::BIGINT(0)));
-				    struct_values.push_back(std::make_pair("link_count", Value::BIGINT(0)));
-				    struct_values.push_back(std::make_pair("reading_time_minutes", Value::DOUBLE(0.0)));
-
-				    result.SetValue(row_idx, Value::STRUCT(struct_values));
-			    }
-		    }
-	    });
-
+	    "md_stats", {markdown_type}, stats_struct_type,
+	    [](DataChunk &args, ExpressionState &state, Vector &result) { ExecuteStats(args, result, false); });
 	loader.RegisterFunction(md_stats_fun);
+
+	// md_stats(doc, exact) -- opt-in accurate structural counts (#21).
+	//
+	// A second overload rather than extra struct fields: adding fields would
+	// change the return TYPE of md_stats(doc) for every existing caller (views,
+	// CTAS, struct comparisons), which is a shape change forced on people who
+	// asked for nothing. This way md_stats(doc) is untouched -- same type, same
+	// values -- and the accurate counts are one explicit argument away, in the
+	// same columns, so nothing downstream has to be renamed.
+	//
+	// Note on spelling: DuckDB accepts `md_stats(doc, exact := true)` and it
+	// reads well, but scalar functions have no named-parameter map, so the label
+	// is not validated -- it binds positionally either way. Documented as a
+	// positional BOOLEAN for that reason.
+	ScalarFunction md_stats_exact_fun(
+	    "md_stats", {markdown_type, LogicalType::BOOLEAN}, stats_struct_type,
+	    [](DataChunk &args, ExpressionState &state, Vector &result) { ExecuteStats(args, result, true); });
+	loader.RegisterFunction(md_stats_exact_fun);
 
 	// Register md_extract_section function (2-arg version: uses minimal mode)
 	ScalarFunction md_extract_section(
