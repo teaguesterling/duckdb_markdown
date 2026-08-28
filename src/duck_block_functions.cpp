@@ -5,242 +5,16 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "yyjson.hpp"
 #include <sstream>
 
 namespace duckdb {
 
+using namespace duckdb_yyjson;
+
 // Maximum Pandoc inline-nesting depth walked by ExtractPandocText. Guards
 // against unbounded recursion (stack overflow) on adversarially nested JSON.
 static constexpr int MAX_PANDOC_DEPTH = 1000;
-
-//===--------------------------------------------------------------------===//
-// JSON string decoding
-//
-// The counterpart to markdown_utils' EscapeJSONString, which emits the RFC 8259
-// short escapes (\" \\ \b \f \n \r \t) plus \u00XX for any other control byte.
-// Three hand-rolled decoders used to sit here, each understanding a different
-// subset: ParseJsonListItems knew \n \t \r, ExtractPandocText knew \n \t \" \\,
-// and ParseJsonTable knew nothing at all -- it dropped the backslash and kept
-// the following letter, so a tab in a table cell came back out as a literal
-// 't'. That is the mirror image of the under-escaping fixed in #21, on the
-// decode side. One decoder now serves all three.
-//
-// `esc` is the character that followed the backslash; `i` indexes it in `src`
-// and is advanced past everything consumed.
-//===--------------------------------------------------------------------===//
-
-// Append the UTF-8 encoding of a Unicode code point.
-static void AppendUTF8(string &out, uint32_t cp) {
-	if (cp < 0x80) {
-		out += static_cast<char>(cp);
-	} else if (cp < 0x800) {
-		out += static_cast<char>(0xC0 | (cp >> 6));
-		out += static_cast<char>(0x80 | (cp & 0x3F));
-	} else if (cp < 0x10000) {
-		out += static_cast<char>(0xE0 | (cp >> 12));
-		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-		out += static_cast<char>(0x80 | (cp & 0x3F));
-	} else {
-		out += static_cast<char>(0xF0 | (cp >> 18));
-		out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-		out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-		out += static_cast<char>(0x80 | (cp & 0x3F));
-	}
-}
-
-// Read exactly 4 hex digits at `pos`; returns false (and leaves `value`
-// untouched) if they are not all present.
-static bool ReadHex4(const string &src, size_t pos, uint32_t &value) {
-	if (pos + 4 > src.size()) {
-		return false;
-	}
-	uint32_t v = 0;
-	for (size_t k = 0; k < 4; k++) {
-		char c = src[pos + k];
-		uint32_t d;
-		if (c >= '0' && c <= '9') {
-			d = static_cast<uint32_t>(c - '0');
-		} else if (c >= 'a' && c <= 'f') {
-			d = static_cast<uint32_t>(c - 'a') + 10;
-		} else if (c >= 'A' && c <= 'F') {
-			d = static_cast<uint32_t>(c - 'A') + 10;
-		} else {
-			return false;
-		}
-		v = (v << 4) | d;
-	}
-	value = v;
-	return true;
-}
-
-// Decode one escape sequence. `i` points at the character after the backslash
-// and is left pointing at the last character consumed, so a `for`/`while` loop
-// that increments `i` afterwards lands on the next unread character.
-static void DecodeJSONEscape(const string &src, size_t &i, string &out) {
-	if (i >= src.size()) {
-		out += '\\'; // trailing backslash: keep it rather than losing a byte
-		return;
-	}
-	char esc = src[i];
-	switch (esc) {
-	case 'n':
-		out += '\n';
-		return;
-	case 't':
-		out += '\t';
-		return;
-	case 'r':
-		out += '\r';
-		return;
-	case 'b':
-		out += '\b';
-		return;
-	case 'f':
-		out += '\f';
-		return;
-	case '"':
-	case '\\':
-	case '/':
-		out += esc;
-		return;
-	case 'u': {
-		uint32_t cp;
-		if (!ReadHex4(src, i + 1, cp)) {
-			out += esc; // malformed \u: emit literally, consume nothing extra
-			return;
-		}
-		i += 4;
-		// Surrogate pair: \uD800-\uDBFF followed by \uDC00-\uDFFF.
-		if (cp >= 0xD800 && cp <= 0xDBFF && i + 2 < src.size() && src[i + 1] == '\\' && src[i + 2] == 'u') {
-			uint32_t lo;
-			if (ReadHex4(src, i + 3, lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
-				cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-				i += 6;
-			}
-		}
-		if (cp >= 0xD800 && cp <= 0xDFFF) {
-			cp = 0xFFFD; // lone surrogate is not encodable as UTF-8
-		}
-		AppendUTF8(out, cp);
-		return;
-	}
-	default:
-		// Not a JSON escape. Keep the character as-is (the pre-existing
-		// behaviour for unknown escapes) rather than dropping it.
-		out += esc;
-		return;
-	}
-}
-
-// Split the body of a JSON array of strings (the text between the outer
-// brackets) into its decoded elements. Elements that are not strings are
-// ignored, which matches what the previous ad-hoc scanners did.
-static void ParseJSONStringArrayBody(const string &body, vector<string> &out) {
-	bool in_string = false;
-	bool escape_next = false;
-	string current;
-	for (size_t i = 0; i < body.size(); i++) {
-		char c = body[i];
-		if (escape_next) {
-			DecodeJSONEscape(body, i, current);
-			escape_next = false;
-		} else if (c == '\\') {
-			escape_next = true;
-		} else if (c == '"') {
-			if (in_string) {
-				out.push_back(current);
-				current.clear();
-			}
-			in_string = !in_string;
-		} else if (in_string) {
-			current += c;
-		}
-	}
-}
-
-//===--------------------------------------------------------------------===//
-// JSON array structure
-//
-// The table JSON produced by markdown_utils is {"headers": [...], "rows":
-// [[...], ...]}, but the cells inside it are arbitrary user text. Locating the
-// arrays with plain find('[') / find(']') treats a bracket inside a cell string
-// as structure: a ']' truncated its row (or, in a header, emptied the headers
-// array and killed the table), and a stray '[' could be read as the start of a
-// phantom row. Brackets and braces inside a JSON string are text, so every scan
-// below steps over strings rather than through them.
-//===--------------------------------------------------------------------===//
-
-// `open_quote` indexes the opening quote of a JSON string; returns the index of
-// its closing quote, or npos if the string is unterminated. Backslash escapes
-// are honoured, so \" does not end the string and \\ does not escape the quote
-// after it.
-static size_t FindJSONStringEnd(const string &src, size_t open_quote) {
-	for (size_t i = open_quote + 1; i < src.size(); i++) {
-		if (src[i] == '\\') {
-			i++; // skip whatever the backslash escapes, including another backslash
-		} else if (src[i] == '"') {
-			return i;
-		}
-	}
-	return string::npos;
-}
-
-// `open` indexes a '['; returns the index of the matching ']', or npos if the
-// array is unbalanced (or contains an unterminated string).
-static size_t FindMatchingBracket(const string &src, size_t open) {
-	int depth = 0;
-	for (size_t i = open; i < src.size(); i++) {
-		char c = src[i];
-		if (c == '"') {
-			size_t end = FindJSONStringEnd(src, i);
-			if (end == string::npos) {
-				return string::npos;
-			}
-			i = end;
-		} else if (c == '[') {
-			depth++;
-		} else if (c == ']') {
-			if (--depth == 0) {
-				return i;
-			}
-		}
-	}
-	return string::npos;
-}
-
-// Find the array that is the value of key `key`, returning the index of its
-// '[' or npos. Only a real key position matches: the scan skips over string
-// contents, so a cell whose text happens to read `"rows": [` is not mistaken
-// for the key, and the name must actually be followed by ':' and '['.
-static size_t FindJSONArrayValue(const string &src, const string &key) {
-	const string quoted = "\"" + key + "\"";
-	for (size_t i = 0; i < src.size(); i++) {
-		if (src[i] != '"') {
-			continue;
-		}
-		size_t end = FindJSONStringEnd(src, i);
-		if (end == string::npos) {
-			return string::npos;
-		}
-		if (end == i + quoted.size() - 1 && src.compare(i, quoted.size(), quoted) == 0) {
-			size_t j = end + 1;
-			while (j < src.size() && StringUtil::CharacterIsSpace(src[j])) {
-				j++;
-			}
-			if (j < src.size() && src[j] == ':') {
-				j++;
-				while (j < src.size() && StringUtil::CharacterIsSpace(src[j])) {
-					j++;
-				}
-				if (j < src.size() && src[j] == '[') {
-					return j;
-				}
-			}
-		}
-		i = end;
-	}
-	return string::npos;
-}
 
 //===--------------------------------------------------------------------===//
 // Helper Functions
@@ -264,311 +38,339 @@ string DuckBlockFunctions::GetAttribute(const Value &attributes, const string &k
 
 vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 	vector<string> items;
-	if (content.length() < 2 || content[0] != '[') {
+	if (content.empty()) {
 		return items;
 	}
-
-	string items_str = content.substr(1, content.length() - 2); // Remove [ ]
-	string current_item;
-	bool in_string = false;
-	bool escape_next = false;
-
-	for (size_t i = 0; i < items_str.length(); i++) {
-		char c = items_str[i];
-		if (escape_next) {
-			DecodeJSONEscape(items_str, i, current_item);
-			escape_next = false;
-		} else if (c == '\\') {
-			escape_next = true;
-		} else if (c == '"') {
-			if (in_string) {
-				items.push_back(current_item);
-				current_item.clear();
+	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	if (!doc) {
+		return items;
+	}
+	yyjson_val *root = yyjson_doc_get_root(doc);
+	if (yyjson_is_arr(root)) {
+		size_t idx, max;
+		yyjson_val *val;
+		yyjson_arr_foreach(root, idx, max, val) {
+			if (yyjson_is_str(val)) {
+				items.emplace_back(yyjson_get_str(val), yyjson_get_len(val));
 			}
-			in_string = !in_string;
-		} else if (in_string) {
-			current_item += c;
 		}
 	}
-
+	yyjson_doc_free(doc);
 	return items;
 }
 
-void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows) {
-	// Headers: a flat array of strings.
-	size_t headers_open = FindJSONArrayValue(content, "headers");
-	if (headers_open != string::npos) {
-		size_t headers_close = FindMatchingBracket(content, headers_open);
-		if (headers_close != string::npos) {
-			ParseJSONStringArrayBody(content.substr(headers_open + 1, headers_close - headers_open - 1), headers);
-		}
-	}
-
-	// Rows: an array of arrays. Walk the outer array's body, stepping over any
-	// string so that brackets inside cells stay text.
-	size_t rows_open = FindJSONArrayValue(content, "rows");
-	if (rows_open == string::npos) {
+void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers,
+                                        vector<vector<string>> &rows) {
+	if (content.empty()) {
 		return;
 	}
-	size_t rows_close = FindMatchingBracket(content, rows_open);
-	if (rows_close == string::npos) {
+	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	if (!doc) {
 		return;
 	}
-	size_t pos = rows_open + 1;
-	while (pos < rows_close) {
-		char c = content[pos];
-		if (c == '"') {
-			size_t str_end = FindJSONStringEnd(content, pos);
-			if (str_end == string::npos) {
-				break;
+	yyjson_val *root = yyjson_doc_get_root(doc);
+	if (yyjson_is_obj(root)) {
+		yyjson_val *headers_val = yyjson_obj_get(root, "headers");
+		if (headers_val && yyjson_is_arr(headers_val)) {
+			size_t idx, max;
+			yyjson_val *val;
+			yyjson_arr_foreach(headers_val, idx, max, val) {
+				if (yyjson_is_str(val)) {
+					headers.emplace_back(yyjson_get_str(val), yyjson_get_len(val));
+				}
 			}
-			pos = str_end + 1;
-			continue;
 		}
-		if (c != '[') {
-			pos++;
-			continue;
+
+		yyjson_val *rows_val = yyjson_obj_get(root, "rows");
+		if (rows_val && yyjson_is_arr(rows_val)) {
+			size_t r_idx, r_max;
+			yyjson_val *row_val;
+			yyjson_arr_foreach(rows_val, r_idx, r_max, row_val) {
+				if (yyjson_is_arr(row_val)) {
+					vector<string> row;
+					size_t c_idx, c_max;
+					yyjson_val *cell_val;
+					yyjson_arr_foreach(row_val, c_idx, c_max, cell_val) {
+						if (yyjson_is_str(cell_val)) {
+							row.emplace_back(yyjson_get_str(cell_val), yyjson_get_len(cell_val));
+						}
+					}
+					if (!row.empty()) {
+						rows.push_back(std::move(row));
+					}
+				}
+			}
 		}
-		size_t row_close = FindMatchingBracket(content, pos);
-		if (row_close == string::npos || row_close > rows_close) {
-			break;
-		}
-		vector<string> row;
-		ParseJSONStringArrayBody(content.substr(pos + 1, row_close - pos - 1), row);
-		if (!row.empty()) {
-			rows.push_back(row);
-		}
-		pos = row_close + 1;
 	}
+	yyjson_doc_free(doc);
 }
 
-// Helper to extract text with markdown formatting from Pandoc AST inline elements
-// Handles {"t":"Str","c":"text"}, {"t":"Space"}, {"t":"Strong","c":[...]}, {"t":"Emph","c":[...]},
-// {"t":"Code","c":[[attr],text]}, {"t":"Link","c":[[attr],[inlines],[url,title]]}, etc.
-string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
+static string ExtractPandocTextFromVal(yyjson_val *val, int depth) {
+	if (!val) {
+		return "";
+	}
 	if (depth > MAX_PANDOC_DEPTH) {
 		throw InvalidInputException("Pandoc inline nesting exceeds maximum supported depth (%d)", MAX_PANDOC_DEPTH);
 	}
-	string result;
-	size_t pos = 0;
-
-	// Helper lambda to extract a quoted string starting at a position
-	auto extract_quoted_string = [&content](size_t start) -> pair<string, size_t> {
-		if (start >= content.size() || content[start] != '"') {
-			return {"", start};
+	if (yyjson_is_str(val)) {
+		return string(yyjson_get_str(val), yyjson_get_len(val));
+	}
+	if (yyjson_is_arr(val)) {
+		string result;
+		size_t idx, max;
+		yyjson_val *item;
+		yyjson_arr_foreach(val, idx, max, item) {
+			result += ExtractPandocTextFromVal(item, depth);
 		}
-		size_t end = start + 1;
-		bool escape = false;
-		while (end < content.size()) {
-			if (escape) {
-				escape = false;
-			} else if (content[end] == '\\') {
-				escape = true;
-			} else if (content[end] == '"') {
-				break;
+		return result;
+	}
+	if (yyjson_is_obj(val)) {
+		yyjson_val *t_val = yyjson_obj_get(val, "t");
+		if (!t_val || !yyjson_is_str(t_val)) {
+			return "";
+		}
+		const char *t = yyjson_get_str(t_val);
+		yyjson_val *c_val = yyjson_obj_get(val, "c");
+
+		if (strcmp(t, "Str") == 0) {
+			if (c_val && yyjson_is_str(c_val)) {
+				return string(yyjson_get_str(c_val), yyjson_get_len(c_val));
 			}
-			end++;
-		}
-		string text = content.substr(start + 1, end - start - 1);
-		// Unescape (shared decoder: the full RFC 8259 escape set, including
-		// \r, \b, \f and \uXXXX -- see DecodeJSONEscape above).
-		string unescaped;
-		for (size_t i = 0; i < text.size(); i++) {
-			if (text[i] == '\\' && i + 1 < text.size()) {
-				i++;
-				DecodeJSONEscape(text, i, unescaped);
-			} else {
-				unescaped += text[i];
-			}
-		}
-		return {unescaped, end + 1};
-	};
-
-	// Helper to find matching bracket end position
-	auto find_bracket_end = [&content](size_t start) -> size_t {
-		if (start >= content.size() || content[start] != '[') {
-			return string::npos;
-		}
-		int depth = 0;
-		bool in_string = false;
-		bool escape = false;
-		for (size_t i = start; i < content.size(); i++) {
-			char c = content[i];
-			if (escape) {
-				escape = false;
-				continue;
-			}
-			if (c == '\\') {
-				escape = true;
-				continue;
-			}
-			if (c == '"') {
-				in_string = !in_string;
-				continue;
-			}
-			if (in_string)
-				continue;
-			if (c == '[')
-				depth++;
-			else if (c == ']') {
-				depth--;
-				if (depth == 0)
-					return i;
-			}
-		}
-		return string::npos;
-	};
-
-	while (pos < content.size()) {
-		// Find all possible type markers
-		size_t str_pos = content.find("\"t\":\"Str\"", pos);
-		size_t space_pos = content.find("\"t\":\"Space\"", pos);
-		size_t softbreak_pos = content.find("\"t\":\"SoftBreak\"", pos);
-		size_t strong_pos = content.find("\"t\":\"Strong\"", pos);
-		size_t emph_pos = content.find("\"t\":\"Emph\"", pos);
-		size_t code_pos = content.find("\"t\":\"Code\"", pos);
-		size_t link_pos = content.find("\"t\":\"Link\"", pos);
-
-		// Find the nearest match and its type
-		size_t next_pos = string::npos;
-		int match_type = 0; // 0=none, 1=Str, 2=Space, 3=SoftBreak, 4=Strong, 5=Emph, 6=Code, 7=Link
-
-		if (str_pos != string::npos && (next_pos == string::npos || str_pos < next_pos)) {
-			next_pos = str_pos;
-			match_type = 1;
-		}
-		if (space_pos != string::npos && (next_pos == string::npos || space_pos < next_pos)) {
-			next_pos = space_pos;
-			match_type = 2;
-		}
-		if (softbreak_pos != string::npos && (next_pos == string::npos || softbreak_pos < next_pos)) {
-			next_pos = softbreak_pos;
-			match_type = 3;
-		}
-		if (strong_pos != string::npos && (next_pos == string::npos || strong_pos < next_pos)) {
-			next_pos = strong_pos;
-			match_type = 4;
-		}
-		if (emph_pos != string::npos && (next_pos == string::npos || emph_pos < next_pos)) {
-			next_pos = emph_pos;
-			match_type = 5;
-		}
-		if (code_pos != string::npos && (next_pos == string::npos || code_pos < next_pos)) {
-			next_pos = code_pos;
-			match_type = 6;
-		}
-		if (link_pos != string::npos && (next_pos == string::npos || link_pos < next_pos)) {
-			next_pos = link_pos;
-			match_type = 7;
-		}
-
-		if (match_type == 0)
-			break;
-
-		if (match_type == 1) {
-			// Str: {"t":"Str","c":"text"}
-			size_t c_pos = content.find("\"c\":", next_pos);
-			if (c_pos != string::npos && c_pos < next_pos + 50) {
-				size_t quote_start = content.find('"', c_pos + 4);
-				if (quote_start != string::npos) {
-					auto [text, end_pos] = extract_quoted_string(quote_start);
-					result += text;
-					pos = end_pos;
-					continue;
+		} else if (strcmp(t, "Space") == 0 || strcmp(t, "SoftBreak") == 0) {
+			return " ";
+		} else if (strcmp(t, "LineBreak") == 0) {
+			return "\n";
+		} else if (strcmp(t, "Strong") == 0) {
+			return "**" + ExtractPandocTextFromVal(c_val, depth + 1) + "**";
+		} else if (strcmp(t, "Emph") == 0) {
+			return "*" + ExtractPandocTextFromVal(c_val, depth + 1) + "*";
+		} else if (strcmp(t, "Strikeout") == 0) {
+			return "~~" + ExtractPandocTextFromVal(c_val, depth + 1) + "~~";
+		} else if (strcmp(t, "Superscript") == 0) {
+			return "^" + ExtractPandocTextFromVal(c_val, depth + 1) + "^";
+		} else if (strcmp(t, "Subscript") == 0) {
+			return "~" + ExtractPandocTextFromVal(c_val, depth + 1) + "~";
+		} else if (strcmp(t, "Code") == 0) {
+			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
+				yyjson_val *code_str = yyjson_arr_get(c_val, 1);
+				if (code_str && yyjson_is_str(code_str)) {
+					return "`" + string(yyjson_get_str(code_str), yyjson_get_len(code_str)) + "`";
 				}
 			}
-		} else if (match_type == 2 || match_type == 3) {
-			// Space or SoftBreak
-			result += ' ';
-			pos = next_pos + 12;
-			continue;
-		} else if (match_type == 4) {
-			// Strong: {"t":"Strong","c":[...inlines...]}
-			size_t c_pos = content.find("\"c\":", next_pos);
-			if (c_pos != string::npos) {
-				size_t arr_start = content.find('[', c_pos);
-				if (arr_start != string::npos) {
-					size_t arr_end = find_bracket_end(arr_start);
-					if (arr_end != string::npos) {
-						string inner = content.substr(arr_start, arr_end - arr_start + 1);
-						result += "**" + ExtractPandocText(inner, depth + 1) + "**";
-						pos = arr_end + 1;
-						continue;
+		} else if (strcmp(t, "Math") == 0) {
+			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 2) {
+				yyjson_val *math_str = yyjson_arr_get(c_val, 1);
+				if (math_str && yyjson_is_str(math_str)) {
+					return "$" + string(yyjson_get_str(math_str), yyjson_get_len(math_str)) + "$";
+				}
+			}
+		} else if (strcmp(t, "Link") == 0) {
+			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 3) {
+				yyjson_val *inlines = yyjson_arr_get(c_val, 1);
+				yyjson_val *target = yyjson_arr_get(c_val, 2);
+				string text = ExtractPandocTextFromVal(inlines, depth + 1);
+				string url;
+				if (target && yyjson_is_arr(target) && yyjson_arr_size(target) >= 1) {
+					yyjson_val *u = yyjson_arr_get(target, 0);
+					if (u && yyjson_is_str(u)) {
+						url = string(yyjson_get_str(u), yyjson_get_len(u));
+					}
+				}
+				return "[" + text + "](" + url + ")";
+			}
+		} else if (strcmp(t, "Image") == 0) {
+			if (c_val && yyjson_is_arr(c_val) && yyjson_arr_size(c_val) >= 3) {
+				yyjson_val *inlines = yyjson_arr_get(c_val, 1);
+				yyjson_val *target = yyjson_arr_get(c_val, 2);
+				string alt = ExtractPandocTextFromVal(inlines, depth + 1);
+				string src;
+				if (target && yyjson_is_arr(target) && yyjson_arr_size(target) >= 1) {
+					yyjson_val *s = yyjson_arr_get(target, 0);
+					if (s && yyjson_is_str(s)) {
+						src = string(yyjson_get_str(s), yyjson_get_len(s));
+					}
+				}
+				return "![" + alt + "](" + src + ")";
+			}
+		} else if (strcmp(t, "Plain") == 0 || strcmp(t, "Para") == 0 || strcmp(t, "Span") == 0 ||
+		           strcmp(t, "SmallCaps") == 0 || strcmp(t, "Quoted") == 0 || strcmp(t, "Cite") == 0) {
+			return ExtractPandocTextFromVal(c_val, depth + 1);
+		}
+	}
+	return "";
+}
+
+string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
+	if (content.empty()) {
+		return "";
+	}
+	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	if (!doc) {
+		return "";
+	}
+	yyjson_val *root = yyjson_doc_get_root(doc);
+	string result = ExtractPandocTextFromVal(root, depth);
+	yyjson_doc_free(doc);
+	return result;
+}
+
+bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
+	if (content.empty()) {
+		return false;
+	}
+	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	if (!doc) {
+		return false;
+	}
+	yyjson_val *root = yyjson_doc_get_root(doc);
+	bool is_table = false;
+	if (yyjson_is_arr(root)) {
+		size_t sz = yyjson_arr_size(root);
+		if (sz == 5 || sz == 6) {
+			yyjson_val *e1 = yyjson_arr_get(root, 1);
+			if (e1 && yyjson_is_arr(e1) && yyjson_arr_size(e1) > 0) {
+				yyjson_val *first = yyjson_arr_get(e1, 0);
+				if (first && yyjson_is_obj(first)) {
+					yyjson_val *t = yyjson_obj_get(first, "t");
+					if (t && yyjson_is_str(t) && strncmp(yyjson_get_str(t), "Align", 5) == 0) {
+						is_table = true;
 					}
 				}
 			}
-		} else if (match_type == 5) {
-			// Emph: {"t":"Emph","c":[...inlines...]}
-			size_t c_pos = content.find("\"c\":", next_pos);
-			if (c_pos != string::npos) {
-				size_t arr_start = content.find('[', c_pos);
-				if (arr_start != string::npos) {
-					size_t arr_end = find_bracket_end(arr_start);
-					if (arr_end != string::npos) {
-						string inner = content.substr(arr_start, arr_end - arr_start + 1);
-						result += "*" + ExtractPandocText(inner, depth + 1) + "*";
-						pos = arr_end + 1;
-						continue;
+			if (!is_table && sz == 6) {
+				yyjson_val *e2 = yyjson_arr_get(root, 2);
+				if (e2 && yyjson_is_arr(e2)) {
+					is_table = true;
+				}
+			}
+		}
+	}
+	yyjson_doc_free(doc);
+	return is_table;
+}
+
+static string ExtractPandocCellText(yyjson_val *cell_val) {
+	if (!cell_val) {
+		return "";
+	}
+	if (yyjson_is_arr(cell_val)) {
+		string text;
+		size_t idx, max;
+		yyjson_val *block;
+		yyjson_arr_foreach(cell_val, idx, max, block) {
+			if (yyjson_is_obj(block)) {
+				yyjson_val *c = yyjson_obj_get(block, "c");
+				if (c) {
+					text += ExtractPandocTextFromVal(c, 0);
+				}
+			}
+		}
+		return text;
+	}
+	return ExtractPandocTextFromVal(cell_val, 0);
+}
+
+void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers,
+                                          vector<vector<string>> &rows) {
+	if (content.empty()) {
+		return;
+	}
+	yyjson_doc *doc = yyjson_read(content.c_str(), content.size(), 0);
+	if (!doc) {
+		return;
+	}
+	yyjson_val *root = yyjson_doc_get_root(doc);
+	if (!yyjson_is_arr(root)) {
+		yyjson_doc_free(doc);
+		return;
+	}
+
+	size_t root_size = yyjson_arr_size(root);
+
+	if (root_size == 5) {
+		// Legacy format: [caption, alignments, widths, headers, rows]
+		yyjson_val *headers_arr = yyjson_arr_get(root, 3);
+		if (headers_arr && yyjson_is_arr(headers_arr)) {
+			size_t idx, max;
+			yyjson_val *cell;
+			yyjson_arr_foreach(headers_arr, idx, max, cell) {
+				headers.push_back(ExtractPandocCellText(cell));
+			}
+		}
+
+		yyjson_val *rows_arr = yyjson_arr_get(root, 4);
+		if (rows_arr && yyjson_is_arr(rows_arr)) {
+			size_t r_idx, r_max;
+			yyjson_val *row;
+			yyjson_arr_foreach(rows_arr, r_idx, r_max, row) {
+				if (yyjson_is_arr(row)) {
+					vector<string> r;
+					size_t c_idx, c_max;
+					yyjson_val *cell;
+					yyjson_arr_foreach(row, c_idx, c_max, cell) {
+						r.push_back(ExtractPandocCellText(cell));
+					}
+					if (!r.empty()) {
+						rows.push_back(std::move(r));
 					}
 				}
 			}
-		} else if (match_type == 6) {
-			// Code: {"t":"Code","c":[[attr], "code text"]}
-			size_t c_pos = content.find("\"c\":", next_pos);
-			if (c_pos != string::npos) {
-				size_t arr_start = content.find('[', c_pos);
-				if (arr_start != string::npos) {
-					// Skip the attr array and find the code string
-					size_t inner_arr = content.find('[', arr_start + 1);
-					if (inner_arr != string::npos) {
-						size_t inner_end = find_bracket_end(inner_arr);
-						if (inner_end != string::npos) {
-							// Find the comma after the attr array, then the quote
-							size_t comma = content.find(',', inner_end);
-							if (comma != string::npos) {
-								size_t quote = content.find('"', comma);
-								if (quote != string::npos) {
-									auto [code_text, end_pos] = extract_quoted_string(quote);
-									result += "`" + code_text + "`";
-									pos = end_pos;
-									continue;
+		}
+	} else if (root_size >= 6) {
+		// Modern format: [attr, caption, colspec, tableHead, tableBodies, tableFoot]
+		yyjson_val *table_head = yyjson_arr_get(root, 3);
+		if (table_head && yyjson_is_arr(table_head) && yyjson_arr_size(table_head) >= 2) {
+			yyjson_val *head_rows = yyjson_arr_get(table_head, 1);
+			if (head_rows && yyjson_is_arr(head_rows)) {
+				size_t hr_idx, hr_max;
+				yyjson_val *head_row;
+				yyjson_arr_foreach(head_rows, hr_idx, hr_max, head_row) {
+					if (yyjson_is_arr(head_row) && yyjson_arr_size(head_row) >= 2) {
+						yyjson_val *cells = yyjson_arr_get(head_row, 1);
+						if (cells && yyjson_is_arr(cells)) {
+							size_t c_idx, c_max;
+							yyjson_val *cell;
+							yyjson_arr_foreach(cells, c_idx, c_max, cell) {
+								if (yyjson_is_arr(cell) && yyjson_arr_size(cell) >= 5) {
+									yyjson_val *blocks = yyjson_arr_get(cell, 4);
+									headers.push_back(ExtractPandocCellText(blocks));
+								} else {
+									headers.push_back(ExtractPandocCellText(cell));
 								}
 							}
 						}
 					}
 				}
 			}
-		} else if (match_type == 7) {
-			// Link: {"t":"Link","c":[[attr],[...inlines...],["url","title"]]}
-			size_t c_pos = content.find("\"c\":", next_pos);
-			if (c_pos != string::npos) {
-				size_t arr_start = content.find('[', c_pos);
-				if (arr_start != string::npos) {
-					// Skip attr array
-					size_t attr_arr = content.find('[', arr_start + 1);
-					if (attr_arr != string::npos) {
-						size_t attr_end = find_bracket_end(attr_arr);
-						if (attr_end != string::npos) {
-							// Find the inlines array (second element)
-							size_t inlines_arr = content.find('[', attr_end + 1);
-							if (inlines_arr != string::npos) {
-								size_t inlines_end = find_bracket_end(inlines_arr);
-								if (inlines_end != string::npos) {
-									string inlines = content.substr(inlines_arr, inlines_end - inlines_arr + 1);
-									string link_text = ExtractPandocText(inlines, depth + 1);
+		}
 
-									// Find the target array (third element) [url, title]
-									size_t target_arr = content.find('[', inlines_end + 1);
-									if (target_arr != string::npos) {
-										size_t url_quote = content.find('"', target_arr);
-										if (url_quote != string::npos) {
-											auto [url, url_end] = extract_quoted_string(url_quote);
-											result += "[" + link_text + "](" + url + ")";
-											// Find end of target array
-											size_t target_end = find_bracket_end(target_arr);
-											pos = (target_end != string::npos) ? target_end + 1 : url_end;
-											continue;
+		yyjson_val *table_bodies = yyjson_arr_get(root, 4);
+		if (table_bodies && yyjson_is_arr(table_bodies)) {
+			size_t b_idx, b_max;
+			yyjson_val *body;
+			yyjson_arr_foreach(table_bodies, b_idx, b_max, body) {
+				if (yyjson_is_arr(body) && yyjson_arr_size(body) >= 4) {
+					yyjson_val *body_rows = yyjson_arr_get(body, 3);
+					if (body_rows && yyjson_is_arr(body_rows)) {
+						size_t r_idx, r_max;
+						yyjson_val *row;
+						yyjson_arr_foreach(body_rows, r_idx, r_max, row) {
+							if (yyjson_is_arr(row) && yyjson_arr_size(row) >= 2) {
+								yyjson_val *cells = yyjson_arr_get(row, 1);
+								if (cells && yyjson_is_arr(cells)) {
+									vector<string> r;
+									size_t c_idx, c_max;
+									yyjson_val *cell;
+									yyjson_arr_foreach(cells, c_idx, c_max, cell) {
+										if (yyjson_is_arr(cell) && yyjson_arr_size(cell) >= 5) {
+											yyjson_val *blocks = yyjson_arr_get(cell, 4);
+											r.push_back(ExtractPandocCellText(blocks));
+										} else {
+											r.push_back(ExtractPandocCellText(cell));
 										}
+									}
+									if (!r.empty()) {
+										rows.push_back(std::move(r));
 									}
 								}
 							}
@@ -577,206 +379,14 @@ string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
 				}
 			}
 		}
-
-		pos = next_pos + 10;
 	}
 
-	return result;
-}
-
-// Check if content looks like a Pandoc table format
-bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
-	// Pandoc tables start with [[ and contain alignment specs like "t":"Align
-	return content.size() > 2 && content[0] == '[' && content[1] == '[' &&
-	       content.find("\"t\":\"Align") != string::npos;
-}
-
-// Parse Pandoc table format into headers and rows
-void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers,
-                                          vector<vector<string>> &rows) {
-	// Pandoc table structure: [caption, alignments, widths, tableHead, tableBodies]
-	// We need to find the tableHead and tableBodies sections and extract cell text
-
-	// Find all cell blocks - they typically contain "t":"Plain" or "t":"Para" with inline content
-	// Strategy: Find row boundaries by looking for patterns like ],[[ that separate rows
-
-	// First, let's find the header row - it comes after the widths array (array of numbers)
-	// Look for pattern like ],[[ after the alignments
-
-	int bracket_depth = 0;
-	int array_count = 0;
-	size_t head_start = string::npos;
-	size_t body_start = string::npos;
-
-	// Count arrays at depth 1 (inside the outer wrapper array)
-	// Structure: [ caption, alignments, widths, tableHead, tableBodies ]
-	//              ^1       ^2          ^3      ^4         ^5
-	for (size_t i = 0; i < content.size(); i++) {
-		char c = content[i];
-		if (c == '[') {
-			bracket_depth++;
-			// Count arrays at depth 1 (just entered an array that's a direct child of the outer array)
-			if (bracket_depth == 2) {
-				array_count++;
-				if (array_count == 4) {
-					head_start = i;
-				} else if (array_count == 5) {
-					body_start = i;
-					break;
-				}
-			}
-		} else if (c == ']') {
-			bracket_depth--;
-		} else if (c == '"') {
-			// Skip strings
-			i++;
-			while (i < content.size() && content[i] != '"') {
-				if (content[i] == '\\')
-					i++;
-				i++;
-			}
-		}
-	}
-
-	// Extract header cells from tableHead section
-	if (head_start != string::npos) {
-		size_t head_end = body_start != string::npos ? body_start : content.size();
-		string head_section = content.substr(head_start, head_end - head_start);
-
-		// Find cells in head - look for Plain or Para blocks
-		size_t cell_pos = 0;
-		while (cell_pos < head_section.size()) {
-			size_t plain_pos = head_section.find("\"t\":\"Plain\"", cell_pos);
-			size_t para_pos = head_section.find("\"t\":\"Para\"", cell_pos);
-
-			size_t block_pos = string::npos;
-			if (plain_pos != string::npos)
-				block_pos = plain_pos;
-			if (para_pos != string::npos && (block_pos == string::npos || para_pos < block_pos)) {
-				block_pos = para_pos;
-			}
-
-			if (block_pos == string::npos)
-				break;
-
-			// Find the "c" array for this block
-			size_t c_pos = head_section.find("\"c\":", block_pos);
-			if (c_pos != string::npos && c_pos < block_pos + 30) {
-				size_t arr_start = head_section.find('[', c_pos);
-				if (arr_start != string::npos) {
-					// Find matching ]
-					int depth = 1;
-					size_t arr_end = arr_start + 1;
-					while (arr_end < head_section.size() && depth > 0) {
-						if (head_section[arr_end] == '[')
-							depth++;
-						else if (head_section[arr_end] == ']')
-							depth--;
-						else if (head_section[arr_end] == '"') {
-							arr_end++;
-							while (arr_end < head_section.size() && head_section[arr_end] != '"') {
-								if (head_section[arr_end] == '\\')
-									arr_end++;
-								arr_end++;
-							}
-						}
-						arr_end++;
-					}
-
-					string cell_content = head_section.substr(arr_start, arr_end - arr_start);
-					string cell_text = ExtractPandocText(cell_content);
-					if (!cell_text.empty()) {
-						headers.push_back(cell_text);
-					}
-					cell_pos = arr_end;
-					continue;
-				}
-			}
-			cell_pos = block_pos + 10;
-		}
-	}
-
-	// Extract body rows from tableBodies section
-	if (body_start != string::npos) {
-		string body_section = content.substr(body_start);
-
-		// Find row boundaries - look for sequences of cells
-		// Each row contains multiple Plain/Para blocks
-		vector<string> current_row;
-		size_t cell_pos = 0;
-		size_t last_cell_end = 0;
-
-		while (cell_pos < body_section.size()) {
-			size_t plain_pos = body_section.find("\"t\":\"Plain\"", cell_pos);
-			size_t para_pos = body_section.find("\"t\":\"Para\"", cell_pos);
-
-			size_t block_pos = string::npos;
-			if (plain_pos != string::npos)
-				block_pos = plain_pos;
-			if (para_pos != string::npos && (block_pos == string::npos || para_pos < block_pos)) {
-				block_pos = para_pos;
-			}
-
-			if (block_pos == string::npos)
-				break;
-
-			// Check if we've crossed a row boundary (large gap or specific pattern)
-			// Row boundaries in Pandoc are marked by ]],[[ patterns
-			string between = body_section.substr(last_cell_end, block_pos - last_cell_end);
-			if (!current_row.empty() && between.find("]],[[") != string::npos) {
-				if (current_row.size() > 0) {
-					rows.push_back(current_row);
-					current_row.clear();
-				}
-			}
-
-			// Find the "c" array for this block
-			size_t c_pos = body_section.find("\"c\":", block_pos);
-			if (c_pos != string::npos && c_pos < block_pos + 30) {
-				size_t arr_start = body_section.find('[', c_pos);
-				if (arr_start != string::npos) {
-					// Find matching ]
-					int depth = 1;
-					size_t arr_end = arr_start + 1;
-					while (arr_end < body_section.size() && depth > 0) {
-						if (body_section[arr_end] == '[')
-							depth++;
-						else if (body_section[arr_end] == ']')
-							depth--;
-						else if (body_section[arr_end] == '"') {
-							arr_end++;
-							while (arr_end < body_section.size() && body_section[arr_end] != '"') {
-								if (body_section[arr_end] == '\\')
-									arr_end++;
-								arr_end++;
-							}
-						}
-						arr_end++;
-					}
-
-					string cell_content = body_section.substr(arr_start, arr_end - arr_start);
-					string cell_text = ExtractPandocText(cell_content);
-					current_row.push_back(cell_text);
-					last_cell_end = arr_end;
-					cell_pos = arr_end;
-					continue;
-				}
-			}
-			cell_pos = block_pos + 10;
-		}
-
-		// Don't forget the last row
-		if (!current_row.empty()) {
-			rows.push_back(current_row);
-		}
-	}
-
-	// If we got rows but no headers, and rows have consistent column counts,
-	// use the first row as headers
 	if (headers.empty() && !rows.empty()) {
 		headers = rows[0];
 		rows.erase(rows.begin());
 	}
+
+	yyjson_doc_free(doc);
 }
 
 //===--------------------------------------------------------------------===//
