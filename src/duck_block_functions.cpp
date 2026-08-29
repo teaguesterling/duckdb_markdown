@@ -59,8 +59,7 @@ vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 	return items;
 }
 
-void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers,
-                                        vector<vector<string>> &rows) {
+void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows) {
 	if (content.empty()) {
 		return;
 	}
