@@ -252,20 +252,6 @@ static string ExtractPandocCellText(yyjson_val *cell_val) {
 	if (!cell_val) {
 		return "";
 	}
-	if (yyjson_is_arr(cell_val)) {
-		string text;
-		size_t idx, max;
-		yyjson_val *block;
-		yyjson_arr_foreach(cell_val, idx, max, block) {
-			if (yyjson_is_obj(block)) {
-				yyjson_val *c = yyjson_obj_get(block, "c");
-				if (c) {
-					text += ExtractPandocTextFromVal(c, 0);
-				}
-			}
-		}
-		return text;
-	}
 	return ExtractPandocTextFromVal(cell_val, 0);
 }
 
