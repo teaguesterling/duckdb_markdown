@@ -285,6 +285,22 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 
 		yyjson_val *rows_arr = yyjson_arr_get(root, 4);
 		if (rows_arr && yyjson_is_arr(rows_arr)) {
+			while (yyjson_arr_size(rows_arr) == 1) {
+				yyjson_val *first_row = yyjson_arr_get(rows_arr, 0);
+				if (!first_row || !yyjson_is_arr(first_row)) {
+					break;
+				}
+				yyjson_val *first_elem = yyjson_arr_get(first_row, 0);
+				if (!first_elem || !yyjson_is_arr(first_elem)) {
+					break;
+				}
+				yyjson_val *first_inner = yyjson_arr_get(first_elem, 0);
+				if (!first_inner || !yyjson_is_arr(first_inner)) {
+					break;
+				}
+				rows_arr = first_row;
+			}
+
 			size_t r_idx, r_max;
 			yyjson_val *row;
 			yyjson_arr_foreach(rows_arr, r_idx, r_max, row) {
