@@ -839,7 +839,12 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		string line;
 		vector<string> lines;
 		while (std::getline(iss, line)) {
-			if (!line.empty() && line.back() == '\r') {
+			// Trailing whitespace is stripped before the break is re-added: a rich
+			// line block arrives as a rendered inline run whose `linebreak`
+			// children have ALREADY emitted "  \n", and joining that again gave
+			// four trailing spaces. A plain-text one has none to strip, so it is
+			// unaffected.
+			while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) {
 				line.pop_back();
 			}
 			lines.push_back(line);

@@ -58,11 +58,16 @@ KNOWN_UNSTABLE = {
               "not an inherent limit: markdown has one slot for that text and this "
               "fills two. Unfixed -- suppressing the caption needs the caption "
               "branch to know its sibling image's alt.",
-    "line block": "a line block has no markdown syntax, so this writer emits hard "
-                  "breaks. The producer folds those back into paragraph content as "
-                  "a raw newline rather than linebreak inlines, so the break "
-                  "degrades from hard to soft. The words and the line count "
-                  "survive. Upstream shape, not a defect here.",
+    "line block": "PLAIN-TEXT case only; a line block containing any rich inline "
+                  "is now stable. A line block has no markdown syntax, so this "
+                  "writer emits hard breaks -- but a hard break in TEXT-ONLY "
+                  "content is flattened by the producer to a raw newline in "
+                  "`content` rather than a linebreak inline, so it re-reads as a "
+                  "soft break. Not specific to line blocks: an ordinary paragraph "
+                  "written `alpha  \\nbeta` comes back as content 'alpha\\nbeta' and "
+                  "loses the same distinction, while `alpha **x**  \\nbeta` keeps it "
+                  "because the bold forces inline children. Upstream shape, "
+                  "formatting rather than words, and reported.",
 }
 
 CASES = [

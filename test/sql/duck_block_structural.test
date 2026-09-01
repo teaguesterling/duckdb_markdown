@@ -622,3 +622,34 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'x', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}]) = E'- x\n\n';
 ----
 true
+
+# =============================================================================
+# LINE BLOCKS carry their lines two ways. A plain-text line block joins them
+# with newlines in `content`; one containing rich inlines carries them as
+# children, with `linebreak` inlines between the lines -- because flattening
+# rich content to text DESTROYED it upstream (bold vanished, a link left the
+# line empty), which is why that changed.
+#
+# Both reach this writer as content by the time the lineblock branch sees them,
+# since a block absorbs its inline run. But the rich form arrives with the hard
+# breaks ALREADY rendered, so re-adding them produced four trailing spaces
+# rather than two. Still a hard break to a reader, and still wrong.
+# =============================================================================
+
+# Plain text: lines joined with newlines, one hard break each
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: E'Roses are red\nViolets are blue', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'Roses are red  \nViolets are blue\n\n';
+----
+true
+
+# Rich: the run arrives with its breaks already rendered; exactly two spaces
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'plain ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: 'bold', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'second line', level: 2, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'plain **bold**  \nsecond line\n\n';
+----
+true
+
+# A link in a line block survives, and does not leave the line empty
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'link', content: 'anchor', level: 2, encoding: 'text', attributes: MAP{'href': 'http://x'}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'after', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'[anchor](http://x)  \nafter\n\n';
+----
+true
