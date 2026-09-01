@@ -224,6 +224,10 @@ def main():
     ap.add_argument("--ref", default="origin/main",
                     help="upstream ref to compare against (default: origin/main)")
     ap.add_argument("--fetch", action="store_true", help="git fetch the upstream ref first")
+    ap.add_argument("--strict", action="store_true",
+                    help="fail when the upstream copy could not be pinned to a sha "
+                         "(for CI, where a green run that verified nothing is worse "
+                         "than a red one)")
     ap.add_argument("--self-test", action="store_true",
                     help="check the checker: rename, value change and cosmetic churn")
     args = ap.parse_args()
@@ -326,8 +330,15 @@ def main():
         print("FAILED: vocabulary drift is breaking. Update the copy and the references.")
         return 1
     if not verified:
-        # Never claim a clean bill of health from a copy we could not date.
+        # Never claim a clean bill of health from a copy we could not date. Locally
+        # this is a warning so an API outage does not block work; in CI it is a
+        # failure, because a green check that verified nothing is worse than a red
+        # one -- it is indistinguishable from a real pass by anyone reading the
+        # badge, which is the whole hazard this script exists to avoid.
         print("UNVERIFIED: no drift seen, but the upstream copy could not be pinned to a sha.")
+        if args.strict:
+            print("FAILED: --strict, and this result is unverified.")
+            return 1
         return 0
     if added:
         print("OK with news: upstream added vocabulary. Review whether we should handle it.")

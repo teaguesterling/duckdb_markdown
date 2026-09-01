@@ -68,7 +68,7 @@ jobs:
         # the cached branch url and report UNVERIFIED rather than a real answer.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/check_duck_block_vocabulary.py
+        run: python3 scripts/check_duck_block_vocabulary.py --strict
 
   code-quality-check:
     name: Code Quality Check
