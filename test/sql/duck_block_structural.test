@@ -75,3 +75,26 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '', level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: '', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
 ----
 true
+
+# A top-level block records NULL today, but this writer normalises NULL to
+# depth 1, so an explicit level 1 is indistinguishable from it. That is worth
+# pinning as a property of the walk rather than left as a coincidence: it is
+# what makes the walk indifferent to whether a producer spells top level as
+# NULL or as 1.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}])
+     = duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]);
+----
+true
+
+# The same for a list, whose item level is derived from its container's
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
+----
+true
+
+# A fully-levelled paragraph with nested inlines, no NULLs anywhere
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'italic', content: NULL, level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'in', level: 4, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'a ***in***\n\n';
+----
+true
