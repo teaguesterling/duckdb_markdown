@@ -210,3 +210,122 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'x', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'> x\n\n';
 ----
 true
+
+# =============================================================================
+# CONTAINER TYPE SWEEP.
+#
+# This writer's containers render whatever their child scope produces and never
+# consult a type name; only the leaf renderer switches on type, and its terminal
+# arm emits content. So the set of child types a container preserves is "all of
+# them", including ones this build has never heard of.
+#
+# That property was load-bearing and unasserted. duck_block_utils' container
+# child walk enumerated type names instead, and silently dropped table, deflist
+# and lineblock inside any div/blockquote/figure/caption -- for far longer than
+# the type that exposed it had existed. An enumeration has to be revisited for
+# every new type; a scope walk does not.
+#
+# WHAT THIS ACTUALLY COVERS, stated precisely because a sweep invites the
+# reading that it proves the general claim and it does not:
+#
+#   - each named type below renders inside a container TODAY (per-type
+#     regression cover, one assertion each so a failure names the type)
+#   - the content-preserving terminal arm, which is the half that generalises
+#     to types this build has never heard of
+#
+# `plain` carries that second half on its own: it is the only type here with no
+# branch of its own, so it is the one that fails if the terminal arm ever stops
+# emitting content. Verified by breaking that arm and watching this file fail --
+# a first attempt at that simulation was itself a no-op, because it was inserted
+# after branches that already caught the types it meant to break.
+# =============================================================================
+
+# heading survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'heading', content: 'H', level: 2, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 1}]) LIKE '%## H%';
+----
+true
+
+# paragraph survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'P', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%P%';
+----
+true
+
+# code survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'code', content: 'C', level: 2, encoding: 'text', attributes: MAP{'language': 'py'}, element_order: 1}]) LIKE '%```py%C%';
+----
+true
+
+# blockquote survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'blockquote', content: 'Q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%> Q%';
+----
+true
+
+# list survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'list', content: '["L"]', level: 2, encoding: 'json', attributes: MAP{'list_type': 'bullet'}, element_order: 1}]) LIKE '%- L%';
+----
+true
+
+# list_item survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'LI', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%- LI%';
+----
+true
+
+# deflist survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"T"}],[[{"t":"Para","c":[{"t":"Str","c":"D"}]}]]]]', level: 2, encoding: 'json', attributes: MAP{}, element_order: 1}]) LIKE '%T%: D%';
+----
+true
+
+# lineblock survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'lineblock', content: 'LB', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%LB%';
+----
+true
+
+# table survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'table', content: '{"headers":["TH"],"rows":[["TD"]]}', level: 2, encoding: 'json', attributes: MAP{}, element_order: 1}]) LIKE '%TH%TD%';
+----
+true
+
+# hr survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'hr', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%---%';
+----
+true
+
+# image survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'image', content: 'IMG', level: 2, encoding: 'text', attributes: MAP{'src': 'i.png'}, element_order: 1}]) LIKE '%![IMG](i.png)%';
+----
+true
+
+# raw survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'raw', content: 'RAW', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%RAW%';
+----
+true
+
+# generic survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'generic', content: NULL, level: 2, encoding: 'json', attributes: MAP{'source_type': 'GEN'}, element_order: 1}]) LIKE '%GEN%';
+----
+true
+
+# page_break survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'page_break', content: NULL, level: 2, encoding: 'text', attributes: MAP{'page_number': '7'}, element_order: 1}]) LIKE '%page break: 7%';
+----
+true
+
+# plain survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'PL', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%PL%';
+----
+true
