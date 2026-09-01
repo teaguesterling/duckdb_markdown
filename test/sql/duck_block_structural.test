@@ -519,3 +519,58 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: NULL, level: 1, encoding: 'text', attributes: MAP{'role': 'section'}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'Lead', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'heading', content: 'H', level: 2, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2}]) = E'Lead\n\n## H\n\n';
 ----
 true
+
+# =============================================================================
+# SENTINEL SWEEP -- every block type, content set, NO attributes, straight to
+# the writer. A round trip cannot find this class: it proves the reader/writer
+# pair is self-consistent, which is not the property anyone wants. Only a probe
+# that skips the reader does. Confirmed in two other codebases before this one.
+#
+# Seven types did not emit their content. Three are cleared, with reasoning,
+# because an unexplained exclusion and a forgotten defect look identical later:
+#
+#   hr, page_break   markers with no text position; `---` and the comment ARE
+#                    the whole element. Content is meaningless for them.
+#   generic          content is a verbatim source fragment, deliberately not
+#                    emitted -- it would put raw AST in the document. The
+#                    source_type comment is what carries it. Pinned above.
+#
+# Four were real: div, section, figure and caption dropped their own content.
+# Spec 6.0's rule is that a container whose only child is a text run carries
+# that text in its OWN content -- the same rule that had list_item dropping
+# text. That was fixed for list_item alone, so this is the same defect
+# surviving in four more places because only the reported instance was fixed.
+# =============================================================================
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: 'SENTINEL', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) LIKE '%SENTINEL%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: 'SENTINEL', level: 1, encoding: 'text', attributes: MAP{'role': 'aside'}, element_order: 0}]) LIKE '%SENTINEL%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: 'SENTINEL', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) LIKE '%SENTINEL%';
+----
+true
+
+# A caption carrying its own text is still marked as a caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'caption', content: 'Fig one.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'*Fig one.*\n\n';
+----
+true
+
+# Containers WITH children are unaffected -- children still win
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'child', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'child\n\n';
+----
+true
+
+# ...including a caption, which keeps rendering its child scope
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAP', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'BODY\n\n*CAP*\n\n';
+----
+true

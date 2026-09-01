@@ -815,11 +815,22 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		result = content + "\n\n";
 	} else if (element_type == Vocab::TYPE_DIV || element_type == Vocab::TYPE_SECTION ||
 	           element_type == Vocab::TYPE_FIGURE || element_type == Vocab::TYPE_CAPTION) {
-		// Containers carry no content of their own; their children follow at level+1
-		// and render themselves. Emitting the (empty) content here produced stray
-		// blank lines. `caption` additionally gets decorated by the list renderer,
-		// which is the only place with access to the children it scopes.
-		result = "";
+		// A container's children are usually its content, and they render
+		// themselves -- so the marker emits nothing and no stray blank line.
+		//
+		// But a container whose only child is a text run carries that text in its
+		// OWN content (spec 6.0), so dropping content unconditionally lost it. The
+		// same rule had list_item dropping the text of every tight item; fixing it
+		// only there left this in four more places, which is why the sentinel
+		// sweep found them and a round trip never could.
+		if (content.empty()) {
+			result = "";
+		} else if (element_type == Vocab::TYPE_CAPTION) {
+			// Marked as a caption, as the scoped form is.
+			result = "*" + content + "*\n\n";
+		} else {
+			result = content + "\n\n";
+		}
 	} else if (element_type == Vocab::TYPE_LINEBLOCK) {
 		// Preserved line breaks. Markdown has no line-block syntax, and a bare
 		// newline inside a paragraph is a soft break that collapses to a space --
@@ -1225,7 +1236,12 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 		// renders in place and imposes no order of its own.
 		if (kind == Vocab::KIND_BLOCK && element_type == Vocab::TYPE_CAPTION && depth < MAX_DUCK_BLOCK_NESTING) {
 			idx_t scope_end = SkipElementScope(list_children, i, end);
-			string inner = RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1);
+			// Children are the caption's text when it has any; its own content is
+			// its text when it does not. Without the fallback this branch consumed
+			// a childless caption and emitted nothing, which also shadowed the leaf
+			// renderer -- so the text was lost twice over.
+			string inner = scope_end > i + 1 ? RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1)
+			                                 : DuckBlockContent(list_children[i]);
 			StringUtil::Trim(inner);
 			if (!inner.empty()) {
 				if (last_was_inline) {
