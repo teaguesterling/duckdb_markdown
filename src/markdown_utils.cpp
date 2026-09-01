@@ -1116,6 +1116,9 @@ static void WalkInlines(cmark_node *container, int level, int32_t &order, std::v
 // silent truncation into a hard error, trading one wrong answer for another.
 static constexpr int MAX_LIST_NESTING = 1000;
 
+static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                              bool structured_inlines, int depth);
+
 static void EmitListStructural(cmark_node *list_node, int level, int32_t &order, std::vector<MarkdownBlock> &out,
                                bool structured_inlines, int depth = 0) {
 	if (depth > MAX_LIST_NESTING) {
@@ -1149,34 +1152,88 @@ static void EmitListStructural(cmark_node *list_node, int level, int32_t &order,
 		ib.block_order = order++;
 		out.push_back(ib);
 
-		for (cmark_node *ic = cmark_node_first_child(item); ic; ic = cmark_node_next(ic)) {
-			if (cmark_node_get_type(ic) == CMARK_NODE_LIST) {
-				EmitListStructural(ic, level + 2, order, out, structured_inlines, depth + 1);
-				continue;
+		EmitBlockChildren(item, level + 2, order, out, structured_inlines, depth + 1);
+	}
+}
+
+// A container's BLOCK children, emitted as blocks rather than flattened to text.
+//
+// The old blockquote path ran GetInlineText over the whole container, which
+// concatenated its children with NO separator:
+//
+//   > quoted para          content: "quoted parasecond para"
+//   >
+//   > second para          -- words run together across the boundary
+//
+//   > - one                renders: "> onetwo"
+//   > - two                -- the list is destroyed outright
+//
+// Shared with list items so a list inside a quote and a quote inside a list are
+// handled by the same code rather than by two walks that can disagree.
+static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                              bool structured_inlines, int depth) {
+	if (depth > MAX_LIST_NESTING) {
+		throw InvalidInputException("Markdown block nesting exceeds maximum supported depth (%d)", MAX_LIST_NESTING);
+	}
+	for (cmark_node *c = cmark_node_first_child(container); c; c = cmark_node_next(c)) {
+		const cmark_node_type t = cmark_node_get_type(c);
+		if (t == CMARK_NODE_LIST) {
+			EmitListStructural(c, level, order, out, structured_inlines, depth + 1);
+			continue;
+		}
+		if (t == CMARK_NODE_BLOCK_QUOTE) {
+			MarkdownBlock qb;
+			qb.block_type = Vocab::TYPE_BLOCKQUOTE;
+			qb.level = level;
+			qb.encoding = Vocab::ENCODING_TEXT;
+			qb.content = "";
+			qb.block_order = order++;
+			out.push_back(qb);
+			EmitBlockChildren(c, level + 1, order, out, structured_inlines, depth + 1);
+			continue;
+		}
+
+		MarkdownBlock b;
+		b.level = level;
+		b.encoding = Vocab::ENCODING_TEXT;
+		b.block_order = order++;
+		bool walk = false;
+		if (t == CMARK_NODE_HEADING) {
+			b.block_type = Vocab::TYPE_HEADING;
+			b.content = GetInlineText(c);
+			b.attributes[Vocab::ATTR_HEADING_LEVEL] = std::to_string(cmark_node_get_heading_level(c));
+		} else if (t == CMARK_NODE_CODE_BLOCK) {
+			b.block_type = Vocab::TYPE_CODE;
+			const char *lit = cmark_node_get_literal(c);
+			b.content = lit ? lit : "";
+			while (!b.content.empty() && b.content.back() == '\n') {
+				b.content.pop_back();
 			}
-			MarkdownBlock pb;
-			pb.block_type = Vocab::TYPE_PARAGRAPH;
-			pb.level = level + 2;
-			pb.encoding = Vocab::ENCODING_TEXT;
-			pb.block_order = order++;
-			bool walk = false;
+			const char *info = cmark_node_get_fence_info(c);
+			if (info && strlen(info) > 0) {
+				std::string info_str(info);
+				const size_t sp = info_str.find(' ');
+				b.attributes["language"] = sp == std::string::npos ? info_str : info_str.substr(0, sp);
+			}
+		} else if (t == CMARK_NODE_THEMATIC_BREAK) {
+			b.block_type = Vocab::TYPE_HR;
+			b.content = "";
+		} else {
+			// Paragraph, and anything else that carries inline content.
+			b.block_type = Vocab::TYPE_PARAGRAPH;
 			std::string simple;
-			if (structured_inlines && cmark_node_get_type(ic) == CMARK_NODE_PARAGRAPH) {
-				if (SingleTextChild(ic, simple)) {
-					pb.content = simple;
-				} else {
-					pb.content = "";
-					walk = true;
-				}
+			if (structured_inlines && t == CMARK_NODE_PARAGRAPH && !SingleTextChild(c, simple)) {
+				b.content = "";
+				walk = true;
+			} else if (structured_inlines && t == CMARK_NODE_PARAGRAPH) {
+				b.content = simple;
 			} else {
-				// Not a paragraph (a code block, a quote): keep its text rather
-				// than dropping the child, which is what the old walk did.
-				pb.content = GetInlineText(ic);
+				b.content = GetInlineText(c);
 			}
-			out.push_back(pb);
-			if (walk) {
-				WalkInlines(ic, pb.level + 1, order, out);
-			}
+		}
+		out.push_back(b);
+		if (walk) {
+			WalkInlines(c, b.level + 1, order, out);
 		}
 	}
 }
@@ -1352,8 +1409,21 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 					emit_inlines = true;
 				}
 			} else if (structured_inlines) {
-				// Multi-block blockquote: flatten to plain text (no markdown syntax).
-				block.content = GetInlineText(child);
+				// More than one block child, or a child that is not a paragraph:
+				// emit them as BLOCKS. Flattening with GetInlineText concatenated
+				// them with no separator ("quoted para" + "second para" came back
+				// as "quoted parasecond para") and destroyed a nested list outright.
+				block.content = "";
+				block_order = block.block_order;
+				MarkdownBlock qb;
+				qb.block_type = Vocab::TYPE_BLOCKQUOTE;
+				qb.level = block.level;
+				qb.encoding = Vocab::ENCODING_TEXT;
+				qb.content = "";
+				qb.block_order = block_order++;
+				blocks.push_back(qb);
+				EmitBlockChildren(child, qb.level + 1, block_order, blocks, structured_inlines, 0);
+				emitted_directly = true;
 			} else {
 				// Legacy path: render blockquote content back to markdown, strip '>'.
 				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);

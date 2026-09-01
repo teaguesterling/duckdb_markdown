@@ -69,12 +69,27 @@ SCHEMA = ("STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INT
 KNOWN_UNSTABLE = {
 }
 
+# (name, markdown, words that must survive, [substrings that must NOT appear]).
+#
+# The fourth field exists because the third CANNOT see a lost separator:
+# "quoted parasecond para" contains both "quoted" and "second", so a
+# words-survive assertion passes on output where two paragraphs were
+# concatenated. Forbidding the join is the assertion that matches the property.
+#
+# Worth being exact about what this did and did not miss. This check runs
+# duck_block_utils' output through THIS writer, and that path was always
+# correct -- the concatenation defect was in this repo's READER, which this
+# check never touches. So the coarse assertion did not hide that bug; a missing
+# DIRECTION did (covered now by duck_block_container_children.test). The
+# coarseness was a real latent weakness on the writer side, and is closed here
+# rather than left because it happened not to be the one that bit.
 CASES = [
     ("heading",        "# Title\n",                              ["Title"]),
     ("nested inlines", "Text with **bold *inner*** here.\n",     ["bold", "inner"]),
-    ("bullet list",    "- alpha\n- beta\n",                      ["alpha", "beta"]),
-    ("ordered list",   "3. one\n4. two\n",                       ["one", "two"]),
-    ("blockquote",     "> quoted para\n>\n> second para\n",      ["quoted", "second"]),
+    ("bullet list",    "- alpha\n- beta\n",                      ["alpha", "beta"], ["alphabeta"]),
+    ("ordered list",   "3. one\n4. two\n",                       ["one", "two"], ["onetwo"]),
+    ("blockquote",     "> quoted para\n>\n> second para\n",      ["quoted", "second"],
+                       ["parasecond"]),
     ("table",          "| A | B |\n|---|---|\n| 1 | 2 |\n",      ["A", "B", "1", "2"]),
     # Multi-block on purpose: a definition's continuation block must be indented
     # far enough that a reader keeps it inside the definition. At two spaces it
@@ -145,9 +160,12 @@ def main():
         return 1
 
     failures, expired = [], []
-    for name, markdown, expected in CASES:
+    for case in CASES:
+        name, markdown, expected = case[0], case[1], case[2]
+        forbidden = case[3] if len(case) > 3 else []
         out = render(to_blocks(args.producer, markdown))
         missing = [w for w in expected if w not in out]
+        joined = [w for w in forbidden if w in out]
         # Rendering once proves the words survive; rendering the OUTPUT again
         # proves the markdown says what it meant. A definition continuation
         # indented too shallowly renders fine and re-reads as a different
@@ -157,15 +175,19 @@ def main():
         known = name in KNOWN_UNSTABLE
         if known and not unstable:
             expired.append(name)
-        if missing:
+        if joined:
+            status = "JOIN"
+        elif missing:
             status = "LOST"
         elif unstable:
             status = "note" if known else "DRIFT"
         else:
             status = "ok  "
         print(f"  {status} {name:<16} {out.splitlines()[0][:42] if out.strip() else '(empty)'}")
-        if missing or (unstable and not known):
-            failures.append((name, missing, out if missing else f"unstable:\n{out!r}\n{second!r}"))
+        if joined or missing or (unstable and not known):
+            detail = (f"joined across a block boundary: {joined}\n{out!r}" if joined
+                      else out if missing else f"unstable:\n{out!r}\n{second!r}")
+            failures.append((name, missing or joined, detail))
 
     print()
 
