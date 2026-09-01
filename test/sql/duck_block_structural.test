@@ -143,3 +143,37 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'blockquote', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'> > q\n\n';
 ----
 true
+
+# `ordered` is canonical for list orderedness (spec v1.0); `list_type` is a
+# later alias from the Pandoc reader. Both producers now emit both, so a
+# consumer must prefer the canonical name rather than whichever it checks first.
+
+# Canonical says no, alias says yes -- canonical wins
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'false', 'list_type': 'ordered'}, element_order: 0}]) = E'- a\n\n';
+----
+true
+
+# Canonical says yes, alias says no -- canonical wins
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true', 'list_type': 'bullet'}, element_order: 0}]) = E'1. a\n\n';
+----
+true
+
+# Alias alone is still honoured, for producers that emit only it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'ordered'}, element_order: 0}]) = E'1. a\n\n';
+----
+true
+
+# The structural path reads the canonical name too, not only the alias
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. a\n\n';
+----
+true
+
+# ...and prefers it over a conflicting alias
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'false', 'list_type': 'ordered'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
+----
+true

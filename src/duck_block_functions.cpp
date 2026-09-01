@@ -697,9 +697,14 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 	} else if (element_type == Vocab::TYPE_LIST) {
 		// List - content is JSON encoded
 		if (encoding == "json" && content.length() > 2 && content[0] == '[') {
-			// Producers signal ordering with list_type; `ordered` is the legacy form.
-			bool ordered =
-			    GetAttribute(attributes, "ordered") == "true" || GetAttribute(attributes, "list_type") == "ordered";
+			// `ordered` is the CANONICAL name for orderedness (spec v1.0);
+			// `list_type` is a later alias that arrived with the Pandoc reader.
+			// Both producers now emit both, so prefer the canonical name when it
+			// is present -- checking the alias first lets it override an explicit
+			// `ordered=false`.
+			const string ordered_attr = GetAttribute(attributes, "ordered");
+			const bool ordered =
+			    !ordered_attr.empty() ? (ordered_attr == "true") : (GetAttribute(attributes, "list_type") == "ordered");
 			int start = 1;
 			string start_str = GetAttribute(attributes, "start");
 			const bool start_from_attribute = !start_str.empty();
@@ -1113,7 +1118,11 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			if (element_type == Vocab::TYPE_LIST) {
 				const idx_t scope_end = SkipElementScope(list_children, i, end);
 				if (scope_end > i + 1) {
-					const bool ordered = GetAttributeOf(block_value, "list_type") == "ordered";
+					// Canonical `ordered` first, then the `list_type` alias.
+					const string ordered_attr = GetAttributeOf(block_value, "ordered");
+					const bool ordered = !ordered_attr.empty()
+					                         ? (ordered_attr == "true")
+					                         : (GetAttributeOf(block_value, "list_type") == "ordered");
 					const string number_style = GetAttributeOf(block_value, "number_style");
 					const string number_delim = GetAttributeOf(block_value, "number_delim");
 					int number = 1;
