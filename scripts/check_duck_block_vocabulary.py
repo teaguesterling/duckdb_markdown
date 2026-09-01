@@ -71,6 +71,10 @@ INTENTIONAL_FALLTHROUGH = {
     "VALUE_STRING": "RenderMetaValue's else arm takes content verbatim, which is "
                     "also the right handling for any value type this build "
                     "does not know",
+    "TYPE_PLAIN": "a text run with no paragraph semantics; the unknown-block "
+                  "terminal arm already renders it exactly as a paragraph, "
+                  "verified at top level, in a tight list item and inside a "
+                  "container. A branch would restate the fallback",
 }
 
 

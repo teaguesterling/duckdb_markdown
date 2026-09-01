@@ -983,6 +983,19 @@ static constexpr int MAX_DUCK_BLOCK_NESTING = 64;
 // RenderDuckBlocksToMarkdown (list of duck_blocks)
 //===--------------------------------------------------------------------===//
 
+// Read an element's own content, for the walk. Absent is spelled two ways --
+// the builders write NULL, the Pandoc reader writes an empty string.
+static string DuckBlockContent(const Value &block_value) {
+	if (block_value.IsNull()) {
+		return "";
+	}
+	auto &fields = StructValue::GetChildren(block_value);
+	if (fields.size() < DUCK_BLOCK_FIELD_COUNT || fields[Vocab::CONTENT_IDX].IsNull()) {
+		return "";
+	}
+	return fields[Vocab::CONTENT_IDX].ToString();
+}
+
 // Read an attribute straight off a duck_block Value, for the walk, which has the
 // element rather than its already-extracted attributes map.
 static string GetAttributeOf(const Value &block_value, const string &key) {
@@ -1150,7 +1163,13 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 							continue;
 						}
 						const idx_t item_end = SkipElementScope(list_children, j, scope_end);
-						string inner = RenderDuckBlockRange(list_children, j + 1, item_end, depth + 1);
+						// An item's children are its content when it has any; its own
+						// content is its content when it does not. Rendering only the
+						// child scope dropped the text of every item that carried it
+						// directly, which is the shape the live producer emits.
+						string inner = item_end > j + 1
+						                   ? RenderDuckBlockRange(list_children, j + 1, item_end, depth + 1)
+						                   : DuckBlockContent(list_children[j]);
 						StringUtil::Trim(inner);
 						const string marker = ordered ? FormatListMarker(number++, number_style, number_delim) : "- ";
 						result += IndentContinuation(inner, marker);

@@ -452,3 +452,42 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) LIKE '%Term%Def%';
 ----
 true
+
+# =============================================================================
+# A list_item may carry its text DIRECTLY rather than in a paragraph child.
+#
+# Spec 2.0 said a container never carries content of its own, and the
+# structural list path was written to that: it renders each item's child scope
+# and ignores the item's own content. duck_block_utils warned that rule might
+# be pulled back to v1's -- content populated iff there is a single text child
+# -- and the live producer does exactly that, so:
+#
+#   list_item(2) content='tight', no children   ->   "-"     the word was GONE
+#
+# Both shapes have to read. The item's children are its content when it has
+# any; its own content is its content when it does not.
+# =============================================================================
+
+# A content-bearing item keeps its text
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'tight', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'- tight\n\n';
+----
+true
+
+# Two of them, numbered when the list is ordered
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'one', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'two', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. one\n3. two\n\n';
+----
+true
+
+# The container shape still works, and children win when both are present
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'child', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- child\n\n';
+----
+true
+
+# Mixed: one item of each shape in the same list
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'flat', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'nested', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'- flat\n- nested\n\n';
+----
+true
