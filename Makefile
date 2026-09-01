@@ -14,3 +14,11 @@ include extension-ci-tools/makefiles/duckdb_extension.Makefile
 .PHONY: check-vocabulary
 check-vocabulary:
 	python3 scripts/check_duck_block_vocabulary.py
+
+# Render live duck_block_utils output through this writer. Complements the test
+# suite rather than duplicating it: the suite replays producer output as literals
+# so it can never skip, but literals only contain shapes someone already knew
+# about. Skips loudly when the producer is unavailable.
+.PHONY: check-producer
+check-producer:
+	python3 scripts/check_against_producer.py
