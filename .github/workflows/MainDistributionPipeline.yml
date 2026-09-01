@@ -61,6 +61,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check vendored vocabulary against upstream duck_block_utils
+        # The check resolves upstream's branch to a commit sha through the API
+        # before fetching, because the raw endpoint serves branch urls from a
+        # lagging cache. Unauthenticated that API is rate limited per IP, which
+        # runners share -- without a token the check would usually fall back to
+        # the cached branch url and report UNVERIFIED rather than a real answer.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/check_duck_block_vocabulary.py
 
   code-quality-check:
