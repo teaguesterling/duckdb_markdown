@@ -35,6 +35,30 @@ check-producer:
 check-conformance:
 	python3 scripts/check_conformance.py
 
+# HOW TO VERIFY A BRANCH BY HAND, since several registries in these scripts carry
+# a "WATCHED" note saying to re-plant an entry and watch it fire, and none of them
+# said how to look. The rule, learned the expensive way on 2026-09-01:
+#
+#   run the thing under test UNPIPED, ONE input at a time, and print the WHOLE
+#   output before drawing anything from it.
+#
+# Three false readings in one investigation that night, none from the code: a
+# glob that expanded to two paths so the command under test got a nonsense
+# argument; `| tail -4` truncating the error above the output being read; and
+# `rc=$?` after a pipe reporting tail's exit code rather than the program's. All
+# three die under that rule.
+#
+# The uncomfortable half, worth keeping because it is not obvious: what caught it
+# was the SIZE of the conclusion, not the method. It would have retracted a
+# premise this repo's tooling is built on, which is loud enough to force a second
+# look. A smaller false reading goes straight into the commit message. So
+# conclusion-size is doing the work verification should do, and the SMALL
+# findings are the unguarded ones. (duck_block_utils' framing, and it is the
+# durable part of that exchange.)
+#
+# An automated check gets perturbed at least once. A shell pipeline gets read and
+# believed every time.
+
 # Run EVERY check and report every failure.
 #
 # Each check is a separate target, which meant the only way to run them all was
