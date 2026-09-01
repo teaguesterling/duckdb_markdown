@@ -531,6 +531,21 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 // RenderInlineElementToMarkdown (helper for inline elements)
 //===--------------------------------------------------------------------===//
 
+// Several branches below accept an HTML-flavoured alias beside the canonical
+// vocabulary name -- "em"/"emphasis" for italic, "strong" for bold, "del" for
+// strikethrough, and so on.
+//
+// MEASURED, because this was previously described here and to other consumers
+// as "legacy names this extension's own parser emits", and that is false: it
+// emits none of them. Nor does duck_block_utils, nor webbed -- webbed MAPS the
+// HTML tags `em`/`strong`/`del` onto the canonical names and carries the same
+// accepting aliases in its own writer, so two consumers hold identical
+// leniency that no observed producer exercises.
+//
+// Kept rather than deleted: accepting an alias costs nothing and removing one
+// can only break a producer nobody here has looked at. But it is defensive
+// acceptance, not compatibility with anything known, and the difference
+// matters if someone later reasons from its presence.
 string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_type, const string &content,
                                                          const Value &attributes) {
 	if (element_type == Vocab::INLINE_LINK) {
