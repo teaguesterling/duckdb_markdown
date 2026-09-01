@@ -22,6 +22,7 @@ import sys
 import urllib.request
 
 HEADER_REL = "src/include/duck_block_vocabulary.hpp"
+CONFORMANCE_REL = "conformance/duck_block_conformance.sql"
 LOCAL_CANDIDATES = [
     HEADER_REL,                                     # vendored (this repo)
     "third_party/duck_block_utils/" + HEADER_REL,   # submodule, if one is ever used
@@ -110,6 +111,33 @@ def compare_spec_version(local, upstream):
         return True, (f"MINOR behind {local} -> {upstream}: this copy claims a newer "
                       f"spec than upstream publishes")
     return False, None
+
+
+def check_vendored_conformance(root, vocab_values):
+    """The conformance SQL embeds the type list -- a SECOND copy of the vocabulary.
+
+    Two copies checked by the same party cannot detect their own disagreement, so
+    the embedded list is compared against the vendored header here. The header is
+    compared against upstream above, so drift in either link fails. Without this,
+    adding a type upstream would make the vendored SQL report it as undeclared --
+    a false positive from a check whose whole job is telling truth from typo.
+    """
+    path = os.path.join(root, CONFORMANCE_REL)
+    if not os.path.exists(path):
+        return []
+    text = open(path).read()
+    m = re.search(r"MACRO duck_block_declared_types\(\) AS \(\s*\[(.*?)\]", text, re.S)
+    if not m:
+        return [f"{CONFORMANCE_REL}: could not find the declared-types list to compare"]
+    embedded = set(re.findall(r"'([^']+)'", m.group(1)))
+    missing = sorted(vocab_values - embedded)
+    extra = sorted(embedded - vocab_values)
+    problems = []
+    if missing:
+        problems.append(f"{CONFORMANCE_REL} is MISSING types the header declares: {missing}")
+    if extra:
+        problems.append(f"{CONFORMANCE_REL} lists types the header does not: {extra}")
+    return problems
 
 
 def vocabulary_of(constants):
@@ -287,6 +315,17 @@ def main():
             print(f"         {k} = {upstream[k]!r}")
     if not (removed or changed or added):
         print("vocabulary constants are in sync")
+
+    # The vendored conformance SQL carries its own copy of the type list.
+    # element_types only -- KIND_* are kinds, which duck_block_declared_types()
+    # correctly does not list. Comparing the two sets whole reported block, inline
+    # and value as missing on this check's first run: a false positive from the
+    # check, not drift in the file.
+    element_types = {v for k, v in vocabulary_of(local).items() if not k.startswith("KIND_")}
+    for problem in check_vendored_conformance(root, element_types):
+        breaking = True
+        print("DRIFT  " + problem)
+        print("       Re-vendor conformance/duck_block_conformance.sql from upstream.")
 
     # Gaps: types upstream publishes that no renderer branches on.
     named, literal = handled_types(os.path.join(root, "src/duck_block_functions.cpp"))

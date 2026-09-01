@@ -60,6 +60,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check this reader against the canonical conformance rules
+        # Pure SQL, no extension, no network -- so it cannot skip and needs no
+        # token. duck_blocks_validate() lives in an extension this repo cannot
+        # load, so this is the only conformance available to it.
+        run: python3 scripts/check_conformance.py
       - name: Check vendored vocabulary against upstream duck_block_utils
         # The check resolves upstream's branch to a commit sha through the API
         # before fetching, because the raw endpoint serves branch urls from a

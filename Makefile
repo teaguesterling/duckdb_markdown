@@ -22,3 +22,12 @@ check-vocabulary:
 .PHONY: check-producer
 check-producer:
 	python3 scripts/check_against_producer.py
+
+# Check this reader's output against the canonical duck_block conformance rules.
+# Unlike check-producer this has NO external dependency: the rules are pure SQL,
+# so it cannot skip. duck_blocks_validate() lives in an extension this repo
+# cannot load at all, so before these macros existed nothing had ever checked
+# this reader's output against the canonical rules.
+.PHONY: check-conformance
+check-conformance:
+	python3 scripts/check_conformance.py

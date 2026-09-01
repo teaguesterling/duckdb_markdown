@@ -1,0 +1,150 @@
+-- VENDORED COPY -- do not edit. Any change here is drift, by definition.
+--
+--   upstream : teaguesterling/duckdb_duck_block_utils
+--              conformance/duck_block_conformance.sql
+--   commit   : 8378fa42d30d6068772dc48f0e789b9a73bdadb7
+--              (8378fa4, 2026-09-01)
+--
+-- Vendored because it is the ONLY conformance this extension can run. DuckDB
+-- matches extension ABI on the exact version string and this repo builds DuckDB
+-- from a pinned submodule, so duck_block_utils cannot be loaded here by any
+-- route -- not INSTALL, not LOAD '<path>'. Its duck_blocks_validate() has
+-- therefore never been runnable against this reader, which is a fair part of
+-- why the defects found today survived. This file needs nothing but DuckDB.
+--
+-- The embedded type list is a SECOND copy of the vocabulary. Two copies checked
+-- by the same party cannot detect their own disagreement, so
+-- `make check-vocabulary` compares it against the vendored header, which is
+-- itself compared against upstream. Drift in either link fails.
+--
+-- duck_block conformance checks, PURE SQL -- no duck_block_utils required.
+--
+-- WHY THIS FILE EXISTS. duck_blocks_validate() ships inside an extension built for a
+-- specific DuckDB version, and DuckDB matches extension ABI by EXACT version string.
+-- An extension that vendors its own DuckDB submodule pinned off-release reports e.g.
+-- 'v1.5.5-dev154' and CANNOT LOAD duck_block_utils by any route -- not INSTALL, not
+-- LOAD '<path>', and publishing would not change it.
+--
+-- Raised by the webbed session, whose metadata blocks carried a NULL level for three
+-- major spec versions with nothing in a position to object: the check that would have
+-- caught it was one they structurally could not run. If markdown and panduck vendor
+-- duckdb too, none of the three consuming extensions could run the validator, which
+-- explains a great deal about how long these defects survived.
+--
+-- So conformance for that class of consumer has to be SHAPE-BASED, not
+-- extension-based. Copy this file; it needs nothing but DuckDB.
+--
+-- It is kept honest by test/check_conformance_macro.py, which runs both these macros
+-- and the real duck_blocks_validate() over the same corpus and FAILS if they disagree.
+-- Two copies of one rule checked by the same party cannot detect their own
+-- disagreement -- this repo shipped exactly that defect in an image's alt text -- so
+-- the two implementations are compared rather than merely both maintained.
+
+-- WHAT THIS BUYS YOU, from the panduck session and sharper than the framing above:
+-- the value is not "the same checks without a dependency". It is TWO CHECKS YOU COULD
+-- NOT HAVE HAD AT ALL. Duplicate element_order and level-jumping-by-more-than-one are
+-- inexpressible in a per-element macro, and the second is the rule whose absence caused
+-- a year of drift across four extensions -- so every consumer who copied the
+-- per-element macro this spec published until 2026-09-01 was unguarded against
+-- precisely the defect most likely to bite them.
+
+-- USAGE, and read this before the first call fails.
+--
+--   SELECT duck_blocks_are_valid(<a LIST(duck_block) expression>);
+--
+-- If your producer is a TABLE function, DuckDB rejects passing it inline:
+--
+--   SELECT duck_blocks_are_valid(my_reader('doc.epub'));
+--     -> Binder Error: Table function cannot contain subqueries
+--
+-- Materialise it first:
+--
+--   CREATE TEMP TABLE b AS SELECT my_reader('doc.epub') AS blk;
+--   SELECT duck_blocks_are_valid(blk) FROM b;
+--
+-- Reported by the panduck session on first use. It is worth stating here because the
+-- error names SUBQUERIES and the caller did not write one, so the fix is not
+-- discoverable from the message -- and checking a producer's output is the whole point
+-- of this file. A scalar producer passes inline fine (measured); the restriction is
+-- specific to table functions.
+--
+-- The macros are `duck_block_is_valid` (one element) and `duck_blocks_are_valid` (a
+-- document). The FILE name is not a macro name -- also panduck, who grepped for it.
+
+-- Per-element shape. Covers 4 of the 6 things duck_blocks_validate reports.
+CREATE OR REPLACE MACRO duck_block_is_valid(elem) AS (
+    elem.kind IN ('block', 'inline', 'value')
+    AND elem.element_type IS NOT NULL
+    AND elem.encoding IN ('text', 'json', 'yaml', 'html', 'xml', 'latex', 'markdown')
+    AND elem.level IS NOT NULL
+    AND elem.level >= 1
+    AND elem.element_order IS NOT NULL
+    AND elem.element_order >= 0
+);
+
+-- Declared element_type names, for the check the EXTENSION does and this file could
+-- not. An element_type outside the vocabulary was invisible to everything until
+-- 2026-09-01: `duck_blocks_validate` accepted any string. duckdb_markdown emits
+-- `frontmatter` where the vocabulary declares `metadata` and nothing objected.
+--
+-- This list is a COPY of duck_block_type_names(), which is the kind of thing that
+-- drifts. test/check_conformance_macro.py compares the two on every `make check` and
+-- FAILS if they differ, so it is a copy that cannot rot silently -- the same reason the
+-- macros above are compared against the real validator rather than merely maintained.
+--
+-- Kept SEPARATE from duck_blocks_are_valid deliberately: an unknown type is a LINT, not
+-- an invalidity. A consumer built against an older vocabulary must still read data from
+-- a newer producer, so a name you do not recognise is reported, not refused. Rejecting
+-- it would make every additive spec release break every consumer who had not upgraded.
+CREATE OR REPLACE MACRO duck_block_declared_types() AS (
+    [
+        'blockquote', 'blocks', 'bold', 'bool', 'caption', 'cite', 'code', 'deflist',
+        'div', 'figure', 'generic', 'heading', 'hr', 'image', 'inlines', 'italic',
+        'lineblock', 'linebreak', 'link', 'list', 'list_item', 'map', 'math', 'metadata',
+        'note', 'page_break', 'paragraph', 'plain', 'quoted', 'raw', 'section',
+        'smallcaps', 'softbreak', 'space', 'span', 'strikethrough', 'string', 'subscript',
+        'superscript', 'table', 'text', 'underline', 'version'
+    ]
+);
+
+-- Which elements carry a type this vocabulary does not declare. Empty is conforming;
+-- anything listed should probably be `generic` with the original name kept in
+-- attributes['source_type'], so it reads as a gap rather than a private invention.
+CREATE OR REPLACE MACRO duck_blocks_undeclared_types(blocks) AS (
+    -- coalesce, because an aggregate over ZERO rows returns NULL, and a conforming
+    -- document has zero rows here. NULL is the one answer this must never give: it
+    -- reads as "could not tell" and as "none" equally, which is the ambiguity every
+    -- check in this file exists to remove. Caught by running it, not by writing it.
+    coalesce(
+        (SELECT list_sort(list_distinct(list(e.element_type)))
+         FROM unnest(blocks) AS t(e)
+         WHERE NOT list_contains(duck_block_declared_types(), e.element_type)),
+        []::VARCHAR[]
+    )
+);
+
+-- Document shape. The other 2, and they are the ones a per-element check CANNOT see:
+--
+--   duplicate element_order  needs the whole list
+--   level jumping by >1      needs ADJACENCY. `level` is structural depth in a
+--                            depth-first ordering, so a document descends one at a
+--                            time; a jump means the element's parent is missing.
+--                            This is the rule whose absence caused a year of drift
+--                            across four extensions, and it is precisely the one a
+--                            per-element macro cannot express -- so a consumer given
+--                            only the element macro is unguarded against the defect
+--                            most likely to bite them.
+CREATE OR REPLACE MACRO duck_blocks_are_valid(blocks) AS (
+    -- every element individually
+    NOT EXISTS (SELECT 1 FROM unnest(blocks) AS t(e) WHERE NOT duck_block_is_valid(e))
+    -- element_order unique
+    AND (SELECT count(DISTINCT e.element_order) = count(*) FROM unnest(blocks) AS t(e))
+    -- depth-first ordering descends one level at a time
+    AND NOT EXISTS (
+        SELECT 1 FROM (
+            SELECT e.level AS lvl,
+                   lag(e.level) OVER (ORDER BY i) AS prev
+            FROM unnest(blocks) WITH ORDINALITY AS t(e, i)
+        ) WHERE prev IS NOT NULL AND lvl > prev + 1
+    )
+);
