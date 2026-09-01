@@ -179,6 +179,50 @@ def corpus_cases():
     ]
 
 
+
+def container_cases():
+    """Every declared type as a container with TWO block children.
+
+    Two, not one, and with a LEAD child before the probe: a walk that stops after
+    the first child passes a single-child probe and looks correct. That is how a
+    definition list dropped everything after its first child upstream for as long
+    as the shape had existed, and how this repo's blockquote concatenated its
+    children unnoticed.
+
+    Checks both failure modes the container defects here took: children JOINED
+    with no separator (ALPHA + BETA -> ALPHABETA, which a words-survive assertion
+    cannot see) and children DROPPED.
+    """
+    m = re.search(r"duck_block_declared_types\(\) AS \(\s*\[(.*?)\]",
+                  open(RULES).read(), re.S)
+    types = re.findall(r"'([^']+)'", m.group(1)) if m else []
+    if not types:
+        return []
+    def probe(t):
+        return ("duck_blocks_to_md(["
+                f"{{kind:'block',element_type:'{t}',content:NULL,level:1,encoding:'text',"
+                "attributes:MAP{}::MAP(VARCHAR,VARCHAR),element_order:0},"
+                "{kind:'block',element_type:'paragraph',content:'ALPHA',level:2,encoding:'text',"
+                "attributes:MAP{}::MAP(VARCHAR,VARCHAR),element_order:1},"
+                "{kind:'block',element_type:'paragraph',content:'BETA',level:2,encoding:'text',"
+                "attributes:MAP{}::MAP(VARCHAR,VARCHAR),element_order:2}])")
+    union = " UNION ALL ".join(f"SELECT '{t}' AS t, {probe(t)} AS out" for t in types)
+    # CONTROL: the detector must fire on output that really is joined. Without
+    # it, a probe that silently matched nothing would read as "no type joins its
+    # children" -- a pass meaning the detection is broken, not the code correct.
+    control = ("(SELECT coalesce(list(t), []) FROM (SELECT 'x' AS t, "
+               "duck_blocks_to_md([{kind:'block',element_type:'paragraph',content:'ALPHABETA',"
+               "level:1,encoding:'text',attributes:MAP{}::MAP(VARCHAR,VARCHAR),element_order:0}]) AS out) "
+               "WHERE out LIKE '%ALPHABETA%')")
+    return [
+        ("CONTROL the join detector fires on joined output", control, "[x]"),
+        (f"no declared type JOINS its two block children ({len(types)} types)",
+         f"(SELECT coalesce(list(t), []) FROM ({union}) WHERE out LIKE '%ALPHABETA%')", "[]"),
+        (f"no declared type DROPS either block child ({len(types)} types)",
+         f"(SELECT coalesce(list(t), []) FROM ({union}) WHERE out NOT LIKE '%ALPHA%' OR out NOT LIKE '%BETA%')", "[]"),
+    ]
+
+
 def main():
     for what, ok in (("this extension's build", os.path.exists(EXT)),
                      ("the vendored rules at conformance/", os.path.exists(RULES))):
@@ -186,7 +230,7 @@ def main():
             print(f"FAILED: missing {what}. This check has no skip path by design.")
             return 1
 
-    cases = CASES + absorption_cases() + corpus_cases()
+    cases = CASES + absorption_cases() + container_cases() + corpus_cases()
 
     sql = [f"LOAD '{EXT}';", f".read {RULES}", ".mode list", ".header off"]
     sql += [f"SELECT {expr};" for _, expr, _ in cases]
