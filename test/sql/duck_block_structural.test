@@ -329,3 +329,88 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'PL', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%PL%';
 ----
 true
+
+# =============================================================================
+# CLASS 1 -- a terminal arm that SKIPS rather than degrades.
+#
+# The structural list walk advanced past any child that was not an item, so a
+# list whose children are not list_items lost all of its content. Found by
+# applying duck_block_utils' sweep catalogue to this writer: "grep every walk
+# for a terminal else doing continue/j++/return rather than degrading".
+#
+# The decision the walk was making is whether a child EXISTS, and that must not
+# be keyed on the child matching a shape we recognise. Losing list structure is
+# a formatting cost; losing the text is a content cost.
+# =============================================================================
+
+# A list child that is not an item still renders
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'STRAY', level: 3, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%STRAY%';
+----
+true
+
+# ...alongside real items, which keep their markers
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'ITEM', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'STRAY', level: 4, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 4}, {kind: 'block', element_type: 'paragraph', content: 'TWO', level: 3, encoding: 'text', attributes: MAP{}, element_order: 5}]) LIKE '%ITEM%STRAY%- TWO%';
+----
+true
+
+# A child type nobody has heard of, directly under a list, is not dropped
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'futuretype', content: 'KEPT', level: 3, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%KEPT%';
+----
+true
+
+# =============================================================================
+# CLASS 2 -- write-only types, adapted for a writer: render, parse back, render
+# again, and compare. Ten of eleven content-bearing types survive unchanged.
+#
+# NON-DEFECT, RECORDED SO THE SWEEP CANNOT RE-RAISE IT.
+#
+# `deflist` does not survive, and it should not. This writer emits Markdown
+# Extra / Pandoc definition-list syntax:
+#
+#     T
+#     : D
+#
+# and this extension's parser is CommonMark, which has no definition-list
+# syntax at all -- so that re-parses as ONE paragraph with a softbreak, and a
+# softbreak renders as a space, giving "T : D". The words survive; the line
+# structure does not.
+#
+# That is inherent to the target format rather than a defect to fix: a round
+# trip can only restore what the encoding carried, and CommonMark has nowhere
+# to carry "this is a definition list". Encoding it differently would lose the
+# deflist-ness just as completely while also being worse markdown. The same
+# distinction duck_block_utils drew for block `image`, which Pandoc cannot
+# express either -- and where "fixing" the asymmetry destroyed the alt text.
+# =============================================================================
+
+# The words survive the round trip even though the line structure does not
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"T"}],[[{"t":"Para","c":[{"t":"Str","c":"D"}]}]]]]', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}])::VARCHAR)) LIKE '%T%D%';
+----
+true
+
+# The first pass is, and stays, real definition-list syntax
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"T"}],[[{"t":"Para","c":[{"t":"Str","c":"D"}]}]]]]', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) = E'T\n: D\n\n';
+----
+true
+
+# Every other content-bearing type round-trips byte-identically
+query I
+SELECT bool_and(rt) FROM (
+  SELECT duck_blocks_to_md([b]) = duck_blocks_to_md(parse_markdown_to_duck_blocks(duck_blocks_to_md([b])::VARCHAR)) AS rt
+  FROM (SELECT unnest([
+    {kind: 'block', element_type: 'heading',    content: 'H',   level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph',  content: 'P',   level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'code',       content: 'C',   level: 1, encoding: 'text', attributes: MAP{'language': 'py'}, element_order: 0},
+    {kind: 'block', element_type: 'blockquote', content: 'Q',   level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'lineblock',  content: 'LB',  level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'hr',         content: NULL,  level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'image',      content: 'IMG', level: 1, encoding: 'text', attributes: MAP{'src': 'i.png'}, element_order: 0},
+    {kind: 'block', element_type: 'plain',      content: 'PL',  level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}
+  ]) AS b));
+----
+true

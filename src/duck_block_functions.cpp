@@ -1138,7 +1138,15 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 					}
 					for (idx_t j = i + 1; j < scope_end;) {
 						if (DuckBlockLevel(list_children[j]) != item_level) {
-							j++;
+							// Not an item -- a producer we do not recognise, or a
+							// shape from a spec we have not seen. Render it anyway
+							// rather than advancing past it: this decides whether
+							// the child EXISTS, and that must not be keyed on it
+							// matching a shape we know. Losing the list structure
+							// costs formatting; dropping it costs the text.
+							const idx_t stray_end = SkipElementScope(list_children, j, scope_end);
+							result += RenderDuckBlockRange(list_children, j, stray_end, depth + 1);
+							j = stray_end;
 							continue;
 						}
 						const idx_t item_end = SkipElementScope(list_children, j, scope_end);
