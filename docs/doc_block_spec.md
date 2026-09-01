@@ -1,10 +1,33 @@
-# Duck Block Specification
+# Duck Block Specification — SUPERSEDED
 
-**Version**: 2.0
-**Status**: Stable
-**Last Updated**: 2025-01
+> **This document is no longer normative. Do not implement against it.**
+>
+> The canonical duck_block specification is owned by `duck_block_utils`:
+> `docs/duck_blocks_spec.md` in `teaguesterling/duckdb_duck_block_utils`,
+> with the machine-readable vocabulary in `src/include/duck_block_vocabulary.hpp`
+> (`SPEC_VERSION`, currently 6.1). This repository vendors that header at
+> `src/include/duck_block_vocabulary.hpp` and checks it for drift with
+> `make check-vocabulary`.
+>
+> **Why this matters rather than being tidiness.** This document said `kind` is
+> "'block' or 'inline'". A third kind, `value`, carries document metadata — and
+> a writer built on the two-kind definition treats metadata as body content,
+> which is precisely the defect that put a document's own title into its body as
+> prose in this extension (fixed 2026-08-31). An implementer conforming to the
+> text below would have built that bug. Two published specifications disagreeing
+> is not a documentation problem: whoever follows the wrong one is conforming.
+>
+> Its **MUST** statements about "all compliant extensions" no longer bind
+> anything. Corrections are marked inline below where a claim is actively
+> wrong; the rest is retained as history, not as instruction.
+>
+> Superseded 2026-09-01, against duck_block spec 6.1.
 
-A format-agnostic specification for representing documents as sequences of typed blocks in DuckDB. This specification enables interoperability between document format extensions, allowing documents to be converted, transformed, and analyzed using SQL.
+**Version**: 2.0 (superseded — unrelated to duck_block `SPEC_VERSION`, now 6.1)
+**Status**: Historical
+**Last Updated**: 2026-09-01
+
+A format-agnostic specification for representing documents as sequences of typed blocks in DuckDB. This specification enabled interoperability between document format extensions; that role now belongs to the canonical spec linked above.
 
 ## Overview
 
@@ -28,7 +51,7 @@ All compliant extensions MUST produce rows with these columns:
 
 | Column | Type | Required | Description |
 |--------|------|----------|-------------|
-| `kind` | VARCHAR | Yes | 'block' or 'inline' |
+| `kind` | VARCHAR | Yes | 'block' or 'inline' — **OUTDATED: also `value`**, which carries document metadata. A consumer that treats non-inline as block renders metadata as body text. |
 | `element_type` | VARCHAR | Yes | Element type identifier |
 | `content` | VARCHAR | Yes | Primary content of the element |
 | `level` | INTEGER | No | Hierarchy level, nesting depth, or NULL |
@@ -47,6 +70,10 @@ Optional columns:
 Distinguishes between block-level and inline elements:
 - **'block'**: Block-level elements (headings, paragraphs, code blocks, lists, tables)
 - **'inline'**: Inline elements (bold, italic, links, images within text)
+- **'value'** — **MISSING FROM THIS DOCUMENT.** Non-prose data attached to a
+  document, currently its metadata. `kind` is an open discriminator: filter with
+  an **allowlist** (`kind` is block or inline), never a blocklist ("not inline,
+  therefore block"), or every future kind is rendered as body content.
 
 Block elements are rendered with trailing newlines. Inline elements are concatenated without trailing newlines.
 
@@ -70,7 +97,16 @@ Document nesting depth or heading level:
 - Frontmatter/metadata: 0
 - Not applicable: NULL
 
-**Note:** For headings, the H1-H6 level should preferably be stored in `attributes['heading_level']`. If not present, the `level` field is used as a fallback.
+**OUTDATED.** Since duck_block spec 3.0 `level` is explicit structural depth on
+*every* element and is **never semantic** — no NULLs, top level 1, children at
+parent+1. A consumer reading `level` to decide how deeply to nest a quote, or
+how far to indent a list, over-nests by however many containers sit above it.
+
+**Note:** For headings, the H1-H6 level should preferably be stored in
+`attributes['heading_level']`. If not present, the `level` field is used as a
+fallback. — **The fallback is unsafe under 3.0 and later**, where `level` is
+structural depth: a heading inside two containers reads as an h3 whatever it
+actually is. `attributes['heading_level']` is the only sound source.
 
 #### encoding
 Declares how `content` should be interpreted:

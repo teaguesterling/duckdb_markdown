@@ -342,7 +342,7 @@ Convert document blocks to/from Markdown. These functions work with the `duck_bl
 **duck_block structure:**
 ```sql
 STRUCT(
-    kind          VARCHAR,              -- 'block' or 'inline'
+    kind          VARCHAR,              -- 'block', 'inline' or 'value' (metadata)
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
     level         INTEGER,              -- Document nesting depth (1 for top-level, 0 for frontmatter)
@@ -574,7 +574,7 @@ COPY blocks TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```sql
 COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
     markdown_mode 'blocks',
-    kind_column 'kind',               -- Column with kind ('block' or 'inline', default: 'kind')
+    kind_column 'kind',               -- Column holding the kind (default: 'kind')
     element_type_column 'element_type',-- Column with element type (default: 'element_type')
     content_column 'content',          -- Column with block content (default: 'content')
     level_column 'level',              -- Column with level/depth (default: 'level')

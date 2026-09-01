@@ -22,7 +22,7 @@ The extension uses the `duck_block` struct shape from the `duck_block_utils` spe
 
 ```sql
 STRUCT(
-    kind          VARCHAR,              -- 'block' or 'inline'
+    kind          VARCHAR,              -- 'block', 'inline' or 'value' (metadata)
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
     level         INTEGER,              -- Document nesting depth (1 for top-level)
@@ -134,7 +134,7 @@ COPY query TO 'output.md' (
     FORMAT MARKDOWN,
     markdown_mode 'blocks',  -- or 'duck_block'
     -- Column mapping (defaults shown)
-    kind_column 'kind',                -- 'block' or 'inline' (default: 'kind')
+    kind_column 'kind',                -- column holding the kind (default: 'kind')
     element_type_column 'element_type',
     content_column 'content',
     level_column 'level',

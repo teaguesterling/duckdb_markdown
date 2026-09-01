@@ -119,7 +119,7 @@ All ecosystem extensions share the common `duck_block` structure:
 
 ```sql
 STRUCT(
-    kind          VARCHAR,              -- 'block' or 'inline'
+    kind          VARCHAR,              -- 'block', 'inline' or 'value' (metadata)
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', etc.
     content       VARCHAR,              -- Text content
     level         INTEGER,              -- Heading level or nesting depth
