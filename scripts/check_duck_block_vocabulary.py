@@ -26,8 +26,42 @@ LOCAL_CANDIDATES = [
     HEADER_REL,                                     # vendored (this repo)
     "third_party/duck_block_utils/" + HEADER_REL,   # submodule, if one is ever used
 ]
-UPSTREAM_URL = ("https://raw.githubusercontent.com/teaguesterling/"
-                "duckdb_duck_block_utils/main/" + HEADER_REL)
+UPSTREAM_OWNER = "teaguesterling"
+UPSTREAM_REPO = "duckdb_duck_block_utils"
+UPSTREAM_BRANCH = "main"
+
+
+def _get(url, accept=None):
+    headers = {"Accept": accept} if accept else {}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return urllib.request.urlopen(
+        urllib.request.Request(url, headers=headers), timeout=30).read().decode("utf-8")
+
+
+def fetch_upstream_header():
+    """Fetch the upstream header, defeating the raw-endpoint CDN cache.
+
+    raw.githubusercontent.com serves a BRANCH url from a cache that can lag the
+    branch by minutes. That produced a false "in sync" here against a copy two
+    spec versions old -- a false negative in the reassuring direction, from the
+    tool whose whole job is to catch exactly that. So resolve the branch to a
+    commit sha first and fetch the sha-pinned url, which is immutable and
+    therefore never stale. Returns (text, provenance, verified).
+    """
+    raw = "https://raw.githubusercontent.com/{}/{}/{{}}/{}".format(
+        UPSTREAM_OWNER, UPSTREAM_REPO, HEADER_REL)
+    try:
+        sha = _get("https://api.github.com/repos/{}/{}/commits/{}".format(
+            UPSTREAM_OWNER, UPSTREAM_REPO, UPSTREAM_BRANCH),
+            accept="application/vnd.github.sha").strip()
+        return _get(raw.format(sha)), "{}@{}".format(UPSTREAM_BRANCH, sha[:12]), True
+    except Exception as exc:
+        # Fall back to the branch url so an API outage or rate limit does not
+        # block work -- but never report this result as verified.
+        text = _get(raw.format(UPSTREAM_BRANCH))
+        return text, "{} (branch url; sha lookup failed: {})".format(UPSTREAM_BRANCH, exc), False
 CONST_RE = re.compile(r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*)"|([0-9]+))\s*;')
 
 # Vocabulary we deliberately render through a fallthrough rather than a branch.
@@ -116,15 +150,15 @@ def read_upstream(source, ref):
     """
     if source is None:
         try:
-            with urllib.request.urlopen(UPSTREAM_URL, timeout=30) as response:
-                return response.read().decode("utf-8")
+            return fetch_upstream_header()
         except Exception as exc:
-            sys.exit(f"error: cannot fetch {UPSTREAM_URL}\n{exc}\n"
+            sys.exit(f"error: cannot fetch the upstream header\n{exc}\n"
                      f"       pass --upstream PATH to compare against a local clone instead")
     try:
-        return subprocess.check_output(
+        text = subprocess.check_output(
             ["git", "-C", source, "show", f"{ref}:{HEADER_REL}"],
             stderr=subprocess.PIPE, text=True)
+        return text, f"{source}@{ref}", True
     except subprocess.CalledProcessError as exc:
         sys.exit(f"error: cannot read {HEADER_REL} from {source}@{ref}\n{exc.stderr.strip()}")
 
@@ -165,13 +199,15 @@ def main():
             subprocess.run(["git", "-C", upstream_repo, "fetch", "--quiet", "origin"], check=False)
 
     local = parse_constants(open(local_path).read())
-    upstream = parse_constants(read_upstream(upstream_repo, args.ref))
+    upstream_text, provenance, verified = read_upstream(upstream_repo, args.ref)
+    upstream = parse_constants(upstream_text)
     if not upstream:
         sys.exit("error: parsed no constants from upstream -- has the header's shape changed?")
 
     print(f"local    {os.path.relpath(local_path, root)}  ({len(local)} constants)")
-    origin = f"{upstream_repo}@{args.ref}" if upstream_repo else UPSTREAM_URL
-    print(f"upstream {origin}  ({len(upstream)} constants)")
+    print(f"upstream {provenance}  ({len(upstream)} constants)")
+    if not verified:
+        print("WARNING  upstream copy is UNVERIFIED and may be a stale cache")
     print(f"spec     local {local.get('SPEC_VERSION','?')}  upstream {upstream.get('SPEC_VERSION','?')}")
     print()
 
@@ -210,6 +246,10 @@ def main():
     if breaking:
         print("FAILED: vocabulary drift is breaking. Update the copy and the references.")
         return 1
+    if not verified:
+        # Never claim a clean bill of health from a copy we could not date.
+        print("UNVERIFIED: no drift seen, but the upstream copy could not be pinned to a sha.")
+        return 0
     if added:
         print("OK with news: upstream added vocabulary. Review whether we should handle it.")
     else:

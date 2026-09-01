@@ -5,9 +5,9 @@
 //
 //   upstream : teaguesterling/duckdb_duck_block_utils
 //              src/include/duck_block_vocabulary.hpp
-//   commit   : 2c0e565656643f268fb2b8fc21a9cb1c7cee15a1
-//              (2c0e565, 2026-08-31)
-//   spec     : SPEC_VERSION 1.2
+//   commit   : 26bfe05dbea23977a9cad36c81a871e0c859a6b1
+//              (26bfe05, 2026-08-31)
+//   spec     : SPEC_VERSION 2.0
 //
 // Re-sync by copying the file from that repo and updating the three lines
 // above. `make check-vocabulary` fails the build if this copy has drifted
@@ -89,7 +89,12 @@
 //      should report without failing. GAPS is the arm that earns its keep -- it
 //      is what surfaced inline `generic` losing source_type in two extensions
 //      in the same week. Carry an explicit allowlist of intentional gaps, or an
-//      unexplained one and a deliberate one look identical.
+//      unexplained one and a deliberate one look identical. Filter NUMERIC-valued
+//      constants out when selecting the vocabulary by name prefix -- otherwise
+//      KIND_IDX and the other struct field offsets get reported as published-but-
+//      unhandled types, and a check whose first run on a new consumer is a false
+//      positive has already taught that consumer to ignore it. (panduck hit exactly
+//      this while adopting the arm from this recommendation.)
 //
 //      duckdb_markdown has a working implementation of exactly this, which
 //      looks in both a vendored and a submodule location:
@@ -164,7 +169,7 @@ struct DuckBlockVocabulary {
 
 	// The duck_block spec version this build implements. Bump when the vocabulary
 	// changes in a way a consumer could observe.
-	static constexpr const char *SPEC_VERSION = "1.2";
+	static constexpr const char *SPEC_VERSION = "2.0";
 
 	// ========================================================================
 	// Block type names
