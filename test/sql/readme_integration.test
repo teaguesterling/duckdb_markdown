@@ -99,7 +99,12 @@ SELECT min(element_order) FROM read_markdown_blocks('README.md');
 ----
 1
 
-# All rows should have a valid kind (blocks, plus structured inline children)
+# THIS READER emits only these two kinds -- a property of read_markdown_blocks,
+# NOT a statement of which kinds are valid. The vocabulary also has `value`,
+# for document metadata, which this reader has no path to emit; a consumer
+# asserting `kind IN ('block','inline')` as a CONFORMANCE rule rejects every
+# conforming metadata element, which is how the same two-kind constraint became
+# a defect in the canonical spec and its conformance macro.
 query I
 SELECT bool_and(kind IN ('block', 'inline')) FROM read_markdown_blocks('README.md');
 ----
