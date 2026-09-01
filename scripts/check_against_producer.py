@@ -66,6 +66,19 @@ SCHEMA = ("STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INT
 # directions. Content loss is caught by the word check below; consistent
 # wrongness is what the sqllogictest suite is for. Three arms, three
 # properties, and none of them subsumes another.
+# WATCHED, 2026-09-01. Nothing in a green run can show that the audit below
+# works: this dict is empty, so both of its loops iterate over nothing and the
+# branches never execute. An audit nobody has seen run is the same evidence as no
+# audit and it presents better -- duck_block_utils found a staleness branch that
+# had never executed once while every green run printed that it had passed.
+#
+# So both were fired, and this is the record:
+#   {"heading": ...}       -> EXPIRED heading: ... its round trip is now STABLE
+#   {"no_such_case": ...}  -> EXPIRED no_such_case: ... no longer has a case
+# Both exit non-zero. Re-plant either to re-watch it.
+#
+# This version at least stays quiet when empty rather than asserting its own
+# verdict, so a green run claims nothing it cannot back.
 KNOWN_UNSTABLE = {
 }
 

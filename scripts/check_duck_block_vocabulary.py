@@ -68,6 +68,12 @@ CONST_RE = re.compile(r'static\s+constexpr\s+[\w:*\s]+?\**(\w+)\s*=\s*(?:"([^"]*
 # Vocabulary we deliberately render through a fallthrough rather than a branch.
 # Recorded here so the check stays silent about them and loud about everything
 # else -- an unexplained gap and an intentional one look identical otherwise.
+# WATCHED, 2026-09-01, both expiry branches, since a green run cannot show that
+# either works and the entries here are load-bearing (emptying this dict makes
+# both reappear as GAPS, which is how that was verified rather than assumed):
+#   {"TYPE_NO_LONGER_REAL": ...}  -> EXPIRED ... upstream no longer publishes it
+#   {"TYPE_HEADING": ...}         -> EXPIRED ... this build now branches on it
+# Both exit non-zero. Re-plant either to re-watch it.
 INTENTIONAL_FALLTHROUGH = {
     "VALUE_STRING": "RenderMetaValue's else arm takes content verbatim, which is "
                     "also the right handling for any value type this build "
