@@ -43,10 +43,25 @@ SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: NULL
 ----
 true
 
-# An element at level 1 beside one at NULL is its sibling, not its child --
-# NULL is depth 1, not depth 0.
+# Blocks and inlines are on separate level scales. The spec's Level Field
+# Semantics puts a top-level INLINE at level 1, while a top-level block records
+# NULL -- so a level-1 inline after a NULL block is that block's content, not a
+# sibling. The builders and all four panduck readers emit this shape; the Pandoc
+# path emits the same run at level 2. Both have to read.
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'Sibling', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'\n\nSibling';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'a **b**\n\n';
+----
+true
+
+# The same document in the Pandoc path's convention, one level deeper
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'a **b**\n\n';
+----
+true
+
+# A spec-conformant heading, its title at inline level 1
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'Title', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'## Title\n\n';
 ----
 true
 

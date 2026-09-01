@@ -1211,11 +1211,28 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 		}
 
 		// An element with no content of its own carries it as kind='inline'
-		// children at level+1 -- a paragraph whose text is a run of inlines, a
-		// bold whose text nests one level deeper. Walking those flat rendered the
-		// marker's empty content as an element in its own right, which put a blank
-		// paragraph ahead of the text and closed "**" around nothing.
-		idx_t scope_end = SkipElementScope(list_children, i, end);
+		// children -- a paragraph whose text is a run of inlines, a bold whose
+		// text nests deeper. Walking those flat rendered the marker's empty
+		// content as an element in its own right, which put a blank paragraph
+		// ahead of the text and closed "**" around nothing.
+		//
+		// Blocks and inlines sit on SEPARATE level scales: the spec puts a
+		// top-level inline at level 1 while a top-level block records NULL. And
+		// producers disagree about where a block's inline run begins -- the
+		// builders and all four panduck readers emit level 1, the Pandoc path
+		// emits 2. So a block takes the whole contiguous inline run that follows
+		// it rather than trusting the level, which is the only rule that reads
+		// both; among inlines the level IS the nesting, so a wrapper there takes
+		// what is deeper than itself.
+		idx_t scope_end;
+		if (kind == Vocab::KIND_BLOCK) {
+			scope_end = i + 1;
+			while (scope_end < end && DuckBlockKind(list_children[scope_end]) == Vocab::KIND_INLINE) {
+				scope_end++;
+			}
+		} else {
+			scope_end = SkipElementScope(list_children, i, end);
+		}
 		bool consumed_children = false;
 		if (content.empty() && scope_end > i + 1 && depth < MAX_DUCK_BLOCK_NESTING &&
 		    DuckBlockKind(list_children[i + 1]) == Vocab::KIND_INLINE) {
