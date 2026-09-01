@@ -145,7 +145,21 @@ def check_vendored_conformance(root, vocab):
         if not m:
             problems.append(f"{CONFORMANCE_REL}: no {macro}() list to compare")
             continue
-        embedded = set(re.findall(r"'([^']+)'", m.group(1)))
+        entries = re.findall(r"'([^']+)'", m.group(1))
+        embedded = set(entries)
+        # MULTIPLICITY, checked before the set comparison that would hide it.
+        # Building a set() is the coarser measurement: a list that names `code`
+        # twice compares equal to one that names it once, so len() lies and any
+        # join against it double-counts. duck_block_utils shipped exactly that --
+        # duck_block_type_names() returned 47 rows for a 43-type vocabulary --
+        # and every check there built a set() from it, so nothing could see it.
+        # Five names legitimately live on two AXES here (code, generic, image,
+        # raw as block and inline; list as block and value), which is why the
+        # header has more constants than names and why a duplicate in a flat
+        # list is easy to introduce and invisible to compare.
+        duped = sorted({v for v in entries if entries.count(v) > 1})
+        if duped:
+            problems.append(f"{CONFORMANCE_REL}: {label} listed more than once: {duped}")
         missing = sorted(expected - embedded)
         extra = sorted(embedded - expected)
         if missing:
