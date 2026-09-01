@@ -50,6 +50,19 @@ jobs:
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
+  # src/include/duck_block_vocabulary.hpp is a VENDORED copy of the published
+  # duck_block vocabulary, so nothing notices when upstream moves. Renames are a
+  # compile error once the constants are in use; a changed VALUE is not -- it
+  # compiles clean and silently stops matching. This is what catches that.
+  # No submodules: the point of vendoring is that this needs none.
+  vocabulary-drift:
+    name: duck_block Vocabulary Drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check vendored vocabulary against upstream duck_block_utils
+        run: python3 scripts/check_duck_block_vocabulary.py
+
   code-quality-check:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
