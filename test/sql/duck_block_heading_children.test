@@ -1,0 +1,75 @@
+# name: test/sql/duck_block_heading_children.test
+# description: a heading carries both a flattened title and its formatted inline children
+# group: [sql]
+
+require markdown
+
+# `# **Bold** t` and `# Bold t` used to produce byte-identical output, so a round
+# trip rewrote the first as the second -- a distinction the source makes, removed
+# silently and irreversibly. This repo's own README lost the backticks off four
+# API headings that way.
+#
+# The fix is ADDITIVE: `content` is still the flattened title, because that is
+# what md_extract_sections, read_markdown_sections and the section_id slug all
+# read. The formatting lives in inline children beside it.
+
+# The formatting survives a round trip
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'# **Bold** title\n')) = E'# **Bold** title\n\n';
+----
+true
+
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'## The `fn()` call\n')) = E'## The `fn()` call\n\n';
+----
+true
+
+# A plain heading is unchanged and gains no children
+query II
+SELECT (SELECT count(*) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'# Plain\n')) AS e) WHERE e.kind = 'inline'),
+       duck_blocks_to_md(parse_markdown_to_duck_blocks(e'# Plain\n')) = E'# Plain\n\n';
+----
+0	true
+
+# CONTENT IS STILL THE FLATTENED TITLE -- every existing consumer reads this
+query I
+SELECT e.content FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'## The `fn()` call\n')) AS e)
+WHERE e.element_type = 'heading';
+----
+The fn() call
+
+# ...and the children carry the structure, one level deeper
+query III
+SELECT e.kind, e.element_type, e.content
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'## The `fn()` call\n')) AS e)
+WHERE e.kind = 'inline';
+----
+inline	text	The 
+inline	code	fn()
+inline	text	 call
+
+# Title-string consumers are untouched, formatting or not
+query II
+SELECT s.title, s.section_id FROM (SELECT unnest(md_extract_sections(e'# The `fn()` call\n\nBody.\n')) AS s);
+----
+The fn() call	the-fn-call
+
+# REGRESSION: a heading must absorb only inlines NESTED BELOW it. A bare run that
+# merely FOLLOWS a heading is not its children, and absorbing it would render the
+# run as the title and destroy the real one -- the `hr` defect in another costume.
+# Caught by an existing COPY test, not by reasoning.
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Real Title', level: 1, encoding: 'text', attributes: MAP{}::MAP(VARCHAR, VARCHAR), element_order: 0},
+  {kind: 'inline', element_type: 'text', content: 'separate prose', level: 1, encoding: 'text', attributes: MAP{}::MAP(VARCHAR, VARCHAR), element_order: 1}])
+     = E'# Real Title\n\nseparate prose';
+----
+true
+
+# Round trip is stable, not merely lossless once
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+         duck_blocks_to_md(parse_markdown_to_duck_blocks(e'### A **bold** and `code` heading\n'))))
+     = duck_blocks_to_md(parse_markdown_to_duck_blocks(e'### A **bold** and `code` heading\n'));
+----
+true

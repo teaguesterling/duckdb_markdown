@@ -1332,10 +1332,24 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		case CMARK_NODE_HEADING: {
 			block.block_type = "heading";
 			int heading_level = cmark_node_get_heading_level(child);
-			// Headings keep their title as plain text (title semantics: TOC and
-			// heading extraction want a string). Inline formatting in a heading is
-			// flattened rather than decomposed into structured children.
+			// A heading carries BOTH, and it is the one element where both are
+			// meaningful. `content` stays the flattened title, because that is what
+			// a title IS for -- md_extract_sections, read_markdown_sections and the
+			// section_id slug all want a string, and every existing consumer reads
+			// this field. The inline CHILDREN carry the formatting.
+			//
+			// Until 2026-09-01 only the flattened form existed, so `# **Bold** t`
+			// and `# Bold t` produced byte-identical output and a round trip
+			// rewrote the first as the second. A distinction the source makes,
+			// removed silently and irreversibly -- which the duck_block ruling on
+			// pandoc fidelity leaves forbidden even where enhancement is allowed.
+			// This repo's own README lost the backticks off four API headings.
 			block.content = GetInlineText(child);
+			std::string heading_simple;
+			if (structured_inlines && !SingleTextChild(child, heading_simple)) {
+				emit_inlines = true;
+				inline_container = child;
+			}
 
 			// Store heading level as attribute (H1=1, H2=2, etc.)
 			block.attributes["heading_level"] = std::to_string(heading_level);
