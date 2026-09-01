@@ -1575,11 +1575,22 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 			    string current_title;
 			    int32_t current_level = 0;
 			    string current_section_id;
-			    string current_content;
 			    vector<string> section_path_parts;
 
-			    auto flush_section = [&]() {
-				    if (!current_title.empty() || !current_content.empty()) {
+			    // Render a section's content through the SHARED range renderer rather
+			    // than element by element. The two walks over a block list have to
+			    // agree about how structure renders, and every structural rule --
+			    // list items, blockquote nesting, caption emphasis, a block's inline
+			    // children -- lives in that renderer. Walking elements individually
+			    // here produced a bullet with no text followed by loose prose, while
+			    // duck_blocks_to_md produced "- LISTWORD" from the same input.
+			    idx_t content_begin = 0;
+			    auto render_range = [&](idx_t begin, idx_t end) -> string {
+				    return end > begin ? RenderDuckBlockRange(list_children, begin, end, 0) : string();
+			    };
+
+			    auto flush_section = [&](const string &body) {
+				    if (!current_title.empty() || !body.empty()) {
 					    // Build section path
 					    string section_path;
 					    for (size_t i = 0; i < section_path_parts.size(); i++) {
@@ -1593,7 +1604,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 					    section_values.push_back(std::make_pair("section_path", Value(section_path)));
 					    section_values.push_back(std::make_pair("level", Value::INTEGER(current_level)));
 					    section_values.push_back(std::make_pair("title", Value(current_title)));
-					    section_values.push_back(std::make_pair("content", Value(current_content)));
+					    section_values.push_back(std::make_pair("content", Value(body)));
 
 					    sections.push_back(Value::STRUCT(section_values));
 				    }
@@ -1637,7 +1648,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 
 				    if (element_type == Vocab::TYPE_HEADING) {
 					    // Flush previous section
-					    flush_section();
+					    flush_section(render_range(content_begin, i));
 
 					    // Get heading level: attribute takes priority, fall back to level field
 					    int32_t heading_level = 1;
@@ -1674,27 +1685,24 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 						    current_section_id = StringUtil::Lower(content);
 						    std::replace(current_section_id.begin(), current_section_id.end(), ' ', '-');
 					    }
-					    current_content.clear();
+					    content_begin = i + 1;
 				    } else if (element_type == Vocab::TYPE_METADATA || element_type == "frontmatter") {
 					    // Metadata becomes level 0 section
-					    flush_section();
+					    flush_section(render_range(content_begin, i));
 					    current_title = "";
 					    current_level = 0;
 					    current_section_id = "frontmatter";
-					    current_content = content;
-					    flush_section();
+					    flush_section(content);
 					    current_title.clear();
-					    current_content.clear();
-				    } else {
-					    // Append rendered content to current section
-					    current_content +=
-					        RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
+					    content_begin = i + 1;
 				    }
+				    // Anything else is section content, rendered as a range when the
+				    // section is flushed rather than one element at a time.
 				    i++;
 			    }
 
 			    // Flush final section
-			    flush_section();
+			    flush_section(render_range(content_begin, list_children.size()));
 
 			    result.SetValue(row_idx, Value::LIST(LogicalType::STRUCT(child_list_t<LogicalType> {
 			                                             {"section_id", LogicalType::VARCHAR},
