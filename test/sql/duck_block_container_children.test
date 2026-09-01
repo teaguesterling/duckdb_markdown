@@ -1,0 +1,73 @@
+# name: test/sql/duck_block_container_children.test
+# description: containers with BLOCK children keep their children, separated
+# group: [sql]
+
+require markdown
+
+# The direction that was never covered: this repo's READER through this repo's
+# writer. check_against_producer.py sends duck_block_utils' output through the
+# writer, which is a different path and was always correct; the conformance rules
+# check validity and advisory shape, and neither can see two paragraphs run
+# together. So a multi-paragraph blockquote was flattened by a text extractor
+# into "quoted parasecond para" with nothing objecting.
+#
+# Asserted as the ABSENCE of the concatenation as well as the presence of the
+# words: "quoted parasecond para" contains both "quoted" and "second", so a
+# words-survive assertion passes on the destroyed output. The separator is the
+# property, so the separator is what gets pinned.
+
+# Two paragraphs in a blockquote stay two paragraphs
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> quoted para\n>\n> second para\n')) NOT LIKE '%parasecond%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> quoted para\n>\n> second para\n')) = E'> quoted para\n>\n> second para\n\n';
+----
+true
+
+# A list inside a blockquote survives as a list, not as run-together text
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> - one\n> - two\n')) NOT LIKE '%onetwo%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> - one\n> - two\n')) = E'> - one\n> - two\n\n';
+----
+true
+
+# Inline formatting inside a quoted paragraph survives
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> has **bold** text\n')) = E'> has **bold** text\n\n';
+----
+true
+
+# A heading inside a blockquote is a block child, not flattened prose
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> # Quoted heading\n>\n> body\n')) NOT LIKE '%headingbody%';
+----
+true
+
+# The blockquote itself carries no content of its own once it has block children
+query I
+SELECT coalesce(content, '') = ''
+FROM read_markdown_blocks('test/data/blockquote_multi.md') WHERE element_type = 'blockquote';
+----
+true
+
+# ...and its children are there, one level deeper
+query I
+SELECT string_agg(content, '|' ORDER BY element_order)
+FROM read_markdown_blocks('test/data/blockquote_multi.md') WHERE element_type = 'paragraph';
+----
+quoted para|second para
+
+# Round-trip is stable, not merely lossless on the first pass
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+         duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> quoted para\n>\n> second para\n'))))
+     = duck_blocks_to_md(parse_markdown_to_duck_blocks(e'> quoted para\n>\n> second para\n'));
+----
+true

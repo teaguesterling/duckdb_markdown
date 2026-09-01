@@ -1,0 +1,743 @@
+# name: test/sql/duck_block_structural.test
+# description: Structural list and blockquote containers (duck_block spec 1.2)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Spec 1.2 made `list` and `blockquote` structural: the container carries no
+# content, and its blocks follow as children by level. The previous shape
+# packed the whole thing into JSON content, which is still emitted by released
+# producers -- so BOTH forms have to work, and duck_block_containers.test pins
+# the JSON one.
+#
+# Shapes are verbatim pandoc_ast_to_blocks() output from duck_block_utils 1.2.
+# =============================================================================
+
+# Structural bullet list: the item's text lives in its child paragraph
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'alpha', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'beta', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'- alpha\n- beta\n\n';
+----
+true
+
+# Ordered list numbers from the container's start attribute
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '3', 'number_style': 'Decimal', 'number_delim': 'Period'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'one', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'two', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'3. one\n4. two\n\n';
+----
+true
+
+# number_style and number_delim are honoured, so iii) does not come back as 3.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '3', 'number_style': 'LowerRoman', 'number_delim': 'OneParen'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'one', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'two', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'iii) one\niv) two\n\n';
+----
+true
+
+# Upper alpha
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '2', 'number_style': 'UpperAlpha', 'number_delim': 'Period'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'x', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'B. x\n\n';
+----
+true
+
+# A nested list indents under its parent item
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list', content: NULL, level: 3, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 3}, {kind: 'block', element_type: 'list_item', content: NULL, level: 4, encoding: 'text', attributes: MAP{}, element_order: 4}, {kind: 'block', element_type: 'paragraph', content: 'inner', level: 5, encoding: 'text', attributes: MAP{}, element_order: 5}]) = E'- a\n\n  - inner\n\n';
+----
+true
+
+# Structural blockquote: children are blocks, and the quote marker survives
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q1', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'q2', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'> q1\n>\n> q2\n\n';
+----
+true
+
+# Content following a structural container is not swallowed by it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'after', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'> q\n\nafter\n\n';
+----
+true
+
+# A list_item met without its container still renders as a bullet
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list_item', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'orphan', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'- orphan\n\n';
+----
+true
+
+# The spec spells "no content of its own" two ways -- the block builders write
+# NULL, the Pandoc reader writes an empty string -- and says to treat both as
+# absent. Every other case here uses NULL, so this pins the other spelling.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'> q\n\n';
+----
+true
+
+# ...and for a list, whose container and items are both content-free
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '', level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: '', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
+----
+true
+
+# A top-level block records NULL today, but this writer normalises NULL to
+# depth 1, so an explicit level 1 is indistinguishable from it. That is worth
+# pinning as a property of the walk rather than left as a coincidence: it is
+# what makes the walk indifferent to whether a producer spells top level as
+# NULL or as 1.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}])
+     = duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]);
+----
+true
+
+# The same for a list, whose item level is derived from its container's
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
+----
+true
+
+# A fully-levelled paragraph with nested inlines, no NULLs anywhere
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'italic', content: NULL, level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'in', level: 4, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'a ***in***\n\n';
+----
+true
+
+# =============================================================================
+# KNOWN HAZARD, pinned deliberately so the fix is a decision and not a surprise.
+#
+# A heading takes its rank from attributes['heading_level'], falling back to the
+# `level` field when that attribute is absent. Under spec <= 2.0 that fallback
+# is a reasonable reading of malformed data: the spec says headings carry NULL
+# in `level`, so a populated one was most likely a producer putting rank there.
+#
+# Spec 3.0 makes `level` explicit structural depth for EVERY element, never
+# semantic. Then this fallback reads a heading's DEPTH as its RANK -- a heading
+# inside two containers becomes h3 regardless of what it is. That is the same
+# class as the over-nested blockquote 3.0 found in webbed.
+#
+# Not changed yet: 3.0 is unpublished and not installable here, the fallback is
+# load-bearing for the headings in doc_inline.test, and conforming to a spec
+# that cannot yet be tested against is how a shape gets chased. These pin what
+# the writer does today so the blast radius is visible when 3.0 lands.
+# =============================================================================
+
+# heading_level is authoritative when present -- unaffected by 3.0 either way
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: 'T', level: 3, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0}]) = E'# T\n\n';
+----
+true
+
+# Without it, `level` is used as rank. Correct under <= 2.0, WRONG under 3.0,
+# where 3 would mean "nested three containers deep", not "h3".
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: 'T', level: 3, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'### T\n\n';
+----
+true
+
+# Quote depth, by contrast, is already structural and NOT read from `level`:
+# one blockquote nested inside two sections is one quote, not three.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'section', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'blockquote', content: NULL, level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 4, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'> q\n\n';
+----
+true
+
+# ...and a genuinely nested quote gets its second '>' from the nested element
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'blockquote', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'> > q\n\n';
+----
+true
+
+# `list_type` is CANONICAL for list orderedness; `ordered` is a legacy alias.
+# A boolean cannot grow, and the type set already wants values -- definition and
+# navigation lists -- that `ordered=false` can only say a list is not. Both
+# producers emit both names, so this only decides which wins on disagreement.
+# (This reversed an earlier ruling that `ordered` was canonical; the assertions
+# below are the current rule, not a claim it has always been so.)
+
+# Alias says not-ordered, canonical says ordered -- canonical wins
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'false', 'list_type': 'ordered'}, element_order: 0}]) = E'1. a\n\n';
+----
+true
+
+# Alias says ordered, canonical says bullet -- canonical wins
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true', 'list_type': 'bullet'}, element_order: 0}]) = E'- a\n\n';
+----
+true
+
+# The legacy alias alone is still read, for producers that emit only it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true'}, element_order: 0}]) = E'1. a\n\n';
+----
+true
+
+# An unrecognised list_type is not "ordered", so it renders as a bullet list
+# rather than numbering something that is neither
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'definition'}, element_order: 0}]) = E'- a\n\n';
+----
+true
+
+# The structural path applies the same precedence
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'false', 'list_type': 'ordered', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. a\n\n';
+----
+true
+
+# ...and still reads the legacy alias when the canonical name is absent
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. a\n\n';
+----
+true
+
+# `plain` is a spec 4.0 block type: a text run with no paragraph semantics,
+# which renders exactly as a paragraph would. It is not in this build's vendored
+# 2.0 vocabulary, so it reaches the unknown-block fallback -- and that fallback
+# emits content, so a tight list item keeps its text. Pinned because the cost of
+# not handling a new block type is CONTENT, not spacing: duck_block_utils lost
+# a tight item's text entirely to a type-name-driven walk.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'plain', content: 'x', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'x\n\n';
+----
+true
+
+# ...inside a tight list item
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'plain', content: 'x', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- x\n\n';
+----
+true
+
+# ...and inside a container, where a type-name-driven child walk would drop it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'x', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'> x\n\n';
+----
+true
+
+# =============================================================================
+# CONTAINER TYPE SWEEP.
+#
+# This writer's containers render whatever their child scope produces and never
+# consult a type name; only the leaf renderer switches on type, and its terminal
+# arm emits content. So the set of child types a container preserves is "all of
+# them", including ones this build has never heard of.
+#
+# That property was load-bearing and unasserted. duck_block_utils' container
+# child walk enumerated type names instead, and silently dropped table, deflist
+# and lineblock inside any div/blockquote/figure/caption -- for far longer than
+# the type that exposed it had existed. An enumeration has to be revisited for
+# every new type; a scope walk does not.
+#
+# WHAT THIS ACTUALLY COVERS, stated precisely because a sweep invites the
+# reading that it proves the general claim and it does not:
+#
+#   - each named type below renders inside a container TODAY (per-type
+#     regression cover, one assertion each so a failure names the type)
+#   - the content-preserving terminal arm, which is the half that generalises
+#     to types this build has never heard of
+#
+# `plain` carries that second half on its own: it is the only type here with no
+# branch of its own, so it is the one that fails if the terminal arm ever stops
+# emitting content. Verified by breaking that arm and watching this file fail --
+# a first attempt at that simulation was itself a no-op, because it was inserted
+# after branches that already caught the types it meant to break.
+# =============================================================================
+
+# heading survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'heading', content: 'H', level: 2, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 1}]) LIKE '%## H%';
+----
+true
+
+# paragraph survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'P', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%P%';
+----
+true
+
+# code survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'code', content: 'C', level: 2, encoding: 'text', attributes: MAP{'language': 'py'}, element_order: 1}]) LIKE '%```py%C%';
+----
+true
+
+# blockquote survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'blockquote', content: 'Q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%> Q%';
+----
+true
+
+# list survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'list', content: '["L"]', level: 2, encoding: 'json', attributes: MAP{'list_type': 'bullet'}, element_order: 1}]) LIKE '%- L%';
+----
+true
+
+# list_item survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'LI', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%- LI%';
+----
+true
+
+# deflist survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"T"}],[[{"t":"Para","c":[{"t":"Str","c":"D"}]}]]]]', level: 2, encoding: 'json', attributes: MAP{}, element_order: 1}]) LIKE '%T%: D%';
+----
+true
+
+# lineblock survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'lineblock', content: 'LB', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%LB%';
+----
+true
+
+# table survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'table', content: '{"headers":["TH"],"rows":[["TD"]]}', level: 2, encoding: 'json', attributes: MAP{}, element_order: 1}]) LIKE '%TH%TD%';
+----
+true
+
+# hr survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'hr', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%---%';
+----
+true
+
+# image survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'image', content: 'IMG', level: 2, encoding: 'text', attributes: MAP{'src': 'i.png'}, element_order: 1}]) LIKE '%![IMG](i.png)%';
+----
+true
+
+# raw survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'raw', content: 'RAW', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%RAW%';
+----
+true
+
+# generic survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'generic', content: NULL, level: 2, encoding: 'json', attributes: MAP{'source_type': 'GEN'}, element_order: 1}]) LIKE '%GEN%';
+----
+true
+
+# page_break survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'page_break', content: NULL, level: 2, encoding: 'text', attributes: MAP{'page_number': '7'}, element_order: 1}]) LIKE '%page break: 7%';
+----
+true
+
+# plain survives inside a container
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'PL', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%PL%';
+----
+true
+
+# =============================================================================
+# CLASS 1 -- a terminal arm that SKIPS rather than degrades.
+#
+# The structural list walk advanced past any child that was not an item, so a
+# list whose children are not list_items lost all of its content. Found by
+# applying duck_block_utils' sweep catalogue to this writer: "grep every walk
+# for a terminal else doing continue/j++/return rather than degrading".
+#
+# The decision the walk was making is whether a child EXISTS, and that must not
+# be keyed on the child matching a shape we recognise. Losing list structure is
+# a formatting cost; losing the text is a content cost.
+# =============================================================================
+
+# A list child that is not an item still renders
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'STRAY', level: 3, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%STRAY%';
+----
+true
+
+# ...alongside real items, which keep their markers
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'ITEM', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'STRAY', level: 4, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 4}, {kind: 'block', element_type: 'paragraph', content: 'TWO', level: 3, encoding: 'text', attributes: MAP{}, element_order: 5}]) LIKE '%ITEM%STRAY%- TWO%';
+----
+true
+
+# A child type nobody has heard of, directly under a list, is not dropped
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'futuretype', content: 'KEPT', level: 3, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%KEPT%';
+----
+true
+
+# =============================================================================
+# CLASS 2 -- write-only types, adapted for a writer: render, parse back, render
+# again, and compare. Ten of eleven content-bearing types survive unchanged.
+#
+# NON-DEFECT, RECORDED SO THE SWEEP CANNOT RE-RAISE IT.
+#
+# `deflist` does not survive, and it should not. This writer emits Markdown
+# Extra / Pandoc definition-list syntax:
+#
+#     T
+#     : D
+#
+# and this extension's parser is CommonMark, which has no definition-list
+# syntax at all -- so that re-parses as ONE paragraph with a softbreak, and a
+# softbreak renders as a space, giving "T : D". The words survive; the line
+# structure does not.
+#
+# That is inherent to the target format rather than a defect to fix: a round
+# trip can only restore what the encoding carried, and CommonMark has nowhere
+# to carry "this is a definition list". Encoding it differently would lose the
+# deflist-ness just as completely while also being worse markdown. The same
+# distinction duck_block_utils drew for block `image`, which Pandoc cannot
+# express either -- and where "fixing" the asymmetry destroyed the alt text.
+# =============================================================================
+
+# The words survive the round trip even though the line structure does not
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"T"}],[[{"t":"Para","c":[{"t":"Str","c":"D"}]}]]]]', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}])::VARCHAR)) LIKE '%T%D%';
+----
+true
+
+# The first pass is, and stays, real definition-list syntax
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"T"}],[[{"t":"Para","c":[{"t":"Str","c":"D"}]}]]]]', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) = E'T\n: D\n\n';
+----
+true
+
+# Every other content-bearing type round-trips byte-identically
+query I
+SELECT bool_and(rt) FROM (
+  SELECT duck_blocks_to_md([b]) = duck_blocks_to_md(parse_markdown_to_duck_blocks(duck_blocks_to_md([b])::VARCHAR)) AS rt
+  FROM (SELECT unnest([
+    {kind: 'block', element_type: 'heading',    content: 'H',   level: 1, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 0},
+    {kind: 'block', element_type: 'paragraph',  content: 'P',   level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'code',       content: 'C',   level: 1, encoding: 'text', attributes: MAP{'language': 'py'}, element_order: 0},
+    {kind: 'block', element_type: 'blockquote', content: 'Q',   level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'lineblock',  content: 'LB',  level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'hr',         content: NULL,  level: 1, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'block', element_type: 'image',      content: 'IMG', level: 1, encoding: 'text', attributes: MAP{'src': 'i.png'}, element_order: 0},
+    {kind: 'block', element_type: 'plain',      content: 'PL',  level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}
+  ]) AS b));
+----
+true
+
+# =============================================================================
+# SPEC 5.0 shapes, measured against this build and pinned. Neither is migrated:
+# 5.0 is unpublished and cannot be exercised against a real producer here.
+# =============================================================================
+
+# TABLE: 5.0 moves the native {"headers","rows"} schema into content and parks
+# the Pandoc tuple in a `pandoc_ast` attribute. This writer already renders the
+# native schema and ignores attributes it does not know, so a 5.0 table renders
+# correctly with no change -- verified rather than assumed.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'table', content: '{"headers":["A","B"],"rows":[["c1","c2"]]}', level: 1, encoding: 'json', attributes: MAP{'pandoc_ast': '[["",[],[]],[null,[]],[],[],[],[]]'}, element_order: 0}]) = E'| A | B |\n|---|---|\n| c1 | c2 |\n\n';
+----
+true
+
+# DEFINITION LIST: 5.0 dropped the `deflist` type and expresses one as a `list`
+# with list_type='definition', items tagged role='term'/'definition'.
+#
+# This was RENDERED AS BULLETS for several hours, deliberately: the fix looked
+# trivial, but a mis-guess would have rendered WORSE than the degradation --
+# had the real shape omitted roles, or nested definitions under their terms,
+# keying on role would have produced "Term\nDef", one paragraph with the list
+# gone, where bullets at least kept two items. It was held until the shape
+# could be MEASURED off a live producer rather than read from a description.
+#
+# Now migrated on that measurement, and the caution was warranted: producing
+# the sample turned up three defects upstream, so the shape being guessed at
+# was wrong in three ways at the time it would have been guessed. The loose,
+# multi-block case below is one of them -- a definition emitted only its first
+# block, so "a second block" did not exist to render until it was fixed.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'Term\n:   Def\n\n';
+----
+true
+
+# Both the term and the definition reach the output -- the property that had to
+# hold while the formatting was still degraded, and still has to
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) LIKE '%Term%Def%';
+----
+true
+
+# =============================================================================
+# A list_item may carry its text DIRECTLY rather than in a paragraph child.
+#
+# Spec 2.0 said a container never carries content of its own, and the
+# structural list path was written to that: it renders each item's child scope
+# and ignores the item's own content. duck_block_utils warned that rule might
+# be pulled back to v1's -- content populated iff there is a single text child
+# -- and the live producer does exactly that, so:
+#
+#   list_item(2) content='tight', no children   ->   "-"     the word was GONE
+#
+# Both shapes have to read. The item's children are its content when it has
+# any; its own content is its content when it does not.
+# =============================================================================
+
+# A content-bearing item keeps its text
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'tight', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'- tight\n\n';
+----
+true
+
+# Two of them, numbered when the list is ordered
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'one', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'two', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. one\n3. two\n\n';
+----
+true
+
+# The container shape still works, and children win when both are present
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'child', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- child\n\n';
+----
+true
+
+# Mixed: one item of each shape in the same list
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'flat', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'nested', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'- flat\n- nested\n\n';
+----
+true
+
+# =============================================================================
+# SPEC 6.1: the content rule is SIBLING-DEPENDENT. Whether a text run becomes
+# its container's `content` or stays a `plain` child depends on what FOLLOWS
+# it, which a reader emitting as it walks cannot know when it reaches the run.
+# Upstream exports duck_blocks_normalize() so producers emit the naive shape
+# and fold it afterwards.
+#
+# That is a PRODUCER concern. What matters to this writer is that both shapes
+# render the same, so it never needs to care which one it was handed --
+# verified against the real normalize pass, which folded the first item and
+# left the second `plain` alone because it sits beside block siblings.
+#
+# The equivalence was true incidentally; these assert it.
+# =============================================================================
+
+# The naive shape: every text run as a `plain` child
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'plain', content: 'tight', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}])
+     = duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'tight', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]);
+----
+true
+
+# A `plain` beside block siblings is legitimate and survives normalisation
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: NULL, level: 1, encoding: 'text', attributes: MAP{'role': 'section'}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'Lead', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'heading', content: 'H', level: 2, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2}]) = E'Lead\n\n## H\n\n';
+----
+true
+
+# =============================================================================
+# SENTINEL SWEEP -- every block type, content set, NO attributes, straight to
+# the writer. A round trip cannot find this class: it proves the reader/writer
+# pair is self-consistent, which is not the property anyone wants. Only a probe
+# that skips the reader does. Confirmed in two other codebases before this one.
+#
+# Seven types did not emit their content. Three are cleared, with reasoning,
+# because an unexplained exclusion and a forgotten defect look identical later:
+#
+#   hr, page_break   markers with no text position; `---` and the comment ARE
+#                    the whole element. Content is meaningless for them.
+#   generic          content is a verbatim source fragment, deliberately not
+#                    emitted -- it would put raw AST in the document. The
+#                    source_type comment is what carries it. Pinned above.
+#
+# Four were real: div, section, figure and caption dropped their own content.
+# Spec 6.0's rule is that a container whose only child is a text run carries
+# that text in its OWN content -- the same rule that had list_item dropping
+# text. That was fixed for list_item alone, so this is the same defect
+# surviving in four more places because only the reported instance was fixed.
+# =============================================================================
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: 'SENTINEL', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) LIKE '%SENTINEL%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: 'SENTINEL', level: 1, encoding: 'text', attributes: MAP{'role': 'aside'}, element_order: 0}]) LIKE '%SENTINEL%';
+----
+true
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: 'SENTINEL', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) LIKE '%SENTINEL%';
+----
+true
+
+# A caption carrying its own text is still marked as a caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'caption', content: 'Fig one.', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'*Fig one.*\n\n';
+----
+true
+
+# Containers WITH children are unaffected -- children still win
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'child', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'child\n\n';
+----
+true
+
+# ...including a caption, which keeps rendering its child scope
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAP', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'BODY\n\n*CAP*\n\n';
+----
+true
+
+# =============================================================================
+# DEFINITION LISTS, spec 6.1. Previously degraded to bullets deliberately,
+# because guessing the shape risked rendering worse than the safe fallback.
+# Shape below is a verbatim measurement of the live producer, not a reading of
+# its description -- terms and definitions are SIBLINGS at the same level,
+# paired by order, and one term may own several definitions.
+# =============================================================================
+
+# A term with one tight definition
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'HTTP', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'hypertext transfer protocol', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}]) = E'HTTP\n:   hypertext transfer protocol\n\n';
+----
+true
+
+# One term, TWO separate definitions -- distinct from one definition of two blocks
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'DNS', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'sense one', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: 'sense two', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}]) = E'DNS\n:   sense one\n:   sense two\n\n';
+----
+true
+
+# A loose definition of two blocks -- continuation indented under the marker
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'TLS', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'transport layer security', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'a second block', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'TLS\n:   transport layer security\n\n    a second block\n\n';
+----
+true
+
+# Several terms in one list, blank line between groups
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'A', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'a1', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: 'B', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 3}, {kind: 'block', element_type: 'list_item', content: 'b1', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 4}]) = E'A\n:   a1\n\nB\n:   b1\n\n';
+----
+true
+
+# A definition list whose items carry no roles degrades to terms rather than
+# vanishing -- the safe direction if a producer omits them
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'no role', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%no role%';
+----
+true
+
+# Bullet and ordered lists are untouched by the definition path
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'x', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}]) = E'- x\n\n';
+----
+true
+
+# =============================================================================
+# LINE BLOCKS carry their lines two ways. A plain-text line block joins them
+# with newlines in `content`; one containing rich inlines carries them as
+# children, with `linebreak` inlines between the lines -- because flattening
+# rich content to text DESTROYED it upstream (bold vanished, a link left the
+# line empty), which is why that changed.
+#
+# Both reach this writer as content by the time the lineblock branch sees them,
+# since a block absorbs its inline run. But the rich form arrives with the hard
+# breaks ALREADY rendered, so re-adding them produced four trailing spaces
+# rather than two. Still a hard break to a reader, and still wrong.
+# =============================================================================
+
+# Plain text: lines joined with newlines, one hard break each
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: E'Roses are red\nViolets are blue', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'Roses are red  \nViolets are blue\n\n';
+----
+true
+
+# Rich: the run arrives with its breaks already rendered; exactly two spaces
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'plain ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: 'bold', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'second line', level: 2, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'plain **bold**  \nsecond line\n\n';
+----
+true
+
+# A link in a line block survives, and does not leave the line empty
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'link', content: 'anchor', level: 2, encoding: 'text', attributes: MAP{'href': 'http://x'}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'after', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'[anchor](http://x)  \nafter\n\n';
+----
+true
+
+# =============================================================================
+# BREAK CONSTRUCTORS. A hard break and a soft break are distinct, and both were
+# being destroyed upstream -- a hard break came back as a raw newline inside a
+# text run, a soft break vanished entirely -- because the predicate choosing
+# between flat content and inline children counted both as text. A run with a
+# break now carries children, where the distinction can live.
+#
+# Ordinary prose does NOT grow children, which matters as much as the fix: a
+# change that moved every paragraph to inline children would satisfy every
+# round-trip assertion while rewriting every document. Asserted here from this
+# writer's side -- a paragraph with plain content still renders as plain text.
+# =============================================================================
+
+# Hard break: two trailing spaces, the markdown that means a line break
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'alpha', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'beta', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'alpha  \nbeta\n\n';
+----
+true
+
+# Soft break: a bare newline, which is NOT the same thing
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'alpha', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'softbreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'beta', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'alpha\nbeta\n\n';
+----
+true
+
+# The two are distinguishable in the output, which is the whole point
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}])
+    <> duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'softbreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]);
+----
+true
+
+# Ordinary prose keeps flat content and renders as plain text
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'just a plain paragraph here', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'just a plain paragraph here\n\n';
+----
+true
+
+# =============================================================================
+# A FIGURE'S CAPTION IS NOT EMITTED TWICE.
+#
+# `![alt](src)` already carries that text: a reader infers a figure AND its
+# caption from a lone image, so emitting the caption as a separate italic line
+# says it twice -- and re-reading that output produces a figure whose caption
+# is the alt PLUS a stray italic paragraph, so a further copy is added on every
+# pass. Markdown has one slot for that text and this filled two.
+#
+# Suppressed only when the caption is textually the alt, which is the case
+# markdown itself produces. A caption that says something the alt does not is
+# information the image syntax cannot carry, so it is still emitted.
+# =============================================================================
+
+# Caption equal to the alt: the image syntax carries it, so no second copy
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'A caption', level: 3, encoding: 'text', attributes: MAP{'alt': 'A caption', 'src': 'img.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: 'A caption', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'![A caption](img.png)\n\n';
+----
+true
+
+# A caption saying something the alt does not is still emitted
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'alt', level: 3, encoding: 'text', attributes: MAP{'alt': 'alt', 'src': 'i.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: 'Figure 1. Something else.', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'![alt](i.png)\n\n*Figure 1. Something else.*\n\n';
+----
+true
+
+# A figure with no caption is unaffected
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'a', level: 3, encoding: 'text', attributes: MAP{'alt': 'a', 'src': 'i.png'}, element_order: 2}]) = E'![a](i.png)\n\n';
+----
+true
+
+# A caption outside a figure is still marked as a caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'caption', content: 'standalone', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'*standalone*\n\n';
+----
+true
+
+# A figure holding a caption but no image keeps the caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'body', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: 'the caption', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'body\n\n*the caption*\n\n';
+----
+true
+
+# Content after the figure still renders
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'a', level: 3, encoding: 'text', attributes: MAP{'alt': 'a', 'src': 'i.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'after', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'![a](i.png)\n\nafter\n\n';
+----
+true

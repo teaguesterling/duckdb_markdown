@@ -1,0 +1,77 @@
+# name: test/sql/duck_block_toml_frontmatter.test
+# description: TOML (+++) frontmatter is recognised, preserved verbatim, and re-fenced as TOML
+# group: [sql]
+
+require markdown
+
+# `+++` is Hugo's default. Until 2026-09-01 it was unrecognised, and the failure
+# was not a missing feature -- the fence fell through to cmark as ordinary prose,
+# where softbreak-renders-as-space is correct, so a round-trip flattened the
+# whole block onto one line. TOML is line-oriented, so the fields were not merely
+# misfiled, they were unrecoverable.
+
+# The block is metadata, verbatim, with the encoding the fence implies
+query IIII
+SELECT e.element_type, e.encoding, e.attributes['role'], replace(e.content, chr(10), '|')
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'+++\ntitle = "Hugo"\ntags = ["a"]\n+++\n\nBody.\n')) AS e)
+WHERE e.element_type = 'metadata';
+----
+metadata	toml	frontmatter	title = "Hugo"|tags = ["a"]
+
+# REGRESSION: the body is its own block, and the fence is not in it
+query II
+SELECT e.element_type, e.content
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'+++\ntitle = "Hugo"\n+++\n\nBody.\n')) AS e)
+WHERE e.element_type = 'paragraph';
+----
+paragraph	Body.
+
+# REGRESSION: the flattened form must never appear again
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'+++\ntitle = "Hugo"\ntags = ["a"]\n+++\n\nBody.\n'))
+       NOT LIKE '%+++ title%';
+----
+true
+
+# The fence follows the ENCODING. Writing `---` around a TOML body would be worse
+# than not recognising it: the bytes would parse cleanly as the wrong format.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'+++\ntitle = "Hugo"\n+++\n\nBody.\n'))
+     = e'+++\ntitle = "Hugo"\n+++\n\nBody.\n\n';
+----
+true
+
+# YAML is unaffected -- still `---`, still yaml
+query II
+SELECT e.encoding, duck_blocks_to_md(parse_markdown_to_duck_blocks(e'---\ntitle: Y\n---\n\nBody.\n'))
+     = e'---\ntitle: Y\n---\n\nBody.\n\n'
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'---\ntitle: Y\n---\n\nBody.\n')) AS e)
+WHERE e.element_type = 'metadata';
+----
+yaml	true
+
+# A writer given encoding='toml' emits the TOML fence
+query I
+SELECT replace(duck_block_to_md({kind: 'block', element_type: 'metadata', content: 'a = 1', level: 1,
+                         encoding: 'toml', attributes: MAP{'role': 'frontmatter'}, element_order: 0}), chr(10), '|');
+----
++++|a = 1|+++||
+
+# The raw extractor sees it
+query I
+SELECT md_extract_frontmatter(e'+++\ntitle = "Hugo"\n+++\n\nBody.\n');
+----
+title = "Hugo"
+
+# The line-split key/value reader follows the fence: `=` for TOML, `:` for YAML
+query II
+SELECT md_extract_metadata(e'+++\ntitle = "Hugo"\n+++\n\nB.\n')['title'],
+       md_extract_metadata(e'---\ntitle: Yaml\n---\n\nB.\n')['title'];
+----
+Hugo	Yaml
+
+# An unterminated TOML fence is not frontmatter, and must not eat the document
+query I
+SELECT md_extract_frontmatter(e'+++\ntitle = "Hugo"\n\nBody.\n') IS NULL;
+----
+true

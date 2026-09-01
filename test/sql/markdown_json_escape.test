@@ -69,15 +69,21 @@ WHERE b.element_type = 'table';
 ----
 {"headers": ["a", "b"], "rows": [["he said \"hi\"", "c:\\tmp"]]}
 
-# The list path escapes the same set (it always did) -- kept so the two paths
-# are pinned side by side and cannot drift apart again.
-query I
-SELECT b.content
+# The list path is no longer a JSON path. Items are list_item children with
+# their text in paragraph content, so control characters need no escaping and
+# are carried VERBATIM -- a tab stays a tab rather than becoming a two-character
+# escape that only a JSON reader can undo. `table` is now the only JSON producer
+# here, which is why the escaping above is pinned on it alone.
+#
+# Rendered visible below only because sqllogictest splits result columns on tab.
+query II
+SELECT b.element_type, replace(replace(b.content, chr(9), '<TAB>'), chr(1), '<SOH>')
 FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
         '- x' || chr(9) || 'y' || chr(10) || '- z' || chr(1) || 'w')) b)
-WHERE b.element_type = 'list';
+WHERE b.element_type = 'paragraph';
 ----
-["x\ty", "z\u0001w"]
+paragraph	x<TAB>y
+paragraph	z<SOH>w
 
 # =============================================================================
 # UNESCAPE side: the mirror-image gap. duck_blocks_to_md has to read those

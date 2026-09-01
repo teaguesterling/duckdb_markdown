@@ -5,6 +5,10 @@ duckdb_unittest_tempdir/
 .DS_Store
 testext
 test/python/__pycache__/
+# The WATCHED notes in scripts/ invite importing those checks as modules to
+# fire a branch by hand, which regenerates this next to them.
+__pycache__/
+*.pyc
 .Rhistory
 make.out
 test_output/

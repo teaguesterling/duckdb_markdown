@@ -1,0 +1,54 @@
+# name: test/sql/duck_block_sections_agreement.test
+# description: duck_blocks_to_sections must render structure the same way duck_blocks_to_md does
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# AGREEMENT GUARD, after duck_block_utils' renderer/extractor guard.
+#
+# This extension has TWO independent walks over the same block list:
+# duck_blocks_to_md and duck_blocks_to_sections. Every structural fix made
+# today lives in the shared range renderer, which the sections walk did not
+# use -- it rendered element by element. So a structural list came out of the
+# writer as "- LISTWORD" and out of sections as a bullet with no text followed
+# by loose prose. The text survived, which is why a presence-only guard passes
+# and why this needs to compare RENDERING, not merely containment.
+#
+# The invariant: for a document with no headings, the single section's content
+# is exactly what the writer produces.
+# =============================================================================
+
+# Structural list
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'LISTWORD', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}])[1].content)::VARCHAR
+     = duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'LISTWORD', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}])::VARCHAR;
+----
+true
+
+# Structural blockquote
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'QUOTEWORD', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}])[1].content)::VARCHAR
+     = duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'QUOTEWORD', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}])::VARCHAR;
+----
+true
+
+# A block whose text is a run of inline children
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}])[1].content)::VARCHAR
+     = duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}])::VARCHAR;
+----
+true
+
+# A figure caption, which the writer italicises
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAPWORD', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}])[1].content)::VARCHAR
+     = duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAPWORD', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}])::VARCHAR;
+----
+true
+
+# Content under a heading agrees too, and the heading still splits the section
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0}, {kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'LISTWORD', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}])[1].content)::VARCHAR = E'- LISTWORD\n\n';
+----
+true

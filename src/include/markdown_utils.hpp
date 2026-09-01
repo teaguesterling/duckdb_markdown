@@ -124,11 +124,16 @@ std::string ExtractSection(const std::string &markdown_str, const std::string &s
 //===--------------------------------------------------------------------===//
 
 struct MarkdownBlock {
-	std::string kind = "block"; // 'block' or 'inline' (structured inline children)
-	std::string block_type;     // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
-	std::string content;        // Primary content ("" for containers with structured children)
-	int32_t level;              // Heading level (1-6), nesting depth, or 0
-	std::string encoding;       // text, json, yaml, base64
+	// 'block' or 'inline' (structured inline children). These are the only two
+	// this reader produces; the vocabulary's third kind, 'value', carries
+	// document metadata and has no emission path here. Not a definition of the
+	// valid set -- a writer that treats "not inline" as "block" renders metadata
+	// as body prose, which is what that reading cost this extension.
+	std::string kind = "block";
+	std::string block_type; // heading, paragraph, code, blockquote, list, table, image, hr, html, raw, frontmatter
+	std::string content;    // Primary content ("" for containers with structured children)
+	int32_t level;          // Heading level (1-6), nesting depth, or 0
+	std::string encoding;   // text, json, yaml, base64
 	std::map<std::string, std::string> attributes; // language, id, class, etc.
 	int32_t block_order;                           // Optional ordering for table storage
 };

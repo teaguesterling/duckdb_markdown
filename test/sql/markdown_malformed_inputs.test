@@ -258,15 +258,17 @@ SELECT length(md_to_html(repeat('> ', 1000) || 'x')) > 0;
 ----
 true
 
-# 500 levels of list nesting is one top-level list block, and round-trips
-# back to markdown without throwing.
+# 500 levels of list nesting. This used to be ONE block: the reader emitted a
+# JSON array of item strings and skipped nested lists entirely, so 499 levels
+# were silently discarded and "1" looked like a tidy answer. Structural emission
+# keeps them -- 3 elements per level -- and still round-trips without throwing.
 query II
 SELECT len(parse_markdown_to_duck_blocks(md)),
        length(duck_blocks_to_md(parse_markdown_to_duck_blocks(md))) > 0
 FROM (SELECT string_agg(repeat('  ', i) || '- i', chr(10) ORDER BY i) AS md
       FROM range(0, 500) t(i));
 ----
-1	true
+1500	true
 
 # 200 nested emphasis delimiters on each side: GetInlineText walks this with a
 # depth guard (MAX_INLINE_DEPTH) rather than recursing without bound.

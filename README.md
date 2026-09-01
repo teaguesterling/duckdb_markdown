@@ -110,7 +110,7 @@ Reads Markdown files and returns one row per file.
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
-- `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:`, typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For real YAML, use the `yaml` extension's `read_yaml_frontmatter` — see [Frontmatter Handling](#frontmatter-handling).
+- `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:` (or the first `=` inside a `+++` TOML block), typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For real YAML, use the `yaml` extension's `read_yaml_frontmatter` — see [Frontmatter Handling](#frontmatter-handling).
 - `normalize_content := true` - Normalize Markdown content
 - `extract_extensions := NULL` - Opt-in add-on extractors (comma-separated VARCHAR; see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds `wikilinks` and/or `tags` `LIST<STRUCT>` columns to the output
 
@@ -124,13 +124,17 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-block `wikilinks` and/or `tags` columns extracted from each block's content.
 
-**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. With `extract_extensions`, the requested add-on columns are appended.
+**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. `level` is structural **depth**, minimum 1 — a heading's rank is `attributes['heading_level']`, not `level`. (`read_markdown_sections` has a `level` column too, but that one is heading rank, 0-6.) With `extract_extensions`, the requested add-on columns are appended.
 
 **Note on level vs heading_level:** For headings, the H1-H6 level is stored in `attributes['heading_level']` (preferred). If not present, the `level` field is used as a fallback.
 
-**Element Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `frontmatter`
+**Element Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `metadata`
 
-**Encoding:** `text` for plain content, `json` for structured content (lists, tables), `yaml` for frontmatter
+Frontmatter is emitted as `element_type = 'metadata'` with `attributes['role'] = 'frontmatter'`, carrying the raw text between the fences. Both dialects are recognised: `---` fences give `encoding = 'yaml'`, and Hugo-style `+++` fences give `encoding = 'toml'`. The fence is restored from the encoding on write, so a TOML document round-trips as TOML rather than being relabelled YAML. The type says it is a verbatim metadata blob; the role says which source construct produced it. (Before spec 6.2 this was `element_type = 'frontmatter'`, which was never a declared duck_block type. `duck_blocks_to_md` still accepts the old name so stored data keeps rendering.)
+
+**Encoding:** `text` for plain content, `json` for table content, `yaml`/`toml` for frontmatter.
+
+Lists are **structural**: a `list` carries no content of its own, and its items are `list_item` children with their text in `paragraph` blocks beneath them, one level deeper at each step (`list` → `list_item` → `paragraph` → inlines). Nested lists are `list` blocks inside a `list_item`. Before this, a list's items were packed into a JSON array in its `content`, which flattened inline formatting and discarded nested lists entirely.
 
 ```sql
 -- Parse document into blocks
@@ -175,7 +179,7 @@ Reads Markdown files and parses them into hierarchical sections.
 **Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `include_filepath := true` adds `file_path VARCHAR` column.
 
 **Notes:**
-- When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` delimiters as the content. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
+- When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` (or `+++`) delimiters as the content. This `level` is heading **rank** (0 for frontmatter, 1-6 for headings) and is a different measurement from `read_markdown_blocks`' `level`, which is structural **depth** and is 1 for every top-level element including frontmatter. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
 - The `section_path` column provides hierarchical navigation paths like `"parent/child/grandchild"`.
 - Fragment syntax `'file.md#section-id'` returns the matching section and all its descendants.
 
@@ -233,8 +237,8 @@ Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unkno
          (md_stats(content, exact := true)).link_count   -- cmark: real links only, references and autolinks included
   FROM read_markdown('docs/*.md');
   ```
-- **`md_extract_metadata(markdown)`** - Extract frontmatter as `MAP(VARCHAR, VARCHAR)`. This is a lightweight **line-split key/value** reader (each line split on the first `:`), *not* a full YAML parser — nested maps, lists, and multiline scalars are not interpreted. For real YAML — nested maps, lists, `|`/`>` blocks — use the `yaml` extension's `read_yaml_frontmatter`; see [Frontmatter Handling](#frontmatter-handling).
-- **`md_extract_frontmatter(markdown)`** - Extract the **raw** frontmatter block (the text between the `---` fences) as `VARCHAR`, or `NULL` when there is no frontmatter. Composes with `duckdb_yaml` for real YAML parsing without this extension carrying a YAML parser: e.g. `SELECT yaml(md_extract_frontmatter(content))`.
+- **`md_extract_metadata(markdown)`** - Extract frontmatter as `MAP(VARCHAR, VARCHAR)`. This is a lightweight **line-split key/value** reader (each line split on the first `:`, or the first `=` inside a `+++` TOML block), *not* a full YAML or TOML parser — nested maps, lists, and multiline scalars are not interpreted. For real YAML — nested maps, lists, `|`/`>` blocks — use the `yaml` extension's `read_yaml_frontmatter`; see [Frontmatter Handling](#frontmatter-handling).
+- **`md_extract_frontmatter(markdown)`** - Extract the **raw** frontmatter block (the text between the `---` or `+++` fences) as `VARCHAR`, or `NULL` when there is no frontmatter. Composes with `duckdb_yaml` for real YAML parsing without this extension carrying a YAML parser: e.g. `SELECT yaml(md_extract_frontmatter(content))`.
 - **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. With `include_subsections := true`, includes all nested content (full mode); default is minimal mode.
 - **`md_extract_sections(markdown, [min_level, max_level, content_mode])`** - Extract all sections as a list. Supports optional level filtering and content_mode ('minimal', 'full', 'smart').
 - **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
@@ -342,7 +346,7 @@ Convert document blocks to/from Markdown. These functions work with the `duck_bl
 **duck_block structure:**
 ```sql
 STRUCT(
-    kind          VARCHAR,              -- 'block' or 'inline'
+    kind          VARCHAR,              -- 'block', 'inline' or 'value' (metadata)
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
     level         INTEGER,              -- Document nesting depth (1 for top-level, 0 for frontmatter)
@@ -574,7 +578,7 @@ COPY blocks TO 'output.md' (FORMAT MARKDOWN, markdown_mode 'blocks');
 ```sql
 COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
     markdown_mode 'blocks',
-    kind_column 'kind',               -- Column with kind ('block' or 'inline', default: 'kind')
+    kind_column 'kind',               -- Column holding the kind (default: 'kind')
     element_type_column 'element_type',-- Column with element type (default: 'element_type')
     content_column 'content',          -- Column with block content (default: 'content')
     level_column 'level',              -- Column with level/depth (default: 'level')

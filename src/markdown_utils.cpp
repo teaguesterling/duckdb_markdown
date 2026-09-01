@@ -1,4 +1,6 @@
 #include "markdown_utils.hpp"
+#include "duck_block_vocabulary.hpp"
+#include <mutex>
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include <algorithm>
@@ -15,6 +17,8 @@
 
 namespace duckdb {
 
+using Vocab = DuckBlockVocabulary;
+
 namespace markdown_utils {
 
 //===--------------------------------------------------------------------===//
@@ -29,12 +33,13 @@ namespace markdown_utils {
 // not help. Every scanner below runs in O(n) with bounded stack usage.
 //===--------------------------------------------------------------------===//
 
-// Result of locating a leading YAML-style frontmatter block.
+// Result of locating a leading frontmatter block.
 struct FrontmatterMatch {
 	bool found = false;
 	size_t body_start = 0;  // offset of first byte of the frontmatter body
 	size_t body_len = 0;    // length of the body (delimiters excluded)
-	size_t after_close = 0; // offset just past the closing "---"
+	size_t after_close = 0; // offset just past the closing delimiter
+	char delimiter = '-';   // '-' for YAML (---), '+' for TOML (+++)
 };
 
 // A leading UTF-8 BOM (EF BB BF) is an encoding marker, not content. cmark
@@ -50,15 +55,24 @@ static size_t SkipBOM(const std::string &s) {
 	return 0;
 }
 
-// Faithful linear replacement for R"(^---\r?\n([\s\S]*?)\r?\n---)".
-// Requires the string to begin with "---" then \r?\n, then finds the earliest
-// following "\r?\n---". Returns the body between the delimiters. O(n), no
-// recursion.
-static FrontmatterMatch FindFrontmatter(const std::string &s) {
+// Faithful linear replacement for R"(^(---|\+\+\+)\r?\n([\s\S]*?)\r?\n\1)".
+// Requires the string to begin with the delimiter then \r?\n, then finds the
+// earliest following "\r?\n" + delimiter. Returns the body between them. O(n),
+// no recursion.
+//
+// `+++` is TOML frontmatter, which Hugo emits by default. It was not recognised
+// until 2026-09-01, and the failure was not a missing feature -- it was silent
+// CORRUPTION. Unrecognised, the fence fell through to cmark as ordinary prose,
+// where softbreak-renders-as-space is correct, so a round-trip flattened
+//     +++\ntitle = "x"\ntags = ["a"]\n+++
+// into one line. TOML is line-oriented, so the result is no longer parseable by
+// anything: the fields are not merely misfiled, they are unrecoverable.
+static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
 	FrontmatterMatch m;
-	// Opening delimiter: an optional BOM, then "---" then \r?\n
+	m.delimiter = d;
+	// Opening delimiter: an optional BOM, then the fence then \r?\n
 	const size_t b = SkipBOM(s);
-	if (s.size() < b + 4 || s[b] != '-' || s[b + 1] != '-' || s[b + 2] != '-') {
+	if (s.size() < b + 4 || s[b] != d || s[b + 1] != d || s[b + 2] != d) {
 		return m;
 	}
 	size_t p = b + 3;
@@ -71,9 +85,9 @@ static FrontmatterMatch FindFrontmatter(const std::string &s) {
 	p++; // start of body
 	size_t body_start = p;
 
-	// Closing delimiter: earliest '\n' immediately followed by "---".
+	// Closing delimiter: earliest '\n' immediately followed by the same fence.
 	while (p < s.size()) {
-		if (s[p] == '\n' && p + 4 <= s.size() && s[p + 1] == '-' && s[p + 2] == '-' && s[p + 3] == '-') {
+		if (s[p] == '\n' && p + 4 <= s.size() && s[p + 1] == d && s[p + 2] == d && s[p + 3] == d) {
 			size_t body_end = p; // at the '\n'
 			// The delimiter is \r?\n, so drop a trailing '\r' from the body.
 			if (body_end > body_start && s[body_end - 1] == '\r') {
@@ -82,12 +96,22 @@ static FrontmatterMatch FindFrontmatter(const std::string &s) {
 			m.found = true;
 			m.body_start = body_start;
 			m.body_len = body_end - body_start;
-			m.after_close = p + 4; // just past the closing "---"
+			m.after_close = p + 4; // just past the closing fence
 			return m;
 		}
 		p++;
 	}
 	return m;
+}
+
+// YAML first: `---` is by far the common case, and a document cannot open with
+// both fences, so the order is a cost question rather than a precedence one.
+static FrontmatterMatch FindFrontmatter(const std::string &s) {
+	auto m = FindFrontmatterDelimited(s, '-');
+	if (m.found) {
+		return m;
+	}
+	return FindFrontmatterDelimited(s, '+');
 }
 
 // JSON-escape a string per RFC 8259 for `encoding='json'` block content: the named short
@@ -140,6 +164,21 @@ static std::string EscapeJSONString(const std::string &s) {
 // TrimWhitespace stays: frontmatter parsing, wikilinks, tags and code-fence
 // info strings all still use it.
 
+// cmark-gfm's core-extension registration is NOT thread-safe: it allocates node
+// flag bits from a global counter, and two threads entering it at once fail with
+// "flag initialization error in cmark_register_node_flag". It was called on every
+// parse, from three sites, unguarded -- and DuckDB parallelises across rows, so a
+// query parsing several documents raced. Measured at 4 failures in 12 runs of a
+// nine-row query: intermittent, so it passed every single-document test forever.
+//
+// Registering exactly once, before any parse can proceed, is what cmark-gfm's own
+// documentation requires. std::call_once also gives the memory barrier, so a
+// thread that observes registration as done observes the registrations too.
+static void EnsureCmarkExtensionsRegistered() {
+	static std::once_flag cmark_extensions_once;
+	std::call_once(cmark_extensions_once, [] { cmark_gfm_core_extensions_ensure_registered(); });
+}
+
 //===--------------------------------------------------------------------===//
 // Core Conversion Functions
 //===--------------------------------------------------------------------===//
@@ -150,7 +189,7 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	}
 
 	// Initialize cmark-gfm
-	cmark_gfm_core_extensions_ensure_registered();
+	EnsureCmarkExtensionsRegistered();
 
 	// Parse options based on flavor
 	int options = CMARK_OPT_DEFAULT;
@@ -231,13 +270,18 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 	// (see FindFrontmatter) instead of a backtracking std::regex.
 	auto fm = FindFrontmatter(markdown_str);
 	if (fm.found) {
-		std::string yaml_content = markdown_str.substr(fm.body_start, fm.body_len);
+		std::string fm_content = markdown_str.substr(fm.body_start, fm.body_len);
 
-		// Basic YAML parsing for common fields (placeholder)
-		std::istringstream stream(yaml_content);
+		// Line-split key/value, NOT a parser -- see README. The separator follows
+		// the fence: YAML writes `key: value`, TOML writes `key = value`. Splitting
+		// TOML on ':' matched nothing and returned an empty map, which reads as
+		// "this document has no metadata" rather than "this reader does not split
+		// this dialect".
+		const char separator = (fm.delimiter == '+') ? '=' : ':';
+		std::istringstream stream(fm_content);
 		std::string line;
 		while (std::getline(stream, line)) {
-			auto colon_pos = line.find(':');
+			auto colon_pos = line.find(separator);
 			if (colon_pos != std::string::npos) {
 				std::string key = line.substr(0, colon_pos);
 				std::string value = line.substr(colon_pos + 1);
@@ -1046,6 +1090,154 @@ static void WalkInlines(cmark_node *container, int level, int32_t &order, std::v
 	}
 }
 
+// A list, emitted STRUCTURALLY: list -> list_item -> the item's own blocks.
+//
+// This replaced a JSON array of item strings, which was not merely a shape the
+// vocabulary dislikes -- it DESTROYED content. The old code carried the comment
+// "Nested list - skip for now, just get first text", and it meant exactly that:
+//
+//   - outer            ->   content ["outer", "second"]
+//     - inner one           inner one and inner two GONE
+//     - inner two
+//   - second
+//
+// and because each item was flattened with GetInlineText, `**bold**` came back
+// as bold, `code` lost its backticks, and a second paragraph in an item vanished.
+// Every check missed it because every list any of them tested was FLAT and
+// one paragraph deep.
+//
+// Levels descend one at a time, which the conformance rules require: list at L,
+// list_item at L+1, the item's paragraph at L+2, that paragraph's inlines at L+3.
+// A nested list is just a block child of its item, so it recurses at L+2.
+// Matches MAX_INLINE_DEPTH rather than the writer's absorption guard: this file's
+// convention is a limit high enough that pathological-but-real input parses, with
+// a clear error past it -- 1000 blockquotes and 200 nested emphasis are pinned as
+// NOT throwing. A lower limit here would have turned a 500-deep list from a
+// silent truncation into a hard error, trading one wrong answer for another.
+static constexpr int MAX_LIST_NESTING = 1000;
+
+static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                              bool structured_inlines, int depth);
+
+static void EmitListStructural(cmark_node *list_node, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                               bool structured_inlines, int depth = 0) {
+	if (depth > MAX_LIST_NESTING) {
+		throw InvalidInputException("Markdown list nesting exceeds maximum supported depth (%d)", MAX_LIST_NESTING);
+	}
+
+	const bool is_ordered = cmark_node_get_list_type(list_node) == CMARK_ORDERED_LIST;
+
+	MarkdownBlock lb;
+	lb.block_type = Vocab::TYPE_LIST;
+	lb.level = level;
+	lb.encoding = Vocab::ENCODING_TEXT;
+	lb.content = "";
+	lb.block_order = order++;
+	lb.attributes[Vocab::ATTR_LIST_TYPE] = is_ordered ? Vocab::LIST_TYPE_ORDERED : Vocab::LIST_TYPE_BULLET;
+	lb.attributes[Vocab::ATTR_ORDERED_LEGACY] = is_ordered ? "true" : "false";
+	if (is_ordered) {
+		lb.attributes["start"] = std::to_string(cmark_node_get_list_start(list_node));
+	}
+	out.push_back(lb);
+
+	for (cmark_node *item = cmark_node_first_child(list_node); item; item = cmark_node_next(item)) {
+		if (cmark_node_get_type(item) != CMARK_NODE_ITEM) {
+			continue;
+		}
+		MarkdownBlock ib;
+		ib.block_type = Vocab::TYPE_LIST_ITEM;
+		ib.level = level + 1;
+		ib.encoding = Vocab::ENCODING_TEXT;
+		ib.content = "";
+		ib.block_order = order++;
+		out.push_back(ib);
+
+		EmitBlockChildren(item, level + 2, order, out, structured_inlines, depth + 1);
+	}
+}
+
+// A container's BLOCK children, emitted as blocks rather than flattened to text.
+//
+// The old blockquote path ran GetInlineText over the whole container, which
+// concatenated its children with NO separator:
+//
+//   > quoted para          content: "quoted parasecond para"
+//   >
+//   > second para          -- words run together across the boundary
+//
+//   > - one                renders: "> onetwo"
+//   > - two                -- the list is destroyed outright
+//
+// Shared with list items so a list inside a quote and a quote inside a list are
+// handled by the same code rather than by two walks that can disagree.
+static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                              bool structured_inlines, int depth) {
+	if (depth > MAX_LIST_NESTING) {
+		throw InvalidInputException("Markdown block nesting exceeds maximum supported depth (%d)", MAX_LIST_NESTING);
+	}
+	for (cmark_node *c = cmark_node_first_child(container); c; c = cmark_node_next(c)) {
+		const cmark_node_type t = cmark_node_get_type(c);
+		if (t == CMARK_NODE_LIST) {
+			EmitListStructural(c, level, order, out, structured_inlines, depth + 1);
+			continue;
+		}
+		if (t == CMARK_NODE_BLOCK_QUOTE) {
+			MarkdownBlock qb;
+			qb.block_type = Vocab::TYPE_BLOCKQUOTE;
+			qb.level = level;
+			qb.encoding = Vocab::ENCODING_TEXT;
+			qb.content = "";
+			qb.block_order = order++;
+			out.push_back(qb);
+			EmitBlockChildren(c, level + 1, order, out, structured_inlines, depth + 1);
+			continue;
+		}
+
+		MarkdownBlock b;
+		b.level = level;
+		b.encoding = Vocab::ENCODING_TEXT;
+		b.block_order = order++;
+		bool walk = false;
+		if (t == CMARK_NODE_HEADING) {
+			b.block_type = Vocab::TYPE_HEADING;
+			b.content = GetInlineText(c);
+			b.attributes[Vocab::ATTR_HEADING_LEVEL] = std::to_string(cmark_node_get_heading_level(c));
+		} else if (t == CMARK_NODE_CODE_BLOCK) {
+			b.block_type = Vocab::TYPE_CODE;
+			const char *lit = cmark_node_get_literal(c);
+			b.content = lit ? lit : "";
+			while (!b.content.empty() && b.content.back() == '\n') {
+				b.content.pop_back();
+			}
+			const char *info = cmark_node_get_fence_info(c);
+			if (info && strlen(info) > 0) {
+				std::string info_str(info);
+				const size_t sp = info_str.find(' ');
+				b.attributes["language"] = sp == std::string::npos ? info_str : info_str.substr(0, sp);
+			}
+		} else if (t == CMARK_NODE_THEMATIC_BREAK) {
+			b.block_type = Vocab::TYPE_HR;
+			b.content = "";
+		} else {
+			// Paragraph, and anything else that carries inline content.
+			b.block_type = Vocab::TYPE_PARAGRAPH;
+			std::string simple;
+			if (structured_inlines && t == CMARK_NODE_PARAGRAPH && !SingleTextChild(c, simple)) {
+				b.content = "";
+				walk = true;
+			} else if (structured_inlines && t == CMARK_NODE_PARAGRAPH) {
+				b.content = simple;
+			} else {
+				b.content = GetInlineText(c);
+			}
+		}
+		out.push_back(b);
+		if (walk) {
+			WalkInlines(c, b.level + 1, order, out);
+		}
+	}
+}
+
 std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool structured_inlines) {
 	std::vector<MarkdownBlock> blocks;
 
@@ -1055,14 +1247,49 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 
 	int32_t block_order = 1;
 
-	// Check for frontmatter first
-	std::string frontmatter = ExtractRawFrontmatter(markdown_str);
+	// Check for frontmatter first. The MATCH is used rather than the extracted
+	// string because the fence determines the encoding: `---` is YAML, `+++` is
+	// TOML. Reporting TOML as 'yaml' would be a worse failure than the flattening
+	// this replaced -- it would hand a consumer bytes that parse cleanly as the
+	// wrong format rather than failing loudly.
+	auto fm_match = FindFrontmatter(markdown_str);
+	std::string frontmatter = fm_match.found ? markdown_str.substr(fm_match.body_start, fm_match.body_len) : "";
 	if (!frontmatter.empty()) {
+		// LEVEL 1, ruled by duck_block_utils at 2771e9e (they coordinate the spec;
+		// Teague routed the question there). `level` is depth, and 1 means NOT
+		// NESTED -- it is not a claim of depth inside something. A frontmatter blob
+		// sits at the top level of its document exactly as the first paragraph
+		// does, so 1 is what it shares with every other top-level element. There is
+		// nothing shallower than the top, so 0 has no referent, and the validator
+		// rejects it.
+		//
+		// This was held open as a breaking change to documented public API. That
+		// turned out to be wrong, and it is worth recording why so it is not
+		// re-litigated. MEASURED 2026-09-01, all three supposed dependents:
+		//
+		//   read_markdown_sections   level 0-6 is heading RANK, a DIFFERENT column
+		//                            on a different function -- unaffected, still 0
+		//   COPY document mode       "level = 0 as frontmatter" is that mode's own
+		//                            convention over (level, title, content)
+		//   duck_block writer        keys on element_type, not level: `metadata`
+		//                            renders as frontmatter at 0 and at 1 alike
+		//
+		// So nothing documented reads this column's 0. The block reader's `level`
+		// was ALREADY pure depth -- every top-level element carries 1 and heading
+		// rank lives in attributes['heading_level'] -- and frontmatter was the one
+		// row that disagreed with its own column.
 		MarkdownBlock fm_block;
-		fm_block.block_type = "frontmatter";
+		// `metadata` + role='frontmatter', declared in spec 6.2. `frontmatter` was
+		// never a vocabulary type -- one type plus a role attribute is the spec's
+		// own stated principle, "rather than minting a type per variant", and it
+		// keeps what the old name carried: the TYPE says which of the two metadata
+		// homes this is (a verbatim blob, not the kind='value' tree), the ROLE says
+		// which source construct it came from.
+		fm_block.block_type = Vocab::TYPE_METADATA;
+		fm_block.attributes[Vocab::ATTR_ROLE] = Vocab::ROLE_FRONTMATTER;
 		fm_block.content = frontmatter;
-		fm_block.level = 0;
-		fm_block.encoding = "yaml";
+		fm_block.level = 1;
+		fm_block.encoding = fm_match.delimiter == '+' ? Vocab::ENCODING_TOML : Vocab::ENCODING_YAML;
 		fm_block.block_order = block_order++;
 		blocks.push_back(fm_block);
 	}
@@ -1071,7 +1298,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	std::string body = StripFrontmatter(markdown_str);
 
 	// Parse with cmark-gfm (with extensions for tables)
-	cmark_gfm_core_extensions_ensure_registered(); // Must be called before finding extensions
+	EnsureCmarkExtensionsRegistered();
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
 
 	// Enable GFM extensions
@@ -1098,6 +1325,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		block.level = 1; // Document-level blocks have level=1
 		block.block_order = block_order++;
 		bool emit_inlines = false;            // structured inline children follow this block
+		bool emitted_directly = false;        // the case pushed its own elements (lists)
 		cmark_node *inline_container = child; // node whose inline children to walk
 
 		switch (node_type) {
@@ -1181,8 +1409,21 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 					emit_inlines = true;
 				}
 			} else if (structured_inlines) {
-				// Multi-block blockquote: flatten to plain text (no markdown syntax).
-				block.content = GetInlineText(child);
+				// More than one block child, or a child that is not a paragraph:
+				// emit them as BLOCKS. Flattening with GetInlineText concatenated
+				// them with no separator ("quoted para" + "second para" came back
+				// as "quoted parasecond para") and destroyed a nested list outright.
+				block.content = "";
+				block_order = block.block_order;
+				MarkdownBlock qb;
+				qb.block_type = Vocab::TYPE_BLOCKQUOTE;
+				qb.level = block.level;
+				qb.encoding = Vocab::ENCODING_TEXT;
+				qb.content = "";
+				qb.block_order = block_order++;
+				blocks.push_back(qb);
+				EmitBlockChildren(child, qb.level + 1, block_order, blocks, structured_inlines, 0);
+				emitted_directly = true;
 			} else {
 				// Legacy path: render blockquote content back to markdown, strip '>'.
 				char *md = cmark_render_commonmark(child, CMARK_OPT_DEFAULT, 0);
@@ -1214,55 +1455,11 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		}
 
 		case CMARK_NODE_LIST: {
-			block.block_type = "list";
-			block.level = 1;
-			block.encoding = "json";
-
-			cmark_list_type list_type = cmark_node_get_list_type(child);
-			block.attributes["ordered"] = (list_type == CMARK_ORDERED_LIST) ? "true" : "false";
-
-			if (list_type == CMARK_ORDERED_LIST) {
-				int start = cmark_node_get_list_start(child);
-				block.attributes["start"] = std::to_string(start);
-			}
-
-			// Build JSON array of list items
-			std::string json = "[";
-			bool first = true;
-			cmark_node *item = cmark_node_first_child(child);
-			while (item) {
-				if (cmark_node_get_type(item) == CMARK_NODE_ITEM) {
-					if (!first)
-						json += ", ";
-					first = false;
-
-					// Get text content of list item (from first paragraph child)
-					std::string item_text;
-					cmark_node *item_child = cmark_node_first_child(item);
-					while (item_child) {
-						if (cmark_node_get_type(item_child) == CMARK_NODE_PARAGRAPH) {
-							item_text = GetInlineText(item_child);
-							break;
-						} else if (cmark_node_get_type(item_child) == CMARK_NODE_LIST) {
-							// Nested list - skip for now, just get first text
-							break;
-						} else {
-							// Try to get inline text directly
-							std::string txt = GetInlineText(item_child);
-							if (!txt.empty()) {
-								item_text = txt;
-								break;
-							}
-						}
-						item_child = cmark_node_next(item_child);
-					}
-
-					json += "\"" + EscapeJSONString(item_text) + "\"";
-				}
-				item = cmark_node_next(item);
-			}
-			json += "]";
-			block.content = json;
+			// Rewind the order this iteration pre-allocated: the emitter numbers
+			// every element it produces, starting with the list itself.
+			block_order = block.block_order;
+			EmitListStructural(child, block.level, block_order, blocks, structured_inlines);
+			emitted_directly = true;
 			break;
 		}
 
@@ -1359,6 +1556,10 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		}
 		}
 
+		if (emitted_directly) {
+			child = cmark_node_next(child);
+			continue;
+		}
 		blocks.push_back(block);
 		if (emit_inlines) {
 			WalkInlines(inline_container, block.level + 1, block_order, blocks);
@@ -1562,7 +1763,7 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 	// The document is parsed whole, without stripping frontmatter, so
 	// line_number is an absolute line in the input -- matching ExtractLinks and
 	// ExtractImages, which also use cmark's native line tracking.
-	cmark_gfm_core_extensions_ensure_registered();
+	EnsureCmarkExtensionsRegistered();
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
 	if (!parser) {
 		return tables;
