@@ -691,3 +691,53 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'just a plain paragraph here', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'just a plain paragraph here\n\n';
 ----
 true
+
+# =============================================================================
+# A FIGURE'S CAPTION IS NOT EMITTED TWICE.
+#
+# `![alt](src)` already carries that text: a reader infers a figure AND its
+# caption from a lone image, so emitting the caption as a separate italic line
+# says it twice -- and re-reading that output produces a figure whose caption
+# is the alt PLUS a stray italic paragraph, so a further copy is added on every
+# pass. Markdown has one slot for that text and this filled two.
+#
+# Suppressed only when the caption is textually the alt, which is the case
+# markdown itself produces. A caption that says something the alt does not is
+# information the image syntax cannot carry, so it is still emitted.
+# =============================================================================
+
+# Caption equal to the alt: the image syntax carries it, so no second copy
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'A caption', level: 3, encoding: 'text', attributes: MAP{'alt': 'A caption', 'src': 'img.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: 'A caption', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'![A caption](img.png)\n\n';
+----
+true
+
+# A caption saying something the alt does not is still emitted
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'alt', level: 3, encoding: 'text', attributes: MAP{'alt': 'alt', 'src': 'i.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: 'Figure 1. Something else.', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'![alt](i.png)\n\n*Figure 1. Something else.*\n\n';
+----
+true
+
+# A figure with no caption is unaffected
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'a', level: 3, encoding: 'text', attributes: MAP{'alt': 'a', 'src': 'i.png'}, element_order: 2}]) = E'![a](i.png)\n\n';
+----
+true
+
+# A caption outside a figure is still marked as a caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'caption', content: 'standalone', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'*standalone*\n\n';
+----
+true
+
+# A figure holding a caption but no image keeps the caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'body', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: 'the caption', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'body\n\n*the caption*\n\n';
+----
+true
+
+# Content after the figure still renders
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'a', level: 3, encoding: 'text', attributes: MAP{'alt': 'a', 'src': 'i.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'after', level: 1, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'![a](i.png)\n\nafter\n\n';
+----
+true

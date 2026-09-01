@@ -1023,6 +1023,17 @@ static constexpr int MAX_DUCK_BLOCK_NESTING = 64;
 // RenderDuckBlocksToMarkdown (list of duck_blocks)
 //===--------------------------------------------------------------------===//
 
+static string DuckBlockElementType(const Value &block_value) {
+	if (block_value.IsNull()) {
+		return "";
+	}
+	auto &fields = StructValue::GetChildren(block_value);
+	if (fields.size() < DUCK_BLOCK_FIELD_COUNT || fields[Vocab::ELEMENT_TYPE_IDX].IsNull()) {
+		return "";
+	}
+	return fields[Vocab::ELEMENT_TYPE_IDX].ToString();
+}
+
 // Read an element's own content, for the walk. Absent is spelled two ways --
 // the builders write NULL, the Pandoc reader writes an empty string.
 static string DuckBlockContent(const Value &block_value) {
@@ -1299,6 +1310,52 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 						result += line.empty() ? ">\n" : "> " + line + "\n";
 					}
 					result += "\n";
+					last_was_inline = false;
+					i = scope_end;
+					continue;
+				}
+			}
+		}
+
+		// A figure's caption is often just the image's alt text -- markdown's own
+		// `![alt](src)` carries it, and a reader infers BOTH a figure and its
+		// caption from a lone image. Emitting the caption separately then says it
+		// twice, and re-reading that output yields the inferred caption plus a
+		// stray italic paragraph, so another copy accrues on every pass.
+		//
+		// Suppressed only when the caption IS the alt. A caption saying something
+		// the alt does not is information the image syntax cannot carry.
+		if (kind == Vocab::KIND_BLOCK && element_type == Vocab::TYPE_FIGURE && content.empty() &&
+		    depth < MAX_DUCK_BLOCK_NESTING) {
+			const idx_t scope_end = SkipElementScope(list_children, i, end);
+			const int32_t child_level = DuckBlockLevel(list_children[i]) + 1;
+			idx_t caption_begin = scope_end, caption_end = scope_end;
+			string alt;
+			for (idx_t j = i + 1; j < scope_end; j++) {
+				const string child_type = DuckBlockElementType(list_children[j]);
+				if (child_type == Vocab::TYPE_CAPTION && DuckBlockLevel(list_children[j]) == child_level &&
+				    caption_begin == scope_end) {
+					caption_begin = j;
+					caption_end = SkipElementScope(list_children, j, scope_end);
+				} else if (alt.empty() && child_type == Vocab::TYPE_IMAGE) {
+					alt = GetAttributeOf(list_children[j], "alt");
+					if (alt.empty()) {
+						alt = DuckBlockContent(list_children[j]);
+					}
+				}
+			}
+			if (caption_begin < scope_end && !alt.empty()) {
+				string caption_text =
+				    caption_end > caption_begin + 1
+				        ? RenderDuckBlockRange(list_children, caption_begin + 1, caption_end, depth + 1)
+				        : DuckBlockContent(list_children[caption_begin]);
+				StringUtil::Trim(caption_text);
+				if (caption_text == alt) {
+					if (last_was_inline) {
+						result += "\n\n";
+					}
+					result += RenderDuckBlockRange(list_children, i + 1, caption_begin, depth + 1);
+					result += RenderDuckBlockRange(list_children, caption_end, scope_end, depth + 1);
 					last_was_inline = false;
 					i = scope_end;
 					continue;

@@ -67,13 +67,6 @@ SCHEMA = ("STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INT
 # wrongness is what the sqllogictest suite is for. Three arms, three
 # properties, and none of them subsumes another.
 KNOWN_UNSTABLE = {
-    "figure": "this writer emits a figure's caption as a separate italic line, but "
-              "`![alt](src)` ALREADY carries that text -- a reader infers a figure "
-              "and its caption from a lone image, so the caption appears twice and "
-              "a further copy is added on every pass. A real defect in this writer, "
-              "not an inherent limit: markdown has one slot for that text and this "
-              "fills two. Unfixed -- suppressing the caption needs the caption "
-              "branch to know its sibling image's alt.",
 }
 
 CASES = [
