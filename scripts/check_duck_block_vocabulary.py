@@ -23,6 +23,16 @@ import urllib.request
 
 HEADER_REL = "src/include/duck_block_vocabulary.hpp"
 CONFORMANCE_REL = "conformance/duck_block_conformance.sql"
+# WATCHED, 2026-09-01. The second candidate has NEVER been taken: this repo
+# vendors, so find_local() always matches the first and returns. Unreached by
+# HISTORY rather than unreachable by construction -- nothing in the source shows
+# it, which is why a sweep for empty registries does not find this shape and only
+# looking for it does. (duck_block_utils' distinction; their sweep found their
+# one empty registry by parsing and missed the never-expired entries entirely.)
+#
+# Fired in isolation against a temp root:
+#   candidate 1 absent, candidate 2 present -> returns candidate 2
+#   neither present                         -> returns None (the exit at the end)
 LOCAL_CANDIDATES = [
     HEADER_REL,                                     # vendored (this repo)
     "third_party/duck_block_utils/" + HEADER_REL,   # submodule, if one is ever used
