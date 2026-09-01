@@ -61,3 +61,17 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list_item', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'orphan', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'- orphan\n\n';
 ----
 true
+
+# The spec spells "no content of its own" two ways -- the block builders write
+# NULL, the Pandoc reader writes an empty string -- and says to treat both as
+# absent. Every other case here uses NULL, so this pins the other spelling.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'> q\n\n';
+----
+true
+
+# ...and for a list, whose container and items are both content-free
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '', level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: '', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
+----
+true
