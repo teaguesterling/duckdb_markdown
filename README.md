@@ -124,7 +124,7 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 - `include_filepath := false` - Include file_path column in output (alias: `filename`)
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-block `wikilinks` and/or `tags` columns extracted from each block's content.
 
-**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. `level` is structural **depth**, minimum 1 — a heading's rank is `attributes['heading_level']`, not `level`. (`read_markdown_sections` has a `level` column too, but that one is heading rank, 0-6.) With `extract_extensions`, the requested add-on columns are appended.
+**Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. `level` is structural **depth**, minimum 1 — a heading's rank is `attributes['heading_level']`, not `level`. A heading carries both a flattened plain-text title in `content` (what `section_id` and the sections API read) and its formatted text as inline children, so `# **Bold** t` keeps its emphasis instead of collapsing to `# Bold t`. (`read_markdown_sections` has a `level` column too, but that one is heading rank, 0-6.) With `extract_extensions`, the requested add-on columns are appended.
 
 **Note on level vs heading_level:** For headings, the H1-H6 level is stored in `attributes['heading_level']` (preferred). If not present, the `level` field is used as a fallback.
 

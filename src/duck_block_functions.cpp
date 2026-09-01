@@ -1447,7 +1447,22 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			scope_end = SkipElementScope(list_children, i, end);
 		}
 		bool consumed_children = false;
-		if (content.empty() && scope_end > i + 1 && depth < MAX_DUCK_BLOCK_NESTING &&
+		// A HEADING absorbs its inline run even though it has content of its own:
+		// its content is the flattened title and the children are the formatted
+		// text, so the children win for rendering. Every other element treats
+		// non-empty content as "this element already carries its text".
+		//
+		// DEEPER, not merely following. Requiring the run to be nested below the
+		// heading is what separates "these inlines are my children" from "an
+		// inline run happens to come after me" -- a hand-built list can put a bare
+		// run after a heading, and absorbing it would render the run as the title
+		// and destroy the real one. That is the `hr` defect again: taking a run
+		// that is not yours and discarding your own content with it. Caught by an
+		// existing COPY test rather than by reasoning, which is why this condition
+		// is here and not in the first version.
+		const bool heading_with_children = element_type == Vocab::TYPE_HEADING && i + 1 < end &&
+		                                   DuckBlockLevel(list_children[i + 1]) > DuckBlockLevel(list_children[i]);
+		if ((content.empty() || heading_with_children) && scope_end > i + 1 && depth < MAX_DUCK_BLOCK_NESTING &&
 		    DuckBlockKind(list_children[i + 1]) == Vocab::KIND_INLINE) {
 			content = RenderDuckBlockRange(list_children, i + 1, scope_end, depth + 1);
 			consumed_children = true;
