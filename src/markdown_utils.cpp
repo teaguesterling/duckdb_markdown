@@ -1107,34 +1107,29 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	auto fm_match = FindFrontmatter(markdown_str);
 	std::string frontmatter = fm_match.found ? markdown_str.substr(fm_match.body_start, fm_match.body_len) : "";
 	if (!frontmatter.empty()) {
-		// OPEN. Which level a duck_block frontmatter row should carry.
+		// LEVEL 1, ruled by duck_block_utils at 2771e9e (they coordinate the spec;
+		// Teague routed the question there). `level` is depth, and 1 means NOT
+		// NESTED -- it is not a claim of depth inside something. A frontmatter blob
+		// sits at the top level of its document exactly as the first paragraph
+		// does, so 1 is what it shares with every other top-level element. There is
+		// nothing shallower than the top, so 0 has no referent, and the validator
+		// rejects it.
 		//
-		// MEASURED 2026-09-01, duck_block spec 6.1, and the answer moved twice
-		// while this note was being written -- which is why it records the
-		// measurements rather than a conclusion.
+		// This was held open as a breaking change to documented public API. That
+		// turned out to be wrong, and it is worth recording why so it is not
+		// re-litigated. MEASURED 2026-09-01, all three supposed dependents:
 		//
-		//   this reader                      level 0
-		//   duck_blocks_validate             rejects it: "level 0 is below 1"
-		//   duck_block_metadata(), earlier   level 0   <- what this matched
-		//   duck_block_metadata(), now       level 1   <- upstream fixed its
-		//                                                 builder (1c69c2f)
+		//   read_markdown_sections   level 0-6 is heading RANK, a DIFFERENT column
+		//                            on a different function -- unaffected, still 0
+		//   COPY document mode       "level = 0 as frontmatter" is that mode's own
+		//                            convention over (level, title, content)
+		//   duck_block writer        keys on element_type, not level: `metadata`
+		//                            renders as frontmatter at 0 and at 1 alike
 		//
-		// So level 0 was not invention here: it agreed with the registered
-		// builder of the repo that owns the format, whose own validator rejected
-		// it, and whose spec table documented the bug accurately. That half is
-		// theirs and is fixed. What remains is genuinely this extension's
-		// question.
-		//
-		// This extension's SECTION convention uses 0 for frontmatter and 1-6 for
-		// headings. It is correct, documented, and load-bearing: README.md's
-		// COPY TO example renders a level-0 row as a frontmatter block, verified
-		// by running it verbatim. The duck_block convention is structural depth,
-		// minimum 1. Making read_markdown_blocks emit 1 is a breaking change to
-		// a documented public API, so it is a decision rather than a defect to
-		// patch at the point of emission.
-		//
-		// The type name is SETTLED as of spec 6.2: `metadata` + role='frontmatter'.
-		// What remains open here is the LEVEL alone.
+		// So nothing documented reads this column's 0. The block reader's `level`
+		// was ALREADY pure depth -- every top-level element carries 1 and heading
+		// rank lives in attributes['heading_level'] -- and frontmatter was the one
+		// row that disagreed with its own column.
 		MarkdownBlock fm_block;
 		// `metadata` + role='frontmatter', declared in spec 6.2. `frontmatter` was
 		// never a vocabulary type -- one type plus a role attribute is the spec's
@@ -1145,7 +1140,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		fm_block.block_type = Vocab::TYPE_METADATA;
 		fm_block.attributes[Vocab::ATTR_ROLE] = Vocab::ROLE_FRONTMATTER;
 		fm_block.content = frontmatter;
-		fm_block.level = 0;
+		fm_block.level = 1;
 		fm_block.encoding = fm_match.delimiter == '+' ? Vocab::ENCODING_TOML : Vocab::ENCODING_YAML;
 		fm_block.block_order = block_order++;
 		blocks.push_back(fm_block);

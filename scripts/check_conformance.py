@@ -61,18 +61,22 @@ CASES = [
     ("the metadata block carries role='frontmatter'",
      r"""(SELECT list(e.attributes['role']) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n')) AS e) WHERE e.element_type = 'metadata')""",
      "[frontmatter]"),
-    # The remaining half of the open decision: level 0 versus structural depth
-    # (>= 1). This is the ONLY thing keeping a frontmatter document invalid, and
-    # it is Teague's call, not a defect to patch at the point of emission.
-    ("a frontmatter document is non-conformant as emitted",
+    # Was the one recorded exception: frontmatter emitted level 0, which
+    # duck_block_is_valid rejects. Ruled level 1 upstream at 2771e9e and fixed, so
+    # this asserts CONFORMANCE now. Kept rather than deleted -- it is the document
+    # that was non-conformant, so it is the one worth holding conformant.
+    ("a frontmatter document is fully conformant",
      r"duck_blocks_are_valid(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n'))",
-     "false"),
-    # ...and level is the SOLE cause, proven rather than asserted: raise level to
-    # the conformant minimum and change NOTHING else, and the document validates.
-    # Without this, the line above would still pass if a second, unrelated defect
-    # appeared -- "invalid" is not evidence of WHY.
-    ("...and raising level to 1 alone makes it conformant",
-     r"""duck_blocks_are_valid([{kind: x.kind, element_type: x.element_type, content: x.content, level: greatest(x.level, 1), encoding: x.encoding, attributes: x.attributes, element_order: x.element_order} for x in parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n')])""",
+     "true"),
+    # The level itself, asserted directly so a regression to 0 names the field
+    # rather than showing up as a bare "invalid".
+    ("the metadata block carries level 1, not 0",
+     r"""(SELECT list(e.level) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n')) AS e) WHERE e.element_type = 'metadata')""",
+     "[1]"),
+    # TOML frontmatter takes the same path and must be conformant too -- it is a
+    # newer branch of the same scanner, so it is the likelier one to regress.
+    ("a TOML frontmatter document is conformant",
+     r"duck_blocks_are_valid(parse_markdown_to_duck_blocks(e'+++\ntitle = \"T\"\n+++\n\nB.\n'))",
      "true"),
 ]
 
@@ -154,7 +158,11 @@ def main():
         print(f"  {'ok  ' if ok else 'FAIL'} {name}" + ("" if ok else f"   want {want!r}, got {actual!r}"))
         bad += not ok
     print()
-    print("OK: this reader conforms, with the one recorded exception."
+    # No exceptions any more: the level-0 frontmatter row was the last one, ruled
+    # and fixed 2026-09-01. Saying "with the one recorded exception" after it was
+    # gone would be a summary line claiming a caveat that no longer exists, which
+    # is the same defect as claiming a guard that does not.
+    print(f"OK: this reader conforms on all {len(cases)} assertions, no exceptions."
           if not bad else f"FAILED: {bad} conformance assertion(s).")
     return 1 if bad else 0
 

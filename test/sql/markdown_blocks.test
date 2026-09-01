@@ -58,13 +58,14 @@ print("hello")	python
 # =============================================================================
 
 # Spec 6.2: the type is `metadata` and the ROLE says which construct it came
-# from. `frontmatter` was never a declared element_type. The level is 0 here and
-# stays 0 -- that is a separate, open decision, not part of the rename.
+# from. `frontmatter` was never a declared element_type. Level is 1 = NOT NESTED,
+# ruled upstream at 2771e9e; read_markdown_sections keeps its own 0-6 heading
+# rank on its own column, which is a different measurement.
 query IIII
 SELECT element_type, level, encoding, attributes['role']
 FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'metadata';
 ----
-metadata	0	yaml	frontmatter
+metadata	1	yaml	frontmatter
 
 # The old name must NOT come back
 query I
@@ -258,7 +259,7 @@ COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '__TEST_DIR__/only_fm.md' (FORMAT
 query II
 SELECT element_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
 ----
-metadata	0
+metadata	1
 
 # =============================================================================
 # Test: Attributes are correctly populated
