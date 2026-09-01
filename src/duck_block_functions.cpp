@@ -1160,6 +1160,52 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 					if (last_was_inline) {
 						result += "\n\n";
 					}
+
+					// A definition list is a `list` whose items are terms and
+					// definitions as SIBLINGS at one level, paired by order: a term
+					// owns the role='definition' items following it until the next
+					// term. One term may own several definitions, which is distinct
+					// from one definition of several blocks -- many items versus one
+					// item with children. Measured off the live producer rather than
+					// taken from its description.
+					if (list_type == "definition") {
+						bool first_term = true;
+						for (idx_t j = i + 1; j < scope_end;) {
+							if (DuckBlockLevel(list_children[j]) != item_level) {
+								const idx_t stray_end = SkipElementScope(list_children, j, scope_end);
+								result += RenderDuckBlockRange(list_children, j, stray_end, depth + 1);
+								j = stray_end;
+								continue;
+							}
+							const idx_t item_end = SkipElementScope(list_children, j, scope_end);
+							string text = item_end > j + 1
+							                  ? RenderDuckBlockRange(list_children, j + 1, item_end, depth + 1)
+							                  : DuckBlockContent(list_children[j]);
+							StringUtil::Trim(text);
+							// Anything not marked a definition is a label: an item whose
+							// role is missing reads as a term rather than disappearing.
+							if (GetAttributeOf(list_children[j], "role") == "definition") {
+								// ":" plus three spaces, so a continuation block lands at
+								// four. Two was not enough: a reader takes a 2-space block
+								// as a new top-level paragraph, which splits the list in
+								// half and strands the block between the pieces. This is
+								// also Pandoc's own output width, so marker and pad agree.
+								result += IndentContinuation(text, ":   ");
+							} else {
+								if (!first_term) {
+									result += "\n";
+								}
+								result += text + "\n";
+								first_term = false;
+							}
+							j = item_end;
+						}
+						result += "\n";
+						last_was_inline = false;
+						i = scope_end;
+						continue;
+					}
+
 					for (idx_t j = i + 1; j < scope_end;) {
 						if (DuckBlockLevel(list_children[j]) != item_level) {
 							// Not an item -- a producer we do not recognise, or a

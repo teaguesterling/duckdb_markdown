@@ -47,6 +47,24 @@ SCHEMA = ("STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INT
           "encoding VARCHAR, attributes MAP(VARCHAR,VARCHAR), element_order INTEGER)")
 
 # Documents to push through, with the words that must survive the trip.
+# Round trips that are KNOWN not to be stable, with the reason. Recorded rather
+# than silently tolerated: an unexplained exclusion and a forgotten defect look
+# identical later. Anything NOT listed here that drifts is a failure.
+KNOWN_UNSTABLE = {
+    "figure": "this writer emits a figure's caption as a separate italic line, but "
+              "`![alt](src)` ALREADY carries that text -- a reader infers a figure "
+              "and its caption from a lone image, so the caption appears twice and "
+              "a further copy is added on every pass. A real defect in this writer, "
+              "not an inherent limit: markdown has one slot for that text and this "
+              "fills two. Unfixed -- suppressing the caption needs the caption "
+              "branch to know its sibling image's alt.",
+    "line block": "a line block has no markdown syntax, so this writer emits hard "
+                  "breaks. The producer folds those back into paragraph content as "
+                  "a raw newline rather than linebreak inlines, so the break "
+                  "degrades from hard to soft. The words and the line count "
+                  "survive. Upstream shape, not a defect here.",
+}
+
 CASES = [
     ("heading",        "# Title\n",                              ["Title"]),
     ("nested inlines", "Text with **bold *inner*** here.\n",     ["bold", "inner"]),
@@ -54,7 +72,12 @@ CASES = [
     ("ordered list",   "3. one\n4. two\n",                       ["one", "two"]),
     ("blockquote",     "> quoted para\n>\n> second para\n",      ["quoted", "second"]),
     ("table",          "| A | B |\n|---|---|\n| 1 | 2 |\n",      ["A", "B", "1", "2"]),
-    ("definition list","Term\n:   Definition\n",                 ["Term", "Definition"]),
+    # Multi-block on purpose: a definition's continuation block must be indented
+    # far enough that a reader keeps it inside the definition. At two spaces it
+    # reads as a new top-level paragraph, which splits the list and strands the
+    # block between the halves -- caught by the round trip, not by rendering.
+    ("definition list","HTTP\n:   hypertext transfer protocol\n\nTLS\n:   transport layer security\n\n    a second block\n\nDNS\n:   sense one\n:   sense two\n",
+                       ["HTTP", "hypertext", "TLS", "transport", "a second block", "DNS", "sense one", "sense two"]),
     ("line block",     "| Roses are red\n| Violets are blue\n",  ["Roses", "Violets"]),
     ("figure",         "![A caption](img.png)\n",                ["img.png", "A caption"]),
     ("code",           "```py\nprint(1)\n```\n",                 ["print(1)"]),
@@ -121,12 +144,28 @@ def main():
     for name, markdown, expected in CASES:
         out = render(to_blocks(args.producer, markdown))
         missing = [w for w in expected if w not in out]
-        status = "ok " if not missing else "LOST"
-        print(f"  {status} {name:<16} {out.splitlines()[0][:44] if out.strip() else '(empty)'}")
+        # Rendering once proves the words survive; rendering the OUTPUT again
+        # proves the markdown says what it meant. A definition continuation
+        # indented too shallowly renders fine and re-reads as a different
+        # document, which only the second pass can see.
+        second = render(to_blocks(args.producer, out)) if out.strip() else out
+        unstable = second.strip() != out.strip()
+        known = name in KNOWN_UNSTABLE
         if missing:
-            failures.append((name, missing, out))
+            status = "LOST"
+        elif unstable:
+            status = "note" if known else "DRIFT"
+        else:
+            status = "ok  "
+        print(f"  {status} {name:<16} {out.splitlines()[0][:42] if out.strip() else '(empty)'}")
+        if missing or (unstable and not known):
+            failures.append((name, missing, out if missing else f"unstable:\n{out!r}\n{second!r}"))
 
     print()
+    for name in sorted(n for n, _, _ in [(c[0], 0, 0) for c in CASES] if n in KNOWN_UNSTABLE):
+        print(f"note {name}: round trip is known-unstable -- {KNOWN_UNSTABLE[name]}")
+    if KNOWN_UNSTABLE:
+        print()
     if failures:
         for name, missing, out in failures:
             print(f"FAILED {name}: lost {missing}\n       rendered: {out!r}")

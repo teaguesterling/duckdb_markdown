@@ -429,25 +429,28 @@ SELECT duck_blocks_to_md([{kind: 'block', element_type: 'table', content: '{"hea
 ----
 true
 
-# DEFINITION LIST: 5.0 drops the `deflist` type and expresses one as a `list`
-# with list_type='definition', its items tagged role='term'/'definition'. This
-# writer renders that as a flat bullet list -- the words survive, the term to
-# definition relationship does not.
+# DEFINITION LIST: 5.0 dropped the `deflist` type and expresses one as a `list`
+# with list_type='definition', items tagged role='term'/'definition'.
 #
-# NOT migrated, deliberately, and this one is worth the reasoning because the
-# fix looks trivial: emit "Term\n: Def" as the existing deflist branch already
-# does. The risk is that a mis-guess renders WORSE than this degradation. If
-# the real shape omits the roles, or nests definitions under terms, keying on
-# role produces "Term\nDef" -- one paragraph, the list gone entirely -- where
-# bullets at least keep two items. A safe degradation beats a guessed
-# structure, so this holds until 5.0 can be run against a real producer.
+# This was RENDERED AS BULLETS for several hours, deliberately: the fix looked
+# trivial, but a mis-guess would have rendered WORSE than the degradation --
+# had the real shape omitted roles, or nested definitions under their terms,
+# keying on role would have produced "Term\nDef", one paragraph with the list
+# gone, where bullets at least kept two items. It was held until the shape
+# could be MEASURED off a live producer rather than read from a description.
+#
+# Now migrated on that measurement, and the caution was warranted: producing
+# the sample turned up three defects upstream, so the shape being guessed at
+# was wrong in three ways at the time it would have been guessed. The loose,
+# multi-block case below is one of them -- a definition emitted only its first
+# block, so "a second block" did not exist to render until it was fixed.
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'- Term\n- Def\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'Term\n:   Def\n\n';
 ----
 true
 
-# Whatever it renders as, both the term and the definition reach the output --
-# the property that must not regress while the formatting is unmigrated
+# Both the term and the definition reach the output -- the property that had to
+# hold while the formatting was still degraded, and still has to
 query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) LIKE '%Term%Def%';
 ----
@@ -572,5 +575,50 @@ true
 # ...including a caption, which keeps rendering its child scope
 query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAP', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'BODY\n\n*CAP*\n\n';
+----
+true
+
+# =============================================================================
+# DEFINITION LISTS, spec 6.1. Previously degraded to bullets deliberately,
+# because guessing the shape risked rendering worse than the safe fallback.
+# Shape below is a verbatim measurement of the live producer, not a reading of
+# its description -- terms and definitions are SIBLINGS at the same level,
+# paired by order, and one term may own several definitions.
+# =============================================================================
+
+# A term with one tight definition
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'HTTP', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'hypertext transfer protocol', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}]) = E'HTTP\n:   hypertext transfer protocol\n\n';
+----
+true
+
+# One term, TWO separate definitions -- distinct from one definition of two blocks
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'DNS', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'sense one', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: 'sense two', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}]) = E'DNS\n:   sense one\n:   sense two\n\n';
+----
+true
+
+# A loose definition of two blocks -- continuation indented under the marker
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'TLS', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'transport layer security', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'a second block', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'TLS\n:   transport layer security\n\n    a second block\n\n';
+----
+true
+
+# Several terms in one list, blank line between groups
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'A', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: 'a1', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: 'B', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 3}, {kind: 'block', element_type: 'list_item', content: 'b1', level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 4}]) = E'A\n:   a1\n\nB\n:   b1\n\n';
+----
+true
+
+# A definition list whose items carry no roles degrades to terms rather than
+# vanishing -- the safe direction if a producer omits them
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'no role', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE '%no role%';
+----
+true
+
+# Bullet and ordered lists are untouched by the definition path
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'x', level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}]) = E'- x\n\n';
 ----
 true
