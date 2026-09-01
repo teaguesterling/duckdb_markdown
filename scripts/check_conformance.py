@@ -24,8 +24,14 @@ import sys
 import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXT = os.path.join(REPO, "build/release/extension/markdown/markdown.duckdb_extension")
-DUCKDB = os.path.join(REPO, "build/release/duckdb")
+# Overridable so CI can run this against the BUILT ARTIFACT with a released
+# duckdb CLI. Locally both default to this repo's build. In CI there is no local
+# build in the lightweight job -- which is how this check spent its first four
+# runs failing with "missing this extension's build", correctly refusing to skip
+# in a job that could never satisfy it.
+EXT = os.environ.get("MARKDOWN_EXTENSION") or os.path.join(
+    REPO, "build/release/extension/markdown/markdown.duckdb_extension")
+DUCKDB = os.environ.get("DUCKDB_BIN") or os.path.join(REPO, "build/release/duckdb")
 RULES = os.path.join(REPO, "conformance/duck_block_conformance.sql")
 
 # (name, sql expression, expected literal). Controls first, deliberately.
@@ -75,7 +81,15 @@ CASES = [
      "[1]"),
     # TOML frontmatter takes the same path and must be conformant too -- it is a
     # newer branch of the same scanner, so it is the likelier one to regress.
-    ("a TOML frontmatter document is conformant",
+    #
+    # Asserts the ENCODING rather than mere validity, because validity passes
+    # VACUOUSLY on a build that does not recognise `+++`: the fence falls through
+    # to prose, and prose is conformant. Caught by running this against an older
+    # artifact, where it reported ok for a reader that had no TOML support at all.
+    ("a TOML frontmatter document yields a toml metadata block",
+     r"""(SELECT list(e.encoding) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'+++\ntitle = "T"\n+++\n\nB.\n')) AS e) WHERE e.element_type = 'metadata')""",
+     "[toml]"),
+    ("...and that document is conformant",
      r"duck_blocks_are_valid(parse_markdown_to_duck_blocks(e'+++\ntitle = \"T\"\n+++\n\nB.\n'))",
      "true"),
 ]

@@ -60,11 +60,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check this reader against the canonical conformance rules
-        # Pure SQL, no extension, no network -- so it cannot skip and needs no
-        # token. duck_blocks_validate() lives in an extension this repo cannot
-        # load, so this is the only conformance available to it.
-        run: python3 scripts/check_conformance.py
       - name: Check vendored vocabulary against upstream duck_block_utils
         # The check resolves upstream's branch to a commit sha through the API
         # before fetching, because the raw endpoint serves branch urls from a
@@ -74,6 +69,52 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/check_duck_block_vocabulary.py --strict
+
+  conformance:
+    name: duck_block Conformance
+    # NEEDS THE BUILT EXTENSION. This step first lived in vocabulary-drift, which
+    # checks out and runs python with no build at all, so it failed four runs in
+    # a row on "missing this extension's build" -- the check refusing to skip,
+    # correctly, in a job that could never satisfy it. The comment there claimed
+    # it was "pure SQL, no extension": the RULES are pure SQL, but the reader
+    # under test is this extension and the script loads it.
+    #
+    # The artifacts target released v1.5.4, so a stock duckdb of the same version
+    # can load them. That is only true of the CI build -- a local dev build
+    # reports a submodule hash and no released CLI will touch it.
+    #
+    # VERSION COUPLING: the artifact name and the CLI url below both hardcode
+    # v1.5.4, matching duckdb-stable-build's duckdb_version above. A reusable
+    # workflow's `with:` cannot read `env`, so this cannot be a single variable.
+    # Bumping the build's version without bumping these two fails LOUDLY here
+    # (artifact not found, or the CLI refuses the extension's ABI) rather than
+    # quietly checking nothing -- but it does need bumping in both places.
+    needs: duckdb-stable-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the built extension
+        uses: actions/download-artifact@v4
+        with:
+          name: markdown-v1.5.4-extension-linux_amd64
+          path: ci-ext
+      - name: Install a matching DuckDB CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL -o duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip
+          unzip -o duckdb.zip -d ci-bin
+          chmod +x ci-bin/duckdb
+          ci-bin/duckdb -c "SELECT 'cli ok';"
+      - name: Check this reader against the canonical conformance rules
+        # No skip path by design: if the artifact or the CLI is missing this
+        # FAILS rather than reporting a green nothing.
+        env:
+          DUCKDB_BIN: ci-bin/duckdb
+        run: |
+          set -euo pipefail
+          ext=$(find ci-ext -name 'markdown.duckdb_extension' | head -1)
+          test -n "$ext" || { echo "no extension in the artifact"; exit 1; }
+          MARKDOWN_EXTENSION="$ext" python3 scripts/check_conformance.py
 
   code-quality-check:
     name: Code Quality Check
