@@ -266,9 +266,28 @@ def read_upstream(source, ref):
         sys.exit(f"error: cannot read {HEADER_REL} from {source}@{ref}\n{exc.stderr.strip()}")
 
 
+def strip_comments(text):
+    """Remove // and /* */ so a MENTION is not mistaken for a use.
+
+    This scan asks which vocabulary constants the renderers branch on, and the
+    answer feeds the fallthrough audit -- so a constant named only in a comment
+    would read as handled and SUPPRESS a real gap. That is the same
+    loose-pattern failure duck_block_utils hit measuring their own header, where
+    a `TYPE_[A-Z_]+` matched the header's own cautionary example and manufactured
+    four phantom findings. Theirs invented findings; this direction hides them,
+    which is quieter and therefore worse to leave to luck.
+
+    Measured when this was written: zero comment-only mentions across all three
+    sources, so nothing changes today. It is the next explanatory comment naming
+    a constant that this is for.
+    """
+    text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+    return re.sub(r'//[^\n]*', '', text)
+
+
 def handled_types(src):
     """element_type / kind values our renderers actually branch on."""
-    text = open(src).read()
+    text = strip_comments(open(src).read())
     named = set(re.findall(r'Vocab::([A-Z_]+)', text))
     literal = set(re.findall(r'element_type == "([a-z_:]+)"', text))
     return named, literal
