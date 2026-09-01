@@ -13,6 +13,14 @@ namespace duckdb {
 
 using namespace duckdb_yyjson;
 
+// Claims in this file about ANOTHER repository's behaviour carry a date and,
+// where they came from someone else, the label RELAYED. A reason has no expiry
+// and no attribution unless it is given one: two comments here were true when
+// written and wrong within the day -- one measured and then outlived by a spec
+// change, one accurately reported and then restated without its provenance.
+// Neither was careless, so "be more careful" would not have prevented either.
+// A date and a source are actionable; a better sentence is not.
+
 // The duck_block vocabulary, consumed from duck_block_utils as a submodule.
 // Spelling these as constants rather than string literals is what makes a
 // renamed or removed element type a compile error here instead of output that
@@ -535,7 +543,8 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 // vocabulary name -- "em"/"emphasis" for italic, "strong" for bold, "del" for
 // strikethrough, and so on.
 //
-// MEASURED, because this was previously described here and to other consumers
+// MEASURED 2026-08-31 against duck_block_utils spec 6.1, because this was
+// previously described here and to other consumers
 // as "legacy names this extension's own parser emits", and that is false: it
 // emits none of them. Nor does duck_block_utils, nor webbed -- webbed MAPS the
 // HTML tags `em`/`strong`/`del` onto the canonical names and carries the same
@@ -1186,7 +1195,8 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 					// owns the role='definition' items following it until the next
 					// term. One term may own several definitions, which is distinct
 					// from one definition of several blocks -- many items versus one
-					// item with children. Measured off the live producer rather than
+					// item with children. Measured 2026-08-31 off the live producer
+					// (duck_block_utils spec 6.1) rather than
 					// taken from its description.
 					if (list_type == "definition") {
 						bool first_term = true;
@@ -1336,8 +1346,9 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 		// Blocks and inlines sit on SEPARATE level scales: the spec puts a
 		// top-level inline at level 1 while a top-level block records NULL. And
 		// producers disagree about where a block's inline run begins -- the
-		// builders emit level 1 (measured here); panduck reported the same of its
-		// four readers, relayed and unverified from this side. The Pandoc path
+		// builders emit level 1 (MEASURED 2026-08-31, duck_block_utils spec 6.1);
+		// panduck reported the same of its four readers -- RELAYED 2026-08-31,
+		// never verified from this side. The Pandoc path
 		// emits 2. So a block takes the whole contiguous inline run that follows
 		// it rather than trusting the level, which is the only rule that reads
 		// both; among inlines the level IS the nesting, so a wrapper there takes

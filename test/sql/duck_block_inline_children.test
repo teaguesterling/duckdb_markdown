@@ -46,8 +46,9 @@ true
 # Blocks and inlines are on separate level scales. The spec's Level Field
 # Semantics puts a top-level INLINE at level 1, while a top-level block records
 # NULL -- so a level-1 inline after a NULL block is that block's content, not a
-# sibling. The builders emit this shape (measured); panduck reported the same of
-# its four readers, which is RELAYED and not verified here. The Pandoc
+# sibling. The builders emit this shape (MEASURED 2026-08-31, duck_block_utils
+# spec 6.1). panduck reported the same of its four readers; that is
+# RELAYED 2026-08-31 and was never verified here. The Pandoc
 # path emits the same run at level 2. Both have to read.
 query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'a **b**\n\n';
