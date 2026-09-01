@@ -74,6 +74,40 @@ INTENTIONAL_FALLTHROUGH = {
 }
 
 
+def parse_version(text):
+    """MAJOR.MINOR -> (major, minor); (None, None) when unparseable."""
+    m = re.match(r"^\s*(\d+)\.(\d+)", text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def compare_spec_version(local, upstream):
+    """Apply the vocabulary's stated version contract.
+
+    MAJOR bumps for a breaking change, MINOR for an additive one, and the header
+    says to assert MAJOR equality plus a MINOR floor rather than equality on the
+    whole string -- equality goes red on releases that cannot affect us, and a
+    check that cries wolf gets muted.
+
+    Returns (breaking, note). Note that upstream's own recorded history has one
+    counterexample: 1.1 -> 1.2 was breaking and shipped as a minor, and it is
+    what broke this writer in three places. The contract holds from 2.0 onward,
+    so a minor bump is reported loudly rather than silently, but not failed.
+    """
+    lo, up = parse_version(local), parse_version(upstream)
+    if lo == (None, None) or up == (None, None):
+        return True, f"SPEC_VERSION unparseable (local {local!r}, upstream {upstream!r})"
+    if lo[0] != up[0]:
+        return True, (f"MAJOR changed {local} -> {upstream}: a breaking shape or "
+                      f"vocabulary change this build has not migrated for")
+    if up[1] > lo[1]:
+        return False, (f"MINOR ahead {local} -> {upstream}: additive by contract, so "
+                       f"nothing here should break -- review and re-vendor when convenient")
+    if up[1] < lo[1]:
+        return True, (f"MINOR behind {local} -> {upstream}: this copy claims a newer "
+                      f"spec than upstream publishes")
+    return False, None
+
+
 def vocabulary_of(constants):
     """The element-type constants, excluding struct field offsets.
 
@@ -116,6 +150,14 @@ def self_test():
     removed, changed, added = classify(base, dict(base))
     if removed or changed or added:
         failures.append("cosmetic churn was not silent")
+
+    # The version contract: major equality, minor floor.
+    for lo, up, want_breaking in (("2.0", "2.0", False), ("2.0", "2.1", False),
+                                  ("2.0", "3.0", True), ("2.0", "1.2", True),
+                                  ("2.1", "2.0", True)):
+        got, _ = compare_spec_version(lo, up)
+        if got != want_breaking:
+            failures.append(f"spec {lo} -> {up}: expected breaking={want_breaking}, got {got}")
 
     # Field offsets are not vocabulary.
     if "KIND_IDX" in vocabulary_of(base):
@@ -212,8 +254,15 @@ def main():
     print()
 
     removed, changed, added = classify(local, upstream)
+    # SPEC_VERSION is a version, not vocabulary: it has its own contract.
+    changed = [k for k in changed if k != "SPEC_VERSION"]
+    spec_breaking, spec_note = compare_spec_version(
+        local.get("SPEC_VERSION", ""), upstream.get("SPEC_VERSION", ""))
 
-    breaking = False
+    breaking = spec_breaking
+    if spec_note:
+        print(("SPEC   " if spec_breaking else "SPEC   ") + spec_note)
+        print()
     if removed:
         breaking = True
         print("DRIFT  gone upstream (our references would no longer compile):")
