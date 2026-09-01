@@ -98,3 +98,48 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'italic', content: NULL, level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'in', level: 4, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'a ***in***\n\n';
 ----
 true
+
+# =============================================================================
+# KNOWN HAZARD, pinned deliberately so the fix is a decision and not a surprise.
+#
+# A heading takes its rank from attributes['heading_level'], falling back to the
+# `level` field when that attribute is absent. Under spec <= 2.0 that fallback
+# is a reasonable reading of malformed data: the spec says headings carry NULL
+# in `level`, so a populated one was most likely a producer putting rank there.
+#
+# Spec 3.0 makes `level` explicit structural depth for EVERY element, never
+# semantic. Then this fallback reads a heading's DEPTH as its RANK -- a heading
+# inside two containers becomes h3 regardless of what it is. That is the same
+# class as the over-nested blockquote 3.0 found in webbed.
+#
+# Not changed yet: 3.0 is unpublished and not installable here, the fallback is
+# load-bearing for the headings in doc_inline.test, and conforming to a spec
+# that cannot yet be tested against is how a shape gets chased. These pin what
+# the writer does today so the blast radius is visible when 3.0 lands.
+# =============================================================================
+
+# heading_level is authoritative when present -- unaffected by 3.0 either way
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: 'T', level: 3, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0}]) = E'# T\n\n';
+----
+true
+
+# Without it, `level` is used as rank. Correct under <= 2.0, WRONG under 3.0,
+# where 3 would mean "nested three containers deep", not "h3".
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: 'T', level: 3, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'### T\n\n';
+----
+true
+
+# Quote depth, by contrast, is already structural and NOT read from `level`:
+# one blockquote nested inside two sections is one quote, not three.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'section', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'blockquote', content: NULL, level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 4, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'> q\n\n';
+----
+true
+
+# ...and a genuinely nested quote gets its second '>' from the nested element
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'blockquote', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'q', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'> > q\n\n';
+----
+true

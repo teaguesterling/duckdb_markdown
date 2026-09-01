@@ -278,7 +278,7 @@ def main():
         for k in added:
             print(f"         {k} = {upstream[k]!r}")
     if not (removed or changed or added):
-        print("vocabulary is in sync")
+        print("vocabulary constants are in sync")
 
     # Gaps: types upstream publishes that no renderer branches on.
     named, literal = handled_types(os.path.join(root, "src/duck_block_functions.cpp"))
