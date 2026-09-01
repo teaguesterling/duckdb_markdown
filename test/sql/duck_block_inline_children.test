@@ -1,0 +1,76 @@
+# name: test/sql/duck_block_inline_children.test
+# description: Elements whose content is a run of kind='inline' children
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# An element with no content of its own carries it as kind='inline' children at
+# level+1. The writer walked the list flat, so it rendered the marker's empty
+# content and then the children as a separate run: a paragraph became a blank
+# line followed by its own text, and a bold with a nested child rendered as
+# '****Doc' -- the wrapper closed around nothing.
+# =============================================================================
+
+# A paragraph's inline children are its text, not a following run
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks('Hello **world**.')) = E'Hello **world**.\n\n';
+----
+true
+
+# A nested inline container wraps its children, not the empty string
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'My', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'space', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'Doc', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'My **Doc**\n\n';
+----
+true
+
+# Emphasis nested inside emphasis
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'italic', content: NULL, level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'x', level: 4, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'***x***\n\n';
+----
+true
+
+# A link's label comes from its children
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'link', content: NULL, level: 2, encoding: 'text', attributes: MAP{'href': 'http://e.com'}, element_order: 1}, {kind: 'inline', element_type: 'text', content: 'here', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'[here](http://e.com)\n\n';
+----
+true
+
+# A heading's inline children are its title. `level` is nesting DEPTH, so a
+# top-level element is at depth 1 and records NULL; its children are at 2.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'heading', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'Title', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'## Title\n\n';
+----
+true
+
+# An element at level 1 beside one at NULL is its sibling, not its child --
+# NULL is depth 1, not depth 0.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'Sibling', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'\n\nSibling';
+----
+true
+
+# A formatted top-level paragraph does not reach across into the metadata that
+# follows it: its scope ends at the value marker, which sits at level 1.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'Hi', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'T', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'---\ntitle: "T"\n---\n\nHi\n\n';
+----
+true
+
+# A figure's image reaches the document without a blank paragraph before it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'id': 'fig1'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'image', content: 'alt', level: 3, encoding: 'text', attributes: MAP{'src': 'a.png'}, element_order: 2}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Fig one.', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'![alt](a.png)\n\n*Fig one.*\n\n';
+----
+true
+
+# An element that has its own content keeps it; children do not override it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'flat', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'child', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) LIKE 'flat%';
+----
+true
+
+# Metadata values built from nested inlines render as one scalar
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'My', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'space', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'bold', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'inline', element_type: 'text', content: 'Doc', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'---\ntitle: "My **Doc**"\n---\n\n';
+----
+true

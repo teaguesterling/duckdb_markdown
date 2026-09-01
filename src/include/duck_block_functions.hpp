@@ -48,6 +48,11 @@ public:
 	 */
 	static string RenderDuckBlocksToMarkdown(const Value &blocks_value);
 
+	/**
+	 * @brief Look up a key in a duck_block's attributes MAP, or "" when absent
+	 */
+	static string GetAttribute(const Value &attributes, const string &key);
+
 private:
 	static void RegisterDuckBlockToMdFunction(ExtensionLoader &loader);
 	static void RegisterDuckBlocksToMdFunction(ExtensionLoader &loader);
@@ -60,9 +65,6 @@ private:
 	// Render inline element to markdown
 	static string RenderInlineElementToMarkdown(const string &element_type, const string &content,
 	                                            const Value &attributes);
-
-	// Helper to extract attribute from MAP value
-	static string GetAttribute(const Value &attributes, const string &key);
 
 	// Helper to parse JSON list items
 	static vector<string> ParseJsonListItems(const string &content);

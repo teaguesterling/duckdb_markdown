@@ -1,0 +1,174 @@
+# name: test/sql/duck_block_containers.test
+# description: Container and structural block types (figure, caption, section, div, generic, lineblock, deflist)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Regression: these element_types had no renderer, so they fell through to the
+# "unknown block" branch and emitted their (empty) content plus a blank line.
+# Structure vanished and a caption became indistinguishable from body prose.
+#
+# Shapes are verbatim pandoc_ast_to_blocks() output from duck_block_utils.
+# =============================================================================
+
+# A figure renders its content, then its caption, marked as a caption
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{'id': 'fig1'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAP', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'BODY\n\n*CAP*\n\n';
+----
+true
+
+# A figure whose level is NULL still scopes its caption (producers emit NULL here)
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'id': 'fig1'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAP', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) LIKE '%*CAP*%';
+----
+true
+
+# A caption above its content (a <details>/<summary> label) works the same way
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'div', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Summary', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'Body', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'*Summary*\n\nBody\n\n';
+----
+true
+
+# Container markers themselves emit nothing -- no stray blank lines
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: NULL, level: 1, encoding: 'text', attributes: MAP{'role': 'aside'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'A', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'A\n\n';
+----
+true
+
+# A multi-block caption is emitted unwrapped rather than in broken emphasis
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'caption', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'One', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Two', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'One\n\nTwo\n\n';
+----
+true
+
+# generic is a backstop against silent loss: keep source_type, drop the raw JSON
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'generic', content: '{"t":"Weird","c":[]}', level: NULL, encoding: 'json', attributes: MAP{'source_type': 'Weird'}, element_order: 0}]) = E'<!-- unsupported block: Weird -->\n\n';
+----
+true
+
+# generic with no source_type still announces itself
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'generic', content: '{}', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '<!-- unsupported block%';
+----
+true
+
+# generic source_type cannot break out of the comment
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'generic', content: '{}', level: NULL, encoding: 'json', attributes: MAP{'source_type': 'a --> b'}, element_order: 0}]) NOT LIKE '%-->%b%-->%';
+----
+true
+
+# lineblock preserves its line breaks as markdown hard breaks
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: E'L1\nL2', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'L1  \nL2\n\n';
+----
+true
+
+# deflist renders as a definition list, not as raw JSON
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"Term"}],[[{"t":"Para","c":[{"t":"Str","c":"Def"}]}]]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) = E'Term\n: Def\n\n';
+----
+true
+
+# deflist with several terms and several definitions per term
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[[{"t":"Str","c":"A"}],[[{"t":"Para","c":[{"t":"Str","c":"a1"}]}],[{"t":"Para","c":[{"t":"Str","c":"a2"}]}]]],[[{"t":"Str","c":"B"}],[[{"t":"Para","c":[{"t":"Str","c":"b1"}]}]]]]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) = E'A\n: a1\n: a2\n\nB\n: b1\n\n';
+----
+true
+
+# Unparseable deflist content falls back rather than disappearing
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: 'not json', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '%not json%';
+----
+true
+
+# Container types are also inert inside duck_blocks_to_sections
+query I
+SELECT list_contains([x.content FOR x IN duck_blocks_to_sections([{kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0}, {kind: 'block', element_type: 'figure', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}])], E'BODY\n\n');
+----
+true
+
+# page_break is a marker with no content: markdown has no page-break syntax, so
+# it leaves a greppable trace rather than a stray blank line or a rule (a `---`
+# mid-document would read as a thematic break, or as frontmatter delimiters).
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'A', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'page_break', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'page_number': '2'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'B', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'A\n\n<!-- page break: 2 -->\n\nB\n\n';
+----
+true
+
+# ...and without a page_number
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'page_break', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'<!-- page break -->\n\n';
+----
+true
+
+# A page break never becomes a section: it is physical, not semantic
+query I
+SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0}, {kind: 'block', element_type: 'page_break', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'B', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2}])) = 1;
+----
+true
+
+# Inline `generic` is the inline counterpart of the block backstop, but its text
+# lives in its children rather than in content, so the children carry it through
+# and only the wrapper identity is dropped -- as with `span`. A comment here
+# would interrupt the prose it sits inside.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a ', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'generic', content: NULL, level: 2, encoding: 'text', attributes: MAP{'source_type': 'Ruby'}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'kept', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'a kept\n\n';
+----
+true
+
+# Producers emit blockquote content as a Pandoc block array (encoding 'json'),
+# not only as text -- verified against both the released duck_block_utils binary
+# and its current main. Rendering that verbatim put raw AST behind '> '.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[{"t":"Para","c":[{"t":"Str","c":"q"}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) = E'> q\n\n';
+----
+true
+
+# Several blocks inside one quote keep their paragraph breaks
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[{"t":"Para","c":[{"t":"Str","c":"one"}]},{"t":"Para","c":[{"t":"Str","c":"two"}]}]', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) = E'> one\n> \n> two\n\n';
+----
+true
+
+# Plain-text blockquote content is untouched
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: 'A quote', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'> A quote\n\n';
+----
+true
+
+# Unparseable json content falls back rather than vanishing
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: 'not json', level: NULL, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '%not json%';
+----
+true
+
+# Pandoc list JSON. BulletList is [[block,...],...]; OrderedList wraps that in
+# [[start,style,delim],[[block,...],...]]. Neither is the ["a","b"] shape the
+# json list parser read, so a real producer's list rendered as NOTHING -- the
+# items were silently dropped. Verified against shipped and main.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '[[{"t":"Para","c":[{"t":"Str","c":"alpha"}]}],[{"t":"Para","c":[{"t":"Str","c":"beta"}]}]]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'bullet'}, element_order: 0}]) = E'- alpha\n- beta\n\n';
+----
+true
+
+# Ordered lists come through list_type, not the legacy `ordered` attribute, and
+# carry their first number inside the JSON rather than in a `start` attribute.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '[[3,{"t":"Decimal"},{"t":"Period"}],[[{"t":"Para","c":[{"t":"Str","c":"x"}]}],[{"t":"Para","c":[{"t":"Str","c":"y"}]}]]]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'ordered'}, element_order: 0}]) = E'3. x\n4. y\n\n';
+----
+true
+
+# The legacy string-array form still renders exactly as before
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["Item 1", "Item 2"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'false'}, element_order: 0}]) = E'- Item 1\n- Item 2\n\n';
+----
+true
+
+# An explicit start attribute still wins for the legacy form
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true', 'start': '5'}, element_order: 0}]) = E'5. a\n\n';
+----
+true
