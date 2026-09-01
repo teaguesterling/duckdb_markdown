@@ -1,4 +1,5 @@
 #include "markdown_utils.hpp"
+#include <mutex>
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include <algorithm>
@@ -140,6 +141,21 @@ static std::string EscapeJSONString(const std::string &s) {
 // TrimWhitespace stays: frontmatter parsing, wikilinks, tags and code-fence
 // info strings all still use it.
 
+// cmark-gfm's core-extension registration is NOT thread-safe: it allocates node
+// flag bits from a global counter, and two threads entering it at once fail with
+// "flag initialization error in cmark_register_node_flag". It was called on every
+// parse, from three sites, unguarded -- and DuckDB parallelises across rows, so a
+// query parsing several documents raced. Measured at 4 failures in 12 runs of a
+// nine-row query: intermittent, so it passed every single-document test forever.
+//
+// Registering exactly once, before any parse can proceed, is what cmark-gfm's own
+// documentation requires. std::call_once also gives the memory barrier, so a
+// thread that observes registration as done observes the registrations too.
+static void EnsureCmarkExtensionsRegistered() {
+	static std::once_flag cmark_extensions_once;
+	std::call_once(cmark_extensions_once, [] { cmark_gfm_core_extensions_ensure_registered(); });
+}
+
 //===--------------------------------------------------------------------===//
 // Core Conversion Functions
 //===--------------------------------------------------------------------===//
@@ -150,7 +166,7 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	}
 
 	// Initialize cmark-gfm
-	cmark_gfm_core_extensions_ensure_registered();
+	EnsureCmarkExtensionsRegistered();
 
 	// Parse options based on flavor
 	int options = CMARK_OPT_DEFAULT;
@@ -1094,7 +1110,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	std::string body = StripFrontmatter(markdown_str);
 
 	// Parse with cmark-gfm (with extensions for tables)
-	cmark_gfm_core_extensions_ensure_registered(); // Must be called before finding extensions
+	EnsureCmarkExtensionsRegistered();
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
 
 	// Enable GFM extensions
@@ -1585,7 +1601,7 @@ std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
 	// The document is parsed whole, without stripping frontmatter, so
 	// line_number is an absolute line in the input -- matching ExtractLinks and
 	// ExtractImages, which also use cmark's native line tracking.
-	cmark_gfm_core_extensions_ensure_registered();
+	EnsureCmarkExtensionsRegistered();
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
 	if (!parser) {
 		return tables;
