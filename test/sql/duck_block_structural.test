@@ -144,36 +144,69 @@ SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: N
 ----
 true
 
-# `ordered` is canonical for list orderedness (spec v1.0); `list_type` is a
-# later alias from the Pandoc reader. Both producers now emit both, so a
-# consumer must prefer the canonical name rather than whichever it checks first.
+# `list_type` is CANONICAL for list orderedness; `ordered` is a legacy alias.
+# A boolean cannot grow, and the type set already wants values -- definition and
+# navigation lists -- that `ordered=false` can only say a list is not. Both
+# producers emit both names, so this only decides which wins on disagreement.
+# (This reversed an earlier ruling that `ordered` was canonical; the assertions
+# below are the current rule, not a claim it has always been so.)
 
-# Canonical says no, alias says yes -- canonical wins
+# Alias says not-ordered, canonical says ordered -- canonical wins
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'false', 'list_type': 'ordered'}, element_order: 0}]) = E'- a\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'false', 'list_type': 'ordered'}, element_order: 0}]) = E'1. a\n\n';
 ----
 true
 
-# Canonical says yes, alias says no -- canonical wins
+# Alias says ordered, canonical says bullet -- canonical wins
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true', 'list_type': 'bullet'}, element_order: 0}]) = E'1. a\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true', 'list_type': 'bullet'}, element_order: 0}]) = E'- a\n\n';
 ----
 true
 
-# Alias alone is still honoured, for producers that emit only it
+# The legacy alias alone is still read, for producers that emit only it
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'ordered'}, element_order: 0}]) = E'1. a\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'ordered': 'true'}, element_order: 0}]) = E'1. a\n\n';
 ----
 true
 
-# The structural path reads the canonical name too, not only the alias
+# An unrecognised list_type is not "ordered", so it renders as a bullet list
+# rather than numbering something that is neither
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: NULL, encoding: 'json', attributes: MAP{'list_type': 'definition'}, element_order: 0}]) = E'- a\n\n';
+----
+true
+
+# The structural path applies the same precedence
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'false', 'list_type': 'ordered', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. a\n\n';
+----
+true
+
+# ...and still reads the legacy alias when the canonical name is absent
 query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'true', 'start': '2'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'2. a\n\n';
 ----
 true
 
-# ...and prefers it over a conflicting alias
+# `plain` is a spec 4.0 block type: a text run with no paragraph semantics,
+# which renders exactly as a paragraph would. It is not in this build's vendored
+# 2.0 vocabulary, so it reaches the unknown-block fallback -- and that fallback
+# emits content, so a tight list item keeps its text. Pinned because the cost of
+# not handling a new block type is CONTENT, not spacing: duck_block_utils lost
+# a tight item's text entirely to a type-name-driven walk.
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'ordered': 'false', 'list_type': 'ordered'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'a', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- a\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'plain', content: 'x', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'x\n\n';
+----
+true
+
+# ...inside a tight list item
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'plain', content: 'x', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'- x\n\n';
+----
+true
+
+# ...and inside a container, where a type-name-driven child walk would drop it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'x', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'> x\n\n';
 ----
 true
