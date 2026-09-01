@@ -40,6 +40,59 @@ INTENTIONAL_FALLTHROUGH = {
 }
 
 
+def vocabulary_of(constants):
+    """The element-type constants, excluding struct field offsets.
+
+    Selecting on the name prefix alone also catches KIND_IDX, which is a field
+    offset rather than an element type -- it reported as a GAP, which is the
+    noise that teaches people to ignore the arm that earns its keep. Vocabulary
+    values are lowercase tokens; offsets are digits. (Found by panduck.)
+    """
+    return {k: v for k, v in constants.items()
+            if k.startswith(("TYPE_", "INLINE_", "VALUE_", "KIND_")) and not v.isdigit()}
+
+
+def classify(local, upstream):
+    """Split the comparison into removed / changed / added, by name AND value."""
+    removed = sorted(set(local) - set(upstream))
+    added = sorted(set(upstream) - set(local))
+    changed = sorted(k for k in set(local) & set(upstream) if local[k] != upstream[k])
+    return removed, changed, added
+
+
+def self_test():
+    """Pin the properties this check exists for, rather than asserting them in a
+    comment. A guard nobody has watched fail is not yet a guard."""
+    base = {"TYPE_PAGE": "page_break", "TYPE_FIGURE": "figure", "KIND_IDX": "0"}
+    failures = []
+
+    # A rename, with the constant COUNT held identical.
+    renamed = {"TYPE_PAGE_BREAK": "page_break", "TYPE_FIGURE": "figure", "KIND_IDX": "0"}
+    removed, changed, added = classify(base, renamed)
+    if len(base) != len(renamed) or removed != ["TYPE_PAGE"] or not added:
+        failures.append("rename not caught with the count held constant")
+
+    # A value change, count identical, names identical.
+    revalued = dict(base, TYPE_PAGE="pagebreak")
+    removed, changed, added = classify(base, revalued)
+    if len(base) != len(revalued) or changed != ["TYPE_PAGE"] or removed or added:
+        failures.append("value change not caught with names and count identical")
+
+    # Cosmetic churn: same names, same values, different text. Must be silent.
+    removed, changed, added = classify(base, dict(base))
+    if removed or changed or added:
+        failures.append("cosmetic churn was not silent")
+
+    # Field offsets are not vocabulary.
+    if "KIND_IDX" in vocabulary_of(base):
+        failures.append("KIND_IDX selected as an element type")
+
+    for line in failures:
+        print("SELF-TEST FAILED: " + line)
+    print("self-test: " + ("FAILED" if failures else "all properties hold"))
+    return 1 if failures else 0
+
+
 def parse_constants(text):
     out = {}
     for name, sval, ival in CONST_RE.findall(text):
@@ -91,7 +144,12 @@ def main():
     ap.add_argument("--ref", default="origin/main",
                     help="upstream ref to compare against (default: origin/main)")
     ap.add_argument("--fetch", action="store_true", help="git fetch the upstream ref first")
+    ap.add_argument("--self-test", action="store_true",
+                    help="check the checker: rename, value change and cosmetic churn")
     args = ap.parse_args()
+
+    if args.self_test:
+        return self_test()
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_path = find_local(root)
@@ -117,9 +175,7 @@ def main():
     print(f"spec     local {local.get('SPEC_VERSION','?')}  upstream {upstream.get('SPEC_VERSION','?')}")
     print()
 
-    removed = sorted(set(local) - set(upstream))
-    added = sorted(set(upstream) - set(local))
-    changed = sorted(k for k in set(local) & set(upstream) if local[k] != upstream[k])
+    removed, changed, added = classify(local, upstream)
 
     breaking = False
     if removed:
@@ -141,8 +197,7 @@ def main():
 
     # Gaps: types upstream publishes that no renderer branches on.
     named, literal = handled_types(os.path.join(root, "src/duck_block_functions.cpp"))
-    vocab_types = {k: v for k, v in upstream.items()
-                   if k.startswith(("TYPE_", "INLINE_", "VALUE_", "KIND_"))}
+    vocab_types = vocabulary_of(upstream)
     gaps = sorted(k for k, v in vocab_types.items()
                   if k not in named and v not in literal and k not in INTENTIONAL_FALLTHROUGH)
     if gaps:
