@@ -5,9 +5,9 @@
 //
 //   upstream : teaguesterling/duckdb_duck_block_utils
 //              src/include/duck_block_vocabulary.hpp
-//   commit   : 4c9d4cf12fce59641a18c716ea6e6e5c01e9e701
-//              (4c9d4cf, 2026-08-31)
-//   spec     : SPEC_VERSION 6.0
+//   commit   : 010f36f4d4a577bb0970a208e2c4d6a7386ceff9
+//              (010f36f, 2026-08-31)
+//   spec     : SPEC_VERSION 6.1
 //
 // Re-sync by copying the file from that repo and updating the three lines
 // above. `make check-vocabulary` fails the build if this copy has drifted
@@ -256,8 +256,21 @@ struct DuckBlockVocabulary {
 	//               that already read the container's `content` -- which the rule has
 	//               required since v1 -- needs no change.
 	//
+	//   6.0 -> 6.1  ADDITIVE. `duck_blocks_normalize(blocks)` applies 6.0's content
+	//               rule to a finished block vector, so a producer can emit the naive
+	//               shape and fix it up afterwards instead of implementing the rule.
+	//
+	//               Needed because the rule is SIBLING-DEPENDENT: whether a text run
+	//               becomes its container's content or stays a `plain` depends on what
+	//               FOLLOWS it, which a streaming reader does not know when it reaches
+	//               the run. Raised by the panduck session, whose EPUB and LaTeX
+	//               readers both emit as they walk; it is true of any streaming reader
+	//               of any format, so the answer should not be four private lookaheads
+	//               that drift. Nothing is removed or renamed -- a consumer on 6.0 is
+	//               unaffected.
+	//
 	// The rule above is what will be followed from here.
-	static constexpr const char *SPEC_VERSION = "6.0";
+	static constexpr const char *SPEC_VERSION = "6.1";
 
 	// ========================================================================
 	// Block type names

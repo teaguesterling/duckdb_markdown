@@ -491,3 +491,31 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'flat', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'nested', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'- flat\n- nested\n\n';
 ----
 true
+
+# =============================================================================
+# SPEC 6.1: the content rule is SIBLING-DEPENDENT. Whether a text run becomes
+# its container's `content` or stays a `plain` child depends on what FOLLOWS
+# it, which a reader emitting as it walks cannot know when it reaches the run.
+# Upstream exports duck_blocks_normalize() so producers emit the naive shape
+# and fold it afterwards.
+#
+# That is a PRODUCER concern. What matters to this writer is that both shapes
+# render the same, so it never needs to care which one it was handed --
+# verified against the real normalize pass, which folded the first item and
+# left the second `plain` alone because it sits beside block siblings.
+#
+# The equivalence was true incidentally; these assert it.
+# =============================================================================
+
+# The naive shape: every text run as a `plain` child
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'plain', content: 'tight', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}])
+     = duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'tight', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]);
+----
+true
+
+# A `plain` beside block siblings is legitimate and survives normalisation
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'section', content: NULL, level: 1, encoding: 'text', attributes: MAP{'role': 'section'}, element_order: 0}, {kind: 'block', element_type: 'plain', content: 'Lead', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'heading', content: 'H', level: 2, encoding: 'text', attributes: MAP{'heading_level': '2'}, element_order: 2}]) = E'Lead\n\n## H\n\n';
+----
+true
