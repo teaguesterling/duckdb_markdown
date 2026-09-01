@@ -960,6 +960,24 @@ string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const s
 // file_path) may follow, so this is a minimum, not an exact width.
 static constexpr idx_t DUCK_BLOCK_FIELD_COUNT = Vocab::ELEMENT_ORDER_IDX + 1;
 
+// Whether a block renders the content it is given. Three declared block types do
+// not: `hr` and `page_break` are rules with no content slot, and `generic`
+// deliberately emits a naming comment instead of a foreign-format fragment.
+//
+// This matters because a block ABSORBS the inline run that follows it. Absorbing
+// into a type that then discards the result does not merely lose formatting, it
+// DELETES the run: `hr` followed by "Section two" rendered the rule and dropped
+// the sentence. The old COPY path got this right by accident, one element at a
+// time, and routing it through this renderer is what surfaced it.
+//
+// Kept as an explicit set rather than derived, because "does this branch use its
+// argument" is not a question the code can ask itself. The set is verified
+// empirically in scripts/check_conformance.py against EVERY declared type, so a
+// new content-discarding type fails there rather than silently eating a run.
+static bool BlockAbsorbsInlineRun(const string &element_type) {
+	return !(element_type == Vocab::TYPE_HR || element_type == Vocab::TYPE_PAGE || element_type == Vocab::TYPE_GENERIC);
+}
+
 static string DuckBlockKind(const Value &block_value) {
 	if (block_value.IsNull()) {
 		return "";
@@ -1411,11 +1429,15 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 		// both; among inlines the level IS the nesting, so a wrapper there takes
 		// what is deeper than itself.
 		idx_t scope_end;
-		if (kind == Vocab::KIND_BLOCK) {
+		if (kind == Vocab::KIND_BLOCK && BlockAbsorbsInlineRun(element_type)) {
 			scope_end = i + 1;
 			while (scope_end < end && DuckBlockKind(list_children[scope_end]) == Vocab::KIND_INLINE) {
 				scope_end++;
 			}
+		} else if (kind == Vocab::KIND_BLOCK) {
+			// Discards its content, so it takes nothing: the run that follows is
+			// rendered in its own right rather than absorbed and dropped.
+			scope_end = i + 1;
 		} else {
 			scope_end = SkipElementScope(list_children, i, end);
 		}

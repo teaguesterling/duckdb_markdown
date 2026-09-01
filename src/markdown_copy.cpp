@@ -1,5 +1,7 @@
 #include "markdown_copy.hpp"
 #include "duck_block_vocabulary.hpp"
+#include "duck_block_functions.hpp"
+#include "markdown_types.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -322,17 +324,19 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 				content = content_val.ToString();
 			}
 
-			// Get level (optional)
-			int32_t level = -1;
+			// Get level (optional). NULL is PRESERVED rather than defaulted: the
+			// shared renderer reads an absent level as the top level, and a
+			// sentinel like -1 would be read as a real depth and compare wrong.
+			Value level = Value(LogicalType::INTEGER);
 			if (bind_data.level_col_idx != DConstants::INVALID_INDEX) {
 				auto level_val = input.data[bind_data.level_col_idx].GetValue(row_idx);
 				if (!level_val.IsNull()) {
-					level = level_val.GetValue<int32_t>();
+					level = Value::INTEGER(level_val.GetValue<int32_t>());
 				}
 			}
 
 			// Get encoding (optional)
-			string encoding = "text";
+			string encoding = Vocab::ENCODING_TEXT;
 			if (bind_data.encoding_col_idx != DConstants::INVALID_INDEX) {
 				auto encoding_val = input.data[bind_data.encoding_col_idx].GetValue(row_idx);
 				if (!encoding_val.IsNull()) {
@@ -340,25 +344,29 @@ void MarkdownCopyFunction::Sink(ExecutionContext &context, FunctionData &bind_da
 				}
 			}
 
-			// Get attributes (optional)
-			Value attributes;
+			// Get attributes (optional). TYPED null when absent -- an untyped one
+			// makes the struct's type differ row to row, and the list below would
+			// then fail to build rather than degrade.
+			Value attributes = Value(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 			if (bind_data.attributes_col_idx != DConstants::INVALID_INDEX) {
-				attributes = input.data[bind_data.attributes_col_idx].GetValue(row_idx);
+				auto attributes_val = input.data[bind_data.attributes_col_idx].GetValue(row_idx);
+				if (!attributes_val.IsNull()) {
+					attributes = attributes_val;
+				}
 			}
 
-			// Determine if this element is inline
-			bool is_inline = (kind == "inline");
-
-			// Handle transitions between inline and block elements
-			if (lstate.last_was_inline && !is_inline) {
-				// Transitioning from inline to block: add paragraph break
-				lstate.buffer += "\n\n";
-			}
-
-			lstate.buffer += RenderElement(kind, element_type, content, level, encoding, attributes, bind_data);
-
-			// Track state for next element
-			lstate.last_was_inline = is_inline;
+			// Rebuild the duck_block and hand it to the SHARED renderer in Combine.
+			// element_order is NULL because this mode never bound the column: order
+			// here is row order, which is what the renderer's walk uses anyway.
+			child_list_t<Value> fields;
+			fields.emplace_back("kind", Value(kind));
+			fields.emplace_back("element_type", Value(element_type));
+			fields.emplace_back("content", Value(content));
+			fields.emplace_back("level", level);
+			fields.emplace_back("encoding", Value(encoding));
+			fields.emplace_back("attributes", attributes);
+			fields.emplace_back("element_order", Value(LogicalType::INTEGER));
+			lstate.elements.push_back(Value::STRUCT(std::move(fields)));
 		}
 	}
 }
@@ -372,6 +380,16 @@ void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind
 	auto &bind_data = bind_data_p.Cast<WriteMarkdownBindData>();
 	auto &gstate = gstate_p.Cast<WriteMarkdownGlobalState>();
 	auto &lstate = lstate_p.Cast<WriteMarkdownLocalState>();
+
+	if (!lstate.elements.empty()) {
+		// ONE renderer for duck_blocks, shared with duck_blocks_to_md. This path
+		// used to have its own row-at-a-time walk, which could not absorb inline
+		// runs and rendered `# H` + empty paragraph + inlines with two spurious
+		// blank lines between heading and body.
+		lstate.buffer += DuckBlockFunctions::RenderDuckBlocksToMarkdown(
+		    Value::LIST(MarkdownTypes::DuckBlockType(), std::move(lstate.elements)));
+		lstate.elements.clear();
+	}
 
 	if (lstate.buffer.empty()) {
 		return;
@@ -556,370 +574,18 @@ string MarkdownCopyFunction::RenderSection(int32_t level, const string &title, c
 	return result;
 }
 
-//===--------------------------------------------------------------------===//
-// Blocks Mode Helpers
-//===--------------------------------------------------------------------===//
-
-// Helper to get attribute from MAP value
-static string GetAttribute(const Value &attributes, const string &key) {
-	if (attributes.IsNull() || attributes.type().id() != LogicalTypeId::MAP) {
-		return "";
-	}
-	auto &map_children = MapValue::GetChildren(attributes);
-	for (const auto &entry : map_children) {
-		auto &entry_children = StructValue::GetChildren(entry);
-		if (entry_children.size() == 2 && !entry_children[0].IsNull()) {
-			if (entry_children[0].ToString() == key && !entry_children[1].IsNull()) {
-				return entry_children[1].ToString();
-			}
-		}
-	}
-	return "";
-}
-
-string MarkdownCopyFunction::RenderInlineElement(const string &element_type, const string &content,
-                                                 const Value &attributes, const WriteMarkdownBindData &bind_data) {
-	// Inline elements render WITHOUT trailing newlines
-	if (element_type == "link") {
-		// [text](href "title")
-		string href = GetAttribute(attributes, "href");
-		string title = GetAttribute(attributes, "title");
-		string result = "[" + content + "](" + href;
-		if (!title.empty()) {
-			result += " \"" + title + "\"";
-		}
-		result += ")";
-		return result;
-	} else if (element_type == "image") {
-		// ![alt](src "title")
-		string src = GetAttribute(attributes, "src");
-		string title = GetAttribute(attributes, "title");
-		string result = "![" + content + "](" + src;
-		if (!title.empty()) {
-			result += " \"" + title + "\"";
-		}
-		result += ")";
-		return result;
-	} else if (element_type == "bold" || element_type == "strong") {
-		return "**" + content + "**";
-	} else if (element_type == "italic" || element_type == "emphasis" || element_type == "em") {
-		return "*" + content + "*";
-	} else if (element_type == "code") {
-		// Handle content containing backticks
-		if (content.find('`') != string::npos) {
-			return "`` " + content + " ``";
-		}
-		return "`" + content + "`";
-	} else if (element_type == "text") {
-		return content;
-	} else if (element_type == "space") {
-		return " ";
-	} else if (element_type == "softbreak") {
-		return "\n";
-	} else if (element_type == "linebreak" || element_type == "br") {
-		return "  \n";
-	} else if (element_type == "strikethrough" || element_type == "del") {
-		return "~~" + content + "~~";
-	} else if (element_type == "superscript" || element_type == "sup") {
-		return "^" + content + "^";
-	} else if (element_type == "subscript" || element_type == "sub") {
-		return "~" + content + "~";
-	} else if (element_type == "underline") {
-		return "<u>" + content + "</u>";
-	} else if (element_type == "smallcaps") {
-		return "<span style=\"font-variant: small-caps\">" + content + "</span>";
-	} else if (element_type == "math") {
-		string display = GetAttribute(attributes, "display");
-		if (display == "block") {
-			return "$$" + content + "$$";
-		}
-		return "$" + content + "$";
-	} else if (element_type == "raw") {
-		return content;
-	} else if (element_type == "quoted") {
-		string quote_type = GetAttribute(attributes, "quote_type");
-		if (quote_type == "single") {
-			return "'" + content + "'";
-		}
-		return "\"" + content + "\"";
-	} else if (element_type == "cite") {
-		string key = GetAttribute(attributes, "key");
-		if (!key.empty()) {
-			return "[@" + key + "]";
-		}
-		return content;
-	} else if (element_type == "note") {
-		return "[^" + content + "]";
-	} else if (element_type == "span") {
-		return content;
-	} else {
-		// Unknown inline type - output as plain text
-		return content;
-	}
-}
-
-string MarkdownCopyFunction::RenderBlockElement(const string &element_type, const string &content, int32_t level,
-                                                const string &encoding, const Value &attributes,
-                                                const WriteMarkdownBindData &bind_data) {
-	string result;
-
-	if (element_type == "frontmatter" || element_type == "metadata") {
-		// YAML frontmatter
-		result = "---\n" + content + "\n---\n\n";
-	} else if (element_type == "heading") {
-		// ATX heading with level
-		// Per spec: heading_level attribute takes priority, fall back to level field
-		int32_t heading_level = 1;
-		string heading_level_attr = GetAttribute(attributes, Vocab::ATTR_HEADING_LEVEL);
-		if (!heading_level_attr.empty()) {
-			try {
-				heading_level = std::stoi(heading_level_attr);
-			} catch (...) {
-				heading_level = 1;
-			}
-		} else if (level > 0 && level <= 6) {
-			heading_level = level;
-		}
-		// Clamp to valid range
-		if (heading_level < 1)
-			heading_level = 1;
-		if (heading_level > 6)
-			heading_level = 6;
-		result = string(heading_level, '#') + " " + content + "\n\n";
-	} else if (element_type == "paragraph") {
-		// Plain paragraph
-		result = content + "\n\n";
-	} else if (element_type == "code") {
-		// Fenced code block
-		string language = GetAttribute(attributes, "language");
-		result = "```" + language + "\n" + content + "\n```\n\n";
-	} else if (element_type == "blockquote") {
-		// Block quote - add > prefix to each line
-		string quoted;
-		std::istringstream iss(content);
-		std::string line;
-		while (std::getline(iss, line)) {
-			quoted += "> " + line + "\n";
-		}
-		result = quoted + "\n";
-	} else if (element_type == "list") {
-		// List - content is JSON encoded, need to decode
-		// For now, output as-is if not JSON or parse if JSON
-		if (encoding == "json" && content.length() > 2 && content[0] == '[') {
-			// Simple JSON array parsing for list items
-			// Format: ["item1", "item2", ...]
-			bool ordered = GetAttribute(attributes, "ordered") == "true";
-			int start = 1;
-			string start_str = GetAttribute(attributes, "start");
-			if (!start_str.empty()) {
-				try {
-					start = std::stoi(start_str);
-				} catch (...) {
-				}
-			}
-
-			// Parse JSON array (simple implementation)
-			string items_str = content.substr(1, content.length() - 2); // Remove [ ]
-			vector<string> items;
-			string current_item;
-			bool in_string = false;
-			bool escape_next = false;
-
-			for (size_t i = 0; i < items_str.length(); i++) {
-				char c = items_str[i];
-				if (escape_next) {
-					if (c == 'n')
-						current_item += '\n';
-					else if (c == 't')
-						current_item += '\t';
-					else if (c == 'r')
-						current_item += '\r';
-					else
-						current_item += c;
-					escape_next = false;
-				} else if (c == '\\') {
-					escape_next = true;
-				} else if (c == '"') {
-					if (in_string) {
-						items.push_back(current_item);
-						current_item.clear();
-					}
-					in_string = !in_string;
-				} else if (in_string) {
-					current_item += c;
-				}
-			}
-
-			// Render list items
-			int item_num = start;
-			for (const auto &item : items) {
-				if (ordered) {
-					result += std::to_string(item_num++) + ". " + item + "\n";
-				} else {
-					result += "- " + item + "\n";
-				}
-			}
-			result += "\n";
-		} else {
-			// Fallback: output content directly
-			result = content + "\n\n";
-		}
-	} else if (element_type == "table") {
-		// Table - content is JSON encoded as {"headers": [...], "rows": [[...], ...]}
-		if (encoding == "json" && content.find("\"headers\"") != string::npos) {
-			// Parse JSON table format
-			vector<string> headers;
-			vector<vector<string>> rows;
-
-			// Simple JSON parsing for table structure
-			// Find headers array
-			size_t headers_start = content.find("\"headers\":");
-			if (headers_start != string::npos) {
-				size_t arr_start = content.find('[', headers_start);
-				size_t arr_end = content.find(']', arr_start);
-				if (arr_start != string::npos && arr_end != string::npos) {
-					string headers_str = content.substr(arr_start + 1, arr_end - arr_start - 1);
-					// Parse header items
-					bool in_string = false;
-					bool escape_next = false;
-					string current;
-					for (char c : headers_str) {
-						if (escape_next) {
-							current += c;
-							escape_next = false;
-						} else if (c == '\\') {
-							escape_next = true;
-						} else if (c == '"') {
-							if (in_string) {
-								headers.push_back(current);
-								current.clear();
-							}
-							in_string = !in_string;
-						} else if (in_string) {
-							current += c;
-						}
-					}
-				}
-			}
-
-			// Find rows array
-			size_t rows_start = content.find("\"rows\":");
-			if (rows_start != string::npos) {
-				size_t outer_start = content.find('[', rows_start);
-				if (outer_start != string::npos) {
-					// Parse each row
-					size_t pos = outer_start + 1;
-					while (pos < content.size()) {
-						size_t row_start = content.find('[', pos);
-						if (row_start == string::npos)
-							break;
-						size_t row_end = content.find(']', row_start);
-						if (row_end == string::npos)
-							break;
-
-						string row_str = content.substr(row_start + 1, row_end - row_start - 1);
-						vector<string> row;
-						bool in_string = false;
-						bool escape_next = false;
-						string current;
-						for (char c : row_str) {
-							if (escape_next) {
-								current += c;
-								escape_next = false;
-							} else if (c == '\\') {
-								escape_next = true;
-							} else if (c == '"') {
-								if (in_string) {
-									row.push_back(current);
-									current.clear();
-								}
-								in_string = !in_string;
-							} else if (in_string) {
-								current += c;
-							}
-						}
-						if (!row.empty()) {
-							rows.push_back(row);
-						}
-						pos = row_end + 1;
-					}
-				}
-			}
-
-			// Render as markdown table
-			if (!headers.empty()) {
-				result = "|";
-				for (const auto &h : headers) {
-					result += " " + h + " |";
-				}
-				result += "\n|";
-				for (size_t i = 0; i < headers.size(); i++) {
-					result += "---|";
-				}
-				result += "\n";
-				for (const auto &row : rows) {
-					result += "|";
-					for (const auto &cell : row) {
-						result += " " + cell + " |";
-					}
-					result += "\n";
-				}
-				result += "\n";
-			} else {
-				result = content + "\n\n";
-			}
-		} else {
-			result = content + "\n\n";
-		}
-	} else if (element_type == "hr") {
-		// Horizontal rule
-		result = "---\n\n";
-	} else if (element_type == "image") {
-		// Image: ![alt](src "title")
-		string src = GetAttribute(attributes, "src");
-		string alt = GetAttribute(attributes, "alt");
-		// Fall back to content as alt text if alt attribute is empty
-		if (alt.empty() && !content.empty()) {
-			alt = content;
-		}
-		string title = GetAttribute(attributes, "title");
-		result = "![" + alt + "](" + src;
-		if (!title.empty()) {
-			result += " \"" + title + "\"";
-		}
-		result += ")\n\n";
-	} else if (element_type == "html" || element_type == "raw" || element_type == "md:html_block") {
-		// Raw HTML
-		result = content + "\n\n";
-	} else {
-		// Unknown block type - output content as-is
-		result = content + "\n\n";
-	}
-
-	return result;
-}
-
-string MarkdownCopyFunction::RenderElement(const string &kind, const string &element_type, const string &content,
-                                           int32_t level, const string &encoding, const Value &attributes,
-                                           const WriteMarkdownBindData &bind_data) {
-	if (kind == "inline") {
-		// Inline elements render without trailing newlines
-		return RenderInlineElement(element_type, content, attributes, bind_data);
-	} else if (kind == "block") {
-		// Block elements render with trailing newlines
-		return RenderBlockElement(element_type, content, level, encoding, attributes, bind_data);
-	} else {
-		// Unknown kind - try to guess based on element_type
-		// Block types
-		if (element_type == "heading" || element_type == "paragraph" || element_type == "blockquote" ||
-		    element_type == "list" || element_type == "table" || element_type == "hr" || element_type == "metadata" ||
-		    element_type == "frontmatter" || element_type == "code" || element_type == "image" ||
-		    element_type == "raw" || element_type == "html" || element_type == "md:html_block") {
-			return RenderBlockElement(element_type, content, level, encoding, attributes, bind_data);
-		}
-		// Assume inline otherwise
-		return RenderInlineElement(element_type, content, attributes, bind_data);
-	}
-}
+// The blocks-mode renderer that lived here -- RenderInlineElement,
+// RenderBlockElement and RenderElement, ~340 lines -- is GONE. It was a second
+// implementation of duck_block rendering, and it had drifted: rendering one
+// element at a time, it could not absorb a block's inline run, so a paragraph
+// with NULL content and its inline children came out as separate blocks with
+// spurious blank lines between them. Sink now rebuilds the duck_block and
+// Combine calls DuckBlockFunctions::RenderDuckBlocksToMarkdown -- the same
+// renderer duck_blocks_to_md uses.
+//
+// Worth recording what deleting it FOUND: routing this path through the shared
+// renderer immediately failed a test this path had always passed, because the
+// shared renderer deleted the inline run after an `hr`. Two renderers meant each
+// bug was invisible to the tests that would have caught it in the other.
 
 } // namespace duckdb
