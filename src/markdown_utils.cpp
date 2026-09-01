@@ -33,12 +33,13 @@ namespace markdown_utils {
 // not help. Every scanner below runs in O(n) with bounded stack usage.
 //===--------------------------------------------------------------------===//
 
-// Result of locating a leading YAML-style frontmatter block.
+// Result of locating a leading frontmatter block.
 struct FrontmatterMatch {
 	bool found = false;
 	size_t body_start = 0;  // offset of first byte of the frontmatter body
 	size_t body_len = 0;    // length of the body (delimiters excluded)
-	size_t after_close = 0; // offset just past the closing "---"
+	size_t after_close = 0; // offset just past the closing delimiter
+	char delimiter = '-';   // '-' for YAML (---), '+' for TOML (+++)
 };
 
 // A leading UTF-8 BOM (EF BB BF) is an encoding marker, not content. cmark
@@ -54,15 +55,24 @@ static size_t SkipBOM(const std::string &s) {
 	return 0;
 }
 
-// Faithful linear replacement for R"(^---\r?\n([\s\S]*?)\r?\n---)".
-// Requires the string to begin with "---" then \r?\n, then finds the earliest
-// following "\r?\n---". Returns the body between the delimiters. O(n), no
-// recursion.
-static FrontmatterMatch FindFrontmatter(const std::string &s) {
+// Faithful linear replacement for R"(^(---|\+\+\+)\r?\n([\s\S]*?)\r?\n\1)".
+// Requires the string to begin with the delimiter then \r?\n, then finds the
+// earliest following "\r?\n" + delimiter. Returns the body between them. O(n),
+// no recursion.
+//
+// `+++` is TOML frontmatter, which Hugo emits by default. It was not recognised
+// until 2026-09-01, and the failure was not a missing feature -- it was silent
+// CORRUPTION. Unrecognised, the fence fell through to cmark as ordinary prose,
+// where softbreak-renders-as-space is correct, so a round-trip flattened
+//     +++\ntitle = "x"\ntags = ["a"]\n+++
+// into one line. TOML is line-oriented, so the result is no longer parseable by
+// anything: the fields are not merely misfiled, they are unrecoverable.
+static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
 	FrontmatterMatch m;
-	// Opening delimiter: an optional BOM, then "---" then \r?\n
+	m.delimiter = d;
+	// Opening delimiter: an optional BOM, then the fence then \r?\n
 	const size_t b = SkipBOM(s);
-	if (s.size() < b + 4 || s[b] != '-' || s[b + 1] != '-' || s[b + 2] != '-') {
+	if (s.size() < b + 4 || s[b] != d || s[b + 1] != d || s[b + 2] != d) {
 		return m;
 	}
 	size_t p = b + 3;
@@ -75,9 +85,9 @@ static FrontmatterMatch FindFrontmatter(const std::string &s) {
 	p++; // start of body
 	size_t body_start = p;
 
-	// Closing delimiter: earliest '\n' immediately followed by "---".
+	// Closing delimiter: earliest '\n' immediately followed by the same fence.
 	while (p < s.size()) {
-		if (s[p] == '\n' && p + 4 <= s.size() && s[p + 1] == '-' && s[p + 2] == '-' && s[p + 3] == '-') {
+		if (s[p] == '\n' && p + 4 <= s.size() && s[p + 1] == d && s[p + 2] == d && s[p + 3] == d) {
 			size_t body_end = p; // at the '\n'
 			// The delimiter is \r?\n, so drop a trailing '\r' from the body.
 			if (body_end > body_start && s[body_end - 1] == '\r') {
@@ -86,12 +96,22 @@ static FrontmatterMatch FindFrontmatter(const std::string &s) {
 			m.found = true;
 			m.body_start = body_start;
 			m.body_len = body_end - body_start;
-			m.after_close = p + 4; // just past the closing "---"
+			m.after_close = p + 4; // just past the closing fence
 			return m;
 		}
 		p++;
 	}
 	return m;
+}
+
+// YAML first: `---` is by far the common case, and a document cannot open with
+// both fences, so the order is a cost question rather than a precedence one.
+static FrontmatterMatch FindFrontmatter(const std::string &s) {
+	auto m = FindFrontmatterDelimited(s, '-');
+	if (m.found) {
+		return m;
+	}
+	return FindFrontmatterDelimited(s, '+');
 }
 
 // JSON-escape a string per RFC 8259 for `encoding='json'` block content: the named short
@@ -250,13 +270,18 @@ MarkdownMetadata ExtractMetadata(const std::string &markdown_str) {
 	// (see FindFrontmatter) instead of a backtracking std::regex.
 	auto fm = FindFrontmatter(markdown_str);
 	if (fm.found) {
-		std::string yaml_content = markdown_str.substr(fm.body_start, fm.body_len);
+		std::string fm_content = markdown_str.substr(fm.body_start, fm.body_len);
 
-		// Basic YAML parsing for common fields (placeholder)
-		std::istringstream stream(yaml_content);
+		// Line-split key/value, NOT a parser -- see README. The separator follows
+		// the fence: YAML writes `key: value`, TOML writes `key = value`. Splitting
+		// TOML on ':' matched nothing and returned an empty map, which reads as
+		// "this document has no metadata" rather than "this reader does not split
+		// this dialect".
+		const char separator = (fm.delimiter == '+') ? '=' : ':';
+		std::istringstream stream(fm_content);
 		std::string line;
 		while (std::getline(stream, line)) {
-			auto colon_pos = line.find(':');
+			auto colon_pos = line.find(separator);
 			if (colon_pos != std::string::npos) {
 				std::string key = line.substr(0, colon_pos);
 				std::string value = line.substr(colon_pos + 1);
@@ -1074,8 +1099,13 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 
 	int32_t block_order = 1;
 
-	// Check for frontmatter first
-	std::string frontmatter = ExtractRawFrontmatter(markdown_str);
+	// Check for frontmatter first. The MATCH is used rather than the extracted
+	// string because the fence determines the encoding: `---` is YAML, `+++` is
+	// TOML. Reporting TOML as 'yaml' would be a worse failure than the flattening
+	// this replaced -- it would hand a consumer bytes that parse cleanly as the
+	// wrong format rather than failing loudly.
+	auto fm_match = FindFrontmatter(markdown_str);
+	std::string frontmatter = fm_match.found ? markdown_str.substr(fm_match.body_start, fm_match.body_len) : "";
 	if (!frontmatter.empty()) {
 		// OPEN. Which level a duck_block frontmatter row should carry.
 		//
@@ -1116,7 +1146,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		fm_block.attributes[Vocab::ATTR_ROLE] = Vocab::ROLE_FRONTMATTER;
 		fm_block.content = frontmatter;
 		fm_block.level = 0;
-		fm_block.encoding = "yaml";
+		fm_block.encoding = fm_match.delimiter == '+' ? Vocab::ENCODING_TOML : Vocab::ENCODING_YAML;
 		fm_block.block_order = block_order++;
 		blocks.push_back(fm_block);
 	}

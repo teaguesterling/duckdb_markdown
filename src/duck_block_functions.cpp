@@ -670,8 +670,12 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 	string result;
 
 	if (element_type == "frontmatter" || element_type == Vocab::TYPE_METADATA) {
-		// YAML frontmatter
-		result = "---\n" + content + "\n---\n\n";
+		// The FENCE follows the encoding: `+++` for TOML, `---` otherwise. Writing
+		// `---` around a TOML body is a worse failure than not recognising TOML at
+		// all -- the bytes then parse cleanly as the wrong format instead of
+		// failing loudly, and the round-trip silently relabels a Hugo document.
+		const string fence = (encoding == Vocab::ENCODING_TOML) ? "+++" : "---";
+		result = fence + "\n" + content + "\n" + fence + "\n\n";
 	} else if (element_type == Vocab::TYPE_HEADING) {
 		// ATX heading with level
 		// Per spec: heading_level attribute takes priority, fall back to level field
