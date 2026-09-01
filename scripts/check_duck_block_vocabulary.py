@@ -135,6 +135,11 @@ def check_vendored_conformance(root, vocab):
     for label, macro, expected in (
         ("kinds", "duck_block_declared_kinds", vocab["kinds"]),
         ("types", "duck_block_declared_types", vocab["types"]),
+        # Encodings became a THIRD axis upstream on 2026-09-01, after the list had
+        # been hardcoded in four places and nothing compared them. A new list that
+        # nothing compares is the same gap that let `role` go unguarded here, so it
+        # is compared from the day it appears rather than the day it drifts.
+        ("encodings", "duck_block_declared_encodings", vocab["encodings"]),
     ):
         m = re.search(r"MACRO " + macro + r"\(\) AS \(\s*\[(.*?)\]", text, re.S)
         if not m:
@@ -330,6 +335,7 @@ def main():
     vocab_axes = {
         "kinds": {v for k, v in vocabulary_of(local).items() if k.startswith("KIND_")},
         "types": {v for k, v in vocabulary_of(local).items() if not k.startswith("KIND_")},
+        "encodings": {v for k, v in local.items() if k.startswith("ENCODING_") and not v.isdigit()},
     }
     for problem in check_vendored_conformance(root, vocab_axes):
         breaking = True

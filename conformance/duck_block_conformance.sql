@@ -76,10 +76,18 @@
 -- file offered only one of the two, so the mistake was available to make.
 CREATE OR REPLACE MACRO duck_block_declared_kinds() AS (['block', 'inline', 'value']);
 
+-- Declared `encoding` values. Also a literal until 2026-09-01, and also compared
+-- against the build by check_conformance_macro.py -- this list was hardcoded in FOUR
+-- places across the repo, so adding `toml` was a five-file change with four copies
+-- nothing checked.
+CREATE OR REPLACE MACRO duck_block_declared_encodings() AS (
+    ['text', 'json', 'yaml', 'html', 'xml', 'latex', 'markdown', 'toml']
+);
+
 CREATE OR REPLACE MACRO duck_block_is_valid(elem) AS (
     list_contains(duck_block_declared_kinds(), elem.kind)
     AND elem.element_type IS NOT NULL
-    AND elem.encoding IN ('text', 'json', 'yaml', 'html', 'xml', 'latex', 'markdown')
+    AND list_contains(duck_block_declared_encodings(), elem.encoding)
     AND elem.level IS NOT NULL
     AND elem.level >= 1
     AND elem.element_order IS NOT NULL
@@ -149,7 +157,7 @@ CREATE OR REPLACE MACRO duck_blocks_errors(blocks) AS TABLE (
     SELECT el.element_order, 'encoding',
            'Invalid encoding ' || chr(39) || el.encoding || chr(39)
       FROM e WHERE el.encoding IS NOT NULL
-        AND NOT list_contains(['text','json','yaml','html','xml','latex','markdown'], el.encoding)
+        AND NOT list_contains(duck_block_declared_encodings(), el.encoding)
     UNION ALL
     SELECT el.element_order, 'level',
            CASE WHEN el.level IS NULL

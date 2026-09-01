@@ -1,4 +1,5 @@
 #include "markdown_copy.hpp"
+#include "duck_block_vocabulary.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -6,6 +7,8 @@
 #include "duckdb/parser/parsed_data/copy_info.hpp"
 
 namespace duckdb {
+
+using Vocab = DuckBlockVocabulary;
 
 //===--------------------------------------------------------------------===//
 // WriteMarkdownBindData
@@ -667,7 +670,7 @@ string MarkdownCopyFunction::RenderBlockElement(const string &element_type, cons
 		// ATX heading with level
 		// Per spec: heading_level attribute takes priority, fall back to level field
 		int32_t heading_level = 1;
-		string heading_level_attr = GetAttribute(attributes, "heading_level");
+		string heading_level_attr = GetAttribute(attributes, Vocab::ATTR_HEADING_LEVEL);
 		if (!heading_level_attr.empty()) {
 			try {
 				heading_level = std::stoi(heading_level_attr);

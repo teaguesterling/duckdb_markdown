@@ -676,7 +676,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		// ATX heading with level
 		// Per spec: heading_level attribute takes priority, fall back to level field
 		int32_t heading_level = 1;
-		string heading_level_attr = GetAttribute(attributes, "heading_level");
+		string heading_level_attr = GetAttribute(attributes, Vocab::ATTR_HEADING_LEVEL);
 		if (!heading_level_attr.empty()) {
 			try {
 				heading_level = std::stoi(heading_level_attr);
@@ -726,7 +726,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 			// -- definition and navigation lists -- that `ordered=false` can only
 			// say a list is not. Both producers emit both names, so this decides
 			// only which one wins when they disagree.
-			const string list_type = GetAttribute(attributes, "list_type");
+			const string list_type = GetAttribute(attributes, Vocab::ATTR_LIST_TYPE);
 			const bool ordered =
 			    !list_type.empty() ? (list_type == "ordered") : (GetAttribute(attributes, "ordered") == "true");
 			int start = 1;
@@ -910,7 +910,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		// verbatim source fragment that would be noise in a markdown document, but
 		// dropping it silently is what `generic` exists to prevent -- so name the
 		// construct and leave a trace a reader can grep for.
-		string source_type = SanitizeForHtmlComment(GetAttribute(attributes, "source_type"));
+		string source_type = SanitizeForHtmlComment(GetAttribute(attributes, Vocab::ATTR_SOURCE_TYPE));
 		if (source_type.empty()) {
 			result = "<!-- unsupported block -->\n\n";
 		} else {
@@ -1183,7 +1183,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 				const idx_t scope_end = SkipElementScope(list_children, i, end);
 				if (scope_end > i + 1) {
 					// Canonical `list_type` first, then the legacy `ordered` alias.
-					const string list_type = GetAttributeOf(block_value, "list_type");
+					const string list_type = GetAttributeOf(block_value, Vocab::ATTR_LIST_TYPE);
 					const bool ordered = !list_type.empty() ? (list_type == "ordered")
 					                                        : (GetAttributeOf(block_value, "ordered") == "true");
 					const string number_style = GetAttributeOf(block_value, "number_style");
@@ -1225,7 +1225,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 							StringUtil::Trim(text);
 							// Anything not marked a definition is a label: an item whose
 							// role is missing reads as a term rather than disappearing.
-							if (GetAttributeOf(list_children[j], "role") == "definition") {
+							if (GetAttributeOf(list_children[j], Vocab::ATTR_ROLE) == Vocab::ROLE_DEFINITION) {
 								// ":" plus three spaces, so a continuation block lands at
 								// four. Two was not enough: a reader takes a 2-space block
 								// as a new top-level paragraph, which splits the list in
@@ -1822,7 +1822,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 
 					    // Get heading level: attribute takes priority, fall back to level field
 					    int32_t heading_level = 1;
-					    string heading_level_attr = GetAttribute(attributes, "heading_level");
+					    string heading_level_attr = GetAttribute(attributes, Vocab::ATTR_HEADING_LEVEL);
 					    if (!heading_level_attr.empty()) {
 						    try {
 							    heading_level = std::stoi(heading_level_attr);

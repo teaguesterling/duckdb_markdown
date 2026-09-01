@@ -1,4 +1,5 @@
 #include "markdown_utils.hpp"
+#include "duck_block_vocabulary.hpp"
 #include <mutex>
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
@@ -15,6 +16,8 @@
 #include <cmark-gfm-core-extensions.h>
 
 namespace duckdb {
+
+using Vocab = DuckBlockVocabulary;
 
 namespace markdown_utils {
 
@@ -1109,8 +1112,8 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		// keeps what the old name carried: the TYPE says which of the two metadata
 		// homes this is (a verbatim blob, not the kind='value' tree), the ROLE says
 		// which source construct it came from.
-		fm_block.block_type = "metadata";
-		fm_block.attributes["role"] = "frontmatter";
+		fm_block.block_type = Vocab::TYPE_METADATA;
+		fm_block.attributes[Vocab::ATTR_ROLE] = Vocab::ROLE_FRONTMATTER;
 		fm_block.content = frontmatter;
 		fm_block.level = 0;
 		fm_block.encoding = "yaml";
