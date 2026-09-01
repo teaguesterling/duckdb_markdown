@@ -289,6 +289,32 @@ def main():
     vocab_types = vocabulary_of(upstream)
     gaps = sorted(k for k, v in vocab_types.items()
                   if k not in named and v not in literal and k not in INTENTIONAL_FALLTHROUGH)
+
+    # AUDIT THE ALLOWLIST, in BOTH ways an entry expires. An entry that excuses
+    # nothing is worse than none: it reads as a considered decision while
+    # guarding a case that no longer exists.
+    #
+    #   stale key   the constant was renamed or removed upstream, so the entry
+    #               matches nothing. Invisible to any check that only asks
+    #               whether the excused case still fails -- the case is simply
+    #               absent, which looks exactly like the exemption working.
+    #   superseded  the type is now branched on explicitly, so it is not a
+    #               fallthrough at all. Filtered out before the allowlist is
+    #               consulted, so it would never be reported either.
+    #
+    # (The first mode is duck_block_utils'; the second is the one they took
+    # from here. Neither audit had both until tonight.)
+    for key, reason in sorted(INTENTIONAL_FALLTHROUGH.items()):
+        if key not in vocab_types:
+            breaking = True
+            print(f"EXPIRED  {key}: allowlisted as an intentional fallthrough, but upstream")
+            print(f"         no longer publishes it. DELETE the entry -- it excuses nothing.")
+            print(f"         Recorded reason was: {reason}")
+        elif key in named or vocab_types[key] in literal:
+            breaking = True
+            print(f"EXPIRED  {key}: allowlisted as an intentional fallthrough, but this build")
+            print(f"         now branches on it explicitly. DELETE the entry, do not reword it.")
+            print(f"         Recorded reason was: {reason}")
     if gaps:
         print()
         print("GAPS   published but not branched on (renders via fallthrough):")
