@@ -24,10 +24,37 @@ check-producer:
 	python3 scripts/check_against_producer.py
 
 # Check this reader's output against the canonical duck_block conformance rules.
-# Unlike check-producer this has NO external dependency: the rules are pure SQL,
-# so it cannot skip. duck_blocks_validate() lives in an extension this repo
-# cannot load at all, so before these macros existed nothing had ever checked
-# this reader's output against the canonical rules.
+# Unlike check-producer it has no NETWORK dependency and cannot skip. It does
+# need a BUILD: the rules are pure SQL, but the reader under test is this
+# extension and the script LOADs it. Saying "pure SQL, no extension" is what put
+# this in a CI job with no build, where it failed five runs straight.
+# duck_blocks_validate() lives in an extension this repo cannot load at all, so
+# before these macros existed nothing had ever checked this reader's output
+# against the canonical rules.
 .PHONY: check-conformance
 check-conformance:
 	python3 scripts/check_conformance.py
+
+# Run EVERY check and report every failure.
+#
+# Each check is a separate target, which meant the only way to run them all was
+# to remember all three -- and running two of three is indistinguishable from
+# running three when you only read the last line. Recipe lines also stop at the
+# first failure, so a naive `check: check-vocabulary check-conformance
+# check-producer` would leave later checks unrun and look like a single problem
+# when there might be three. (duck_block_utils hit exactly this: eight scripts as
+# sequential recipe lines, a failure in check 2 left 6 of 8 unrun.)
+#
+# So: keep going, collect names, and print what FAILED and what never ran.
+.PHONY: check
+check:
+	@fail=""; \
+	for c in "vocabulary:scripts/check_duck_block_vocabulary.py" \
+	         "conformance:scripts/check_conformance.py" \
+	         "producer:scripts/check_against_producer.py"; do \
+	  name=$${c%%:*}; script=$${c##*:}; \
+	  printf '\n=== %s ===\n' "$$name"; \
+	  python3 "$$script" || fail="$$fail $$name"; \
+	done; \
+	printf '\n'; \
+	if [ -n "$$fail" ]; then echo "FAILED:$$fail"; exit 1; else echo "all checks passed"; fi

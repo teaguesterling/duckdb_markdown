@@ -17,6 +17,7 @@ check-producer this has no dependency that can go missing and no skip path.
 CONTROL FIRST. Every silence here is worthless unless the macros can object --
 their type check accepted ANY string until it was fixed upstream on 2026-09-01.
 """
+import glob
 import os
 import re
 import subprocess
@@ -138,6 +139,46 @@ def absorption_cases():
     ]
 
 
+
+def corpus_cases():
+    """Every markdown document in the repo, through the advisory rules.
+
+    The CASES above are hand-built shapes; this is what the reader actually does
+    to real documents. duck_blocks_warnings() is upstream's advisory set -- the
+    preferences that validity does not express, so that two conformant producers
+    cannot silently differ on the same document. duck_blocks_are_valid() also
+    carries the two DOCUMENT-shape rules a per-element check cannot see: unique
+    element_order, and depth descending one level at a time. Upstream calls the
+    level-jump rule the one whose absence caused a year of drift across four
+    extensions.
+
+    Reported as the LIST OF OFFENDING FILES rather than a count, so a failure
+    names the document instead of asserting that some document somewhere is bad.
+    """
+    corpus = sorted(glob.glob(os.path.join(REPO, "test/data/*.md")) +
+                    glob.glob(os.path.join(REPO, "docs/*.md")) +
+                    [os.path.join(REPO, "README.md")])
+    corpus = [f for f in corpus if os.path.exists(f)]
+    if not corpus:
+        return []
+    def lit(p):
+        return "'" + p.replace("'", "''") + "'"
+    warn = " UNION ALL ".join(
+        f"SELECT {lit(os.path.relpath(f, REPO))} AS f FROM duck_blocks_warnings("
+        f"(SELECT parse_markdown_to_duck_blocks(content) FROM read_text({lit(f)})))"
+        for f in corpus)
+    invalid = " UNION ALL ".join(
+        f"SELECT {lit(os.path.relpath(f, REPO))} AS f FROM read_text({lit(f)}) "
+        f"WHERE NOT duck_blocks_are_valid(parse_markdown_to_duck_blocks(content))"
+        for f in corpus)
+    return [
+        (f"no advisory warning on any of {len(corpus)} repo documents",
+         f"(SELECT coalesce(list(DISTINCT f), []) FROM ({warn}))", "[]"),
+        (f"all {len(corpus)} repo documents are valid (order + level shape)",
+         f"(SELECT coalesce(list(DISTINCT f), []) FROM ({invalid}))", "[]"),
+    ]
+
+
 def main():
     for what, ok in (("this extension's build", os.path.exists(EXT)),
                      ("the vendored rules at conformance/", os.path.exists(RULES))):
@@ -145,7 +186,7 @@ def main():
             print(f"FAILED: missing {what}. This check has no skip path by design.")
             return 1
 
-    cases = CASES + absorption_cases()
+    cases = CASES + absorption_cases() + corpus_cases()
 
     sql = [f"LOAD '{EXT}';", f".read {RULES}", ".mode list", ".header off"]
     sql += [f"SELECT {expr};" for _, expr, _ in cases]

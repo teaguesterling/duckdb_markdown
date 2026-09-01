@@ -176,6 +176,59 @@ CREATE OR REPLACE MACRO duck_blocks_errors(blocks) AS TABLE (
     SELECT ord, 'element_order', 'Duplicate element_order value' FROM dup
 );
 
+-- ADVISORY WARNINGS. Legal shapes that are superseded, non-canonical, or lose
+-- information. Separate from duck_blocks_errors: none of these makes a document
+-- invalid, and a consumer must still read data that trips them.
+--
+-- Added because webbed asked whether "content iff a single text child" applies to
+-- `figure` as well as `list_item`. It does -- the rule is universal and the extension's
+-- normalizer and linter are both type-blind -- but the vendorable file had validity and
+-- no advisory rules, so a producer who cannot load the extension had NO INSTRUMENT
+-- EXPRESSING THE PREFERENCE. Two conformant producers could differ on the same document
+-- with nothing objecting, which is the divergence this vocabulary exists to remove.
+--
+-- Compared against the extension's duck_blocks_lint() by test/check_conformance_macro.py.
+CREATE OR REPLACE MACRO duck_blocks_warnings(blocks) AS TABLE (
+    WITH e AS (SELECT unnest(blocks) AS el, generate_subscripts(blocks, 1) AS pos),
+    nxt AS (
+        SELECT el, pos,
+               lead(el) OVER (ORDER BY pos) AS nx,
+               lag(el)  OVER (ORDER BY pos) AS pv
+        FROM e
+    )
+    -- A `plain` that is the only child of a content-empty container. Its text belongs
+    -- in that container's own `content`. UNIVERSAL: figure, section, div, blockquote,
+    -- caption and list_item alike -- decided by what sits BESIDE the run, never by
+    -- which element_type is above it.
+    SELECT el.element_order AS element_order, 'plain_should_be_content' AS rule,
+           'plain is the only child of ' || pv.element_type ||
+           '; its text belongs in that element''s content' AS message
+    FROM nxt
+    WHERE el.element_type = 'plain' AND el.kind = 'block'
+      AND pv IS NOT NULL AND pv.kind = 'block'
+      AND coalesce(pv.content, '') = '' AND pv.level = el.level - 1
+      AND (nx IS NULL OR nx.level < el.level OR nx.kind <> 'block')
+    UNION ALL
+    -- A table not in the native schema.
+    SELECT el.element_order, 'table_not_native',
+           'table content is not the native {headers,rows} schema'
+    FROM e WHERE el.element_type = 'table'
+      AND coalesce(el.content, '') <> '' AND position('"headers"' IN el.content) = 0
+    UNION ALL
+    SELECT el.element_order, 'deflist_superseded',
+           'deflist is superseded by list with list_type=''definition'''
+    FROM e WHERE el.element_type = 'deflist'
+    UNION ALL
+    SELECT el.element_order, 'heading_without_rank',
+           'heading without attributes[''heading_level'']: do NOT fall back to level'
+    FROM e WHERE el.element_type = 'heading'
+      AND coalesce(el.attributes['heading_level'], '') = ''
+    UNION ALL
+    SELECT el.element_order, 'undeclared_element_type',
+           'element_type ' || el.element_type || ' is not in the vocabulary'
+    FROM e WHERE NOT list_contains(duck_block_declared_types(), el.element_type)
+);
+
 -- Document shape. The other 2, and they are the ones a per-element check CANNOT see:
 --
 --   duplicate element_order  needs the whole list
