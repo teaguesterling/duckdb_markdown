@@ -1058,6 +1058,29 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	// Check for frontmatter first
 	std::string frontmatter = ExtractRawFrontmatter(markdown_str);
 	if (!frontmatter.empty()) {
+		// OPEN, MEASURED 2026-09-01 against duck_block spec 6.1. Two level
+		// conventions meet here and disagree.
+		//
+		// This extension's SECTION convention uses level 0 for frontmatter and
+		// 1-6 for headings. That is correct, documented, and load-bearing: the
+		// COPY TO example in README.md renders level 0 as a frontmatter block,
+		// verified by running it verbatim.
+		//
+		// The duck_block convention is structural DEPTH, minimum 1, since spec
+		// 3.0. So these rows are rejected by the canonical validator:
+		//
+		//   duck_blocks_validate -> {"valid":false,"errors":[{"field":"level",
+		//     "message":"level 0 is below 1; top level is 1"}]}
+		//
+		// Not changed here: `read_markdown_blocks` emitting level 1 instead
+		// would be a breaking change to a documented public API, and the two
+		// conventions are separately correct in their own worlds. What is
+		// unresolved is which one wins where they meet -- that is a decision,
+		// not a defect to quietly patch at the point of emission.
+		//
+		// `block_type = "frontmatter"` is likewise outside the vocabulary, whose
+		// canonical name is `metadata`. The validator ACCEPTS it, so it is the
+		// lesser of the two.
 		MarkdownBlock fm_block;
 		fm_block.block_type = "frontmatter";
 		fm_block.content = frontmatter;
