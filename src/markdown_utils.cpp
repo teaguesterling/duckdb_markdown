@@ -1100,24 +1100,17 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		// a documented public API, so it is a decision rather than a defect to
 		// patch at the point of emission.
 		//
-		// `block_type = "frontmatter"` is a separate and clearer divergence, and
-		// unlike the level it has no competing local requirement -- the declared
-		// element_type is `metadata`, nothing here needs the name `frontmatter`,
-		// and this writer already accepts both.
-		//
-		// It is also no longer unobjected-to. That was true when first recorded
-		// and stopped being true the same hour, upstream having closed the hole
-		// where any string passed validation:
-		//
-		//   duck_blocks_lint, MEASURED 2026-09-01, spec 6.1
-		//   "element_type 'frontmatter' is not in the vocabulary
-		//    (duck_block_type_names())"
-		//
-		// So the remaining reason to keep it is compatibility alone: it is the
-		// documented output of read_markdown_blocks and eight test sites use it.
-		// That is still a decision, but a narrower one than the level.
+		// The type name is SETTLED as of spec 6.2: `metadata` + role='frontmatter'.
+		// What remains open here is the LEVEL alone.
 		MarkdownBlock fm_block;
-		fm_block.block_type = "frontmatter";
+		// `metadata` + role='frontmatter', declared in spec 6.2. `frontmatter` was
+		// never a vocabulary type -- one type plus a role attribute is the spec's
+		// own stated principle, "rather than minting a type per variant", and it
+		// keeps what the old name carried: the TYPE says which of the two metadata
+		// homes this is (a verbatim blob, not the kind='value' tree), the ROLE says
+		// which source construct it came from.
+		fm_block.block_type = "metadata";
+		fm_block.attributes["role"] = "frontmatter";
 		fm_block.content = frontmatter;
 		fm_block.level = 0;
 		fm_block.encoding = "yaml";

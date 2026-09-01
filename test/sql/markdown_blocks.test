@@ -57,13 +57,23 @@ print("hello")	python
 # Test: Frontmatter extraction
 # =============================================================================
 
-query III
-SELECT element_type, level, encoding FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
+# Spec 6.2: the type is `metadata` and the ROLE says which construct it came
+# from. `frontmatter` was never a declared element_type. The level is 0 here and
+# stays 0 -- that is a separate, open decision, not part of the rename.
+query IIII
+SELECT element_type, level, encoding, attributes['role']
+FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'metadata';
 ----
-frontmatter	0	yaml
+metadata	0	yaml	frontmatter
+
+# The old name must NOT come back
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
+----
+0
 
 query I
-SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
+SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'metadata';
 ----
 true
 
@@ -248,7 +258,7 @@ COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '__TEST_DIR__/only_fm.md' (FORMAT
 query II
 SELECT element_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
 ----
-frontmatter	0
+metadata	0
 
 # =============================================================================
 # Test: Attributes are correctly populated

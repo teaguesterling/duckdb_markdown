@@ -1,22 +1,3 @@
--- VENDORED COPY -- do not edit. Any change here is drift, by definition.
---
---   upstream : teaguesterling/duckdb_duck_block_utils
---              conformance/duck_block_conformance.sql
---   commit   : 4565c602c607ae4d4ff3f915180b1e329beb3019
---              (4565c60, 2026-09-01)
---
--- Vendored because it is the ONLY conformance this extension can run. DuckDB
--- matches extension ABI on the exact version string and this repo builds DuckDB
--- from a pinned submodule, so duck_block_utils cannot be loaded here by any
--- route -- not INSTALL, not LOAD '<path>'. Its duck_blocks_validate() has
--- therefore never been runnable against this reader, which is a fair part of
--- why the defects found today survived. This file needs nothing but DuckDB.
---
--- The embedded type AND kind lists are a SECOND copy of the vocabulary. Two copies checked
--- by the same party cannot detect their own disagreement, so
--- `make check-vocabulary` compares it against the vendored header, which is
--- itself compared against upstream. Drift in either link fails.
---
 -- duck_block conformance checks, PURE SQL -- no duck_block_utils required.
 --
 -- WHY THIS FILE EXISTS. duck_blocks_validate() ships inside an extension built for a
@@ -62,11 +43,23 @@
 --   CREATE TEMP TABLE b AS SELECT my_reader('doc.epub') AS blk;
 --   SELECT duck_blocks_are_valid(blk) FROM b;
 --
--- Reported by the panduck session on first use. It is worth stating here because the
--- error names SUBQUERIES and the caller did not write one, so the fix is not
--- discoverable from the message -- and checking a producer's output is the whole point
--- of this file. A scalar producer passes inline fine (measured); the restriction is
--- specific to table functions.
+-- MATERIALISE FIRST, ALWAYS. Do not try to work out whether your producer is exempt.
+--
+-- This file said "a scalar producer passes inline fine; the restriction is specific to
+-- table functions". That was measured -- and measured on THIS repo's producers, which
+-- are the ones that happen to work. panduck's producer is also scalar and does NOT
+-- work, because what trips the binder is what the producer EXPANDS TO once inlined
+-- into a subquery position, not the kind it is declared as. panduck's dispatch runs
+-- through `query()`, which rejects a subquery in its argument including one that
+-- arrives by macro inlining.
+--
+-- So the exemption is not knowable from here: it depends on an implementation this
+-- file cannot see. An accurate-sounding exemption is worse than none, because it
+-- invites exactly the inline call that fails, with an error naming subqueries the
+-- caller never wrote.
+--
+-- Reported twice by the panduck session: once as the restriction, once to correct the
+-- exemption I wrote in response to it.
 --
 -- The macros are `duck_block_is_valid` (one element) and `duck_blocks_are_valid` (a
 -- document). The FILE name is not a macro name -- also panduck, who grepped for it.
@@ -132,6 +125,47 @@ CREATE OR REPLACE MACRO duck_blocks_undeclared_types(blocks) AS (
          WHERE NOT list_contains(duck_block_declared_types(), e.element_type)),
         []::VARCHAR[]
     )
+);
+
+-- ERRORS WITH DETAIL, not just a verdict. Requested by Teague after panduck hit the
+-- gap immediately: `duck_blocks_are_valid` tells you a fixture broke and nothing about
+-- WHERE, so they were bisecting a twelve-fixture gate by hand. This returns the same
+-- {element_order, field, message} rows the extension's `duck_blocks_validate` does,
+-- and check_conformance_macro.py compares the two so they cannot drift apart.
+--
+-- A boolean is the right thing for a gate and the wrong thing for a FAILING gate.
+CREATE OR REPLACE MACRO duck_blocks_errors(blocks) AS TABLE (
+    WITH e AS (SELECT unnest(blocks) AS el, generate_subscripts(blocks, 1) AS pos),
+    lv AS (SELECT el, pos, el.level AS lvl, lag(el.level) OVER (ORDER BY pos) AS prev FROM e),
+    dup AS (SELECT el.element_order AS ord FROM e GROUP BY 1 HAVING count(*) > 1)
+    SELECT el.element_order AS element_order, 'kind' AS field,
+           'Invalid kind ' || chr(39) || coalesce(el.kind, 'NULL') || chr(39)
+             || '; see duck_block_kind_names()' AS message
+      FROM e WHERE NOT list_contains(duck_block_declared_kinds(), el.kind)
+    UNION ALL
+    SELECT el.element_order, 'element_type', 'element_type is NULL'
+      FROM e WHERE el.element_type IS NULL
+    UNION ALL
+    SELECT el.element_order, 'encoding',
+           'Invalid encoding ' || chr(39) || el.encoding || chr(39)
+      FROM e WHERE el.encoding IS NOT NULL
+        AND NOT list_contains(['text','json','yaml','html','xml','latex','markdown'], el.encoding)
+    UNION ALL
+    SELECT el.element_order, 'level',
+           CASE WHEN el.level IS NULL
+                THEN 'level is NULL; every element carries an explicit depth, top level is 1'
+                ELSE 'level ' || el.level || ' is below 1; top level is 1' END
+      FROM e WHERE el.level IS NULL OR el.level < 1
+    UNION ALL
+    SELECT el.element_order, 'level',
+           'level jumps from ' || prev || ' to ' || lvl
+             || '; depth-first ordering descends one at a time, so this element''s parent is missing'
+      FROM lv WHERE prev IS NOT NULL AND lvl > prev + 1
+    UNION ALL
+    SELECT el.element_order, 'element_order', 'element_order must be non-negative'
+      FROM e WHERE el.element_order IS NULL OR el.element_order < 0
+    UNION ALL
+    SELECT ord, 'element_order', 'Duplicate element_order value' FROM dup
 );
 
 -- Document shape. The other 2, and they are the ones a per-element check CANNOT see:

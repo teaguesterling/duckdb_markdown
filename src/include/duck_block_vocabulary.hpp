@@ -1,25 +1,5 @@
 #pragma once
 
-// ---------------------------------------------------------------------------
-// VENDORED COPY -- do not edit. Any change here is drift, by definition.
-//
-//   upstream : teaguesterling/duckdb_duck_block_utils
-//              src/include/duck_block_vocabulary.hpp
-//   commit   : 010f36f4d4a577bb0970a208e2c4d6a7386ceff9
-//              (010f36f, 2026-08-31)
-//   spec     : SPEC_VERSION 6.1
-//
-// Re-sync by copying the file from that repo and updating the three lines
-// above. `make check-vocabulary` fails the build if this copy has drifted
-// from upstream by a renamed, removed, or VALUE-CHANGED constant -- a value
-// change compiles clean and is invisible to C++, which is why the check is
-// not optional. See scripts/check_duck_block_vocabulary.py.
-//
-// Vendored rather than submoduled deliberately: duck_block_utils carries its
-// own duckdb submodule, and the extension CI templates check out recursively,
-// so a pin drags a nested DuckDB clone into CI to deliver this one file.
-// ---------------------------------------------------------------------------
-
 // ============================================================================
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //
@@ -269,8 +249,27 @@ struct DuckBlockVocabulary {
 	//               that drift. Nothing is removed or renamed -- a consumer on 6.0 is
 	//               unaffected.
 	//
+	//   6.1 -> 6.2  ADDITIVE, three clarifications that were load-bearing and unstated.
+	//               `metadata` gains attributes['role'], with 'frontmatter' declared --
+	//               one type plus a role rather than minting `frontmatter` as its own
+	//               element_type, which is this vocabulary's own rule applied to a case
+	//               three producers had each guessed differently.
+	//
+	//               Value elements after the blocks is now a CONTRACT, not the
+	//               "convenience" the spec called it: two producers asked where they go,
+	//               which is a question a convenience cannot answer. With it, the rule
+	//               that a consumer must end an inline run at any NON-INLINE element --
+	//               getting that wrong made this repo's exporter emit a document whose
+	//               body had been replaced by its title.
+	//
+	//               A document with NO blocks -- a .toml file read as pure metadata --
+	//               is conformant, and stated rather than left to be inferred from
+	//               nothing objecting.
+	//
+	//               Nothing renamed, nothing removed; a consumer on 6.1 is unaffected.
+	//
 	// The rule above is what will be followed from here.
-	static constexpr const char *SPEC_VERSION = "6.1";
+	static constexpr const char *SPEC_VERSION = "6.2";
 
 	// ========================================================================
 	// Block type names

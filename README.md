@@ -128,7 +128,9 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 
 **Note on level vs heading_level:** For headings, the H1-H6 level is stored in `attributes['heading_level']` (preferred). If not present, the `level` field is used as a fallback.
 
-**Element Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `frontmatter`
+**Element Types:** `heading`, `paragraph`, `code`, `blockquote`, `list`, `table`, `hr`, `metadata`
+
+YAML frontmatter is emitted as `element_type = 'metadata'` with `attributes['role'] = 'frontmatter'` and `encoding = 'yaml'`, carrying the raw text between the `---` fences. The type says it is a verbatim metadata blob; the role says which source construct produced it. (Before spec 6.2 this was `element_type = 'frontmatter'`, which was never a declared duck_block type. `duck_blocks_to_md` still accepts the old name so stored data keeps rendering.)
 
 **Encoding:** `text` for plain content, `json` for structured content (lists, tables), `yaml` for frontmatter
 

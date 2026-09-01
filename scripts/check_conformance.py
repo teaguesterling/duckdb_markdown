@@ -48,16 +48,31 @@ CASES = [
     ("every emitted type is declared",
      r"duck_blocks_undeclared_types(parse_markdown_to_duck_blocks(e'# H\n\nB **b**.\n\n- i\n\n> q\n'))",
      "[]"),
-    # The one exception, asserted so it stays exactly one type wide and cannot
-    # change silently. Recorded as an open decision at the point of emission in
-    # src/markdown_utils.cpp: `metadata` is the declared name.
-    ("frontmatter is the ONLY undeclared type emitted",
+    # Was "[frontmatter]" until spec 6.2 settled the name as `metadata` +
+    # attributes['role']='frontmatter'. Kept as an assertion rather than deleted:
+    # it is the one document that USED to carry an undeclared type, so it is the
+    # one most worth holding at zero.
+    ("a frontmatter document emits no undeclared type",
      r"duck_blocks_undeclared_types(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n'))",
+     "[]"),
+    # The role is what now carries what the old type name said. Asserted so that
+    # renaming the type back, or dropping the role, is a failure and not a silence.
+    ("the metadata block carries role='frontmatter'",
+     r"""(SELECT list(e.attributes['role']) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n')) AS e) WHERE e.element_type = 'metadata')""",
      "[frontmatter]"),
-    # Second half of the same open decision: level 0 versus structural depth.
-    ("a frontmatter document is otherwise non-conformant only on level",
+    # The remaining half of the open decision: level 0 versus structural depth
+    # (>= 1). This is the ONLY thing keeping a frontmatter document invalid, and
+    # it is Teague's call, not a defect to patch at the point of emission.
+    ("a frontmatter document is non-conformant as emitted",
      r"duck_blocks_are_valid(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n'))",
      "false"),
+    # ...and level is the SOLE cause, proven rather than asserted: raise level to
+    # the conformant minimum and change NOTHING else, and the document validates.
+    # Without this, the line above would still pass if a second, unrelated defect
+    # appeared -- "invalid" is not evidence of WHY.
+    ("...and raising level to 1 alone makes it conformant",
+     r"""duck_blocks_are_valid([{kind: x.kind, element_type: x.element_type, content: x.content, level: greatest(x.level, 1), encoding: x.encoding, attributes: x.attributes, element_order: x.element_order} for x in parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB.\n')])""",
+     "true"),
 ]
 
 

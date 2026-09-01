@@ -88,7 +88,7 @@ heading	DuckDB Markdown Extension
 # Should include headings, paragraphs, and lists at minimum
 query I
 SELECT
-    bool_and(element_type IN ('heading', 'paragraph', 'list', 'code', 'blockquote', 'table', 'hr', 'html', 'frontmatter'))
+    bool_and(element_type IN ('heading', 'paragraph', 'list', 'code', 'blockquote', 'table', 'hr', 'html', 'metadata'))
 FROM read_markdown_blocks('README.md') WHERE kind = 'block';
 ----
 true
