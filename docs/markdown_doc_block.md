@@ -353,6 +353,7 @@ The extension provides two document representations:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 6.2 | 2026-09 | Tracks the vendored `duck_block_vocabulary.hpp` rather than a local number. Frontmatter is `metadata` + `role`, level 1, `yaml` or `toml` by fence. Lists and blockquotes are structural. Headings carry a flattened title AND inline children. `list_type` is canonical over the legacy `ordered`. |
 | 2.1 | 2025-01 | Fixed level/heading_level: `level` is now document depth (1 for top-level), heading H1-H6 stored in `attributes['heading_level']`. Added `list_item` element type support. Fixed inline-to-block transitions. Added `filename` parameter alias. |
 | 2.0 | 2025-01 | Unified on `duck_block` shape, removed `markdown_doc_block` type |
 | 1.3 | 2025-01 | Added unified `doc_element` type with conversion functions |

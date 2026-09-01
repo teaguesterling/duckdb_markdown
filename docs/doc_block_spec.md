@@ -5,7 +5,7 @@
 > The canonical duck_block specification is owned by `duck_block_utils`:
 > `docs/duck_blocks_spec.md` in `teaguesterling/duckdb_duck_block_utils`,
 > with the machine-readable vocabulary in `src/include/duck_block_vocabulary.hpp`
-> (`SPEC_VERSION`, currently 6.1). This repository vendors that header at
+> (`SPEC_VERSION`, currently 6.2). This repository vendors that header at
 > `src/include/duck_block_vocabulary.hpp` and checks it for drift with
 > `make check-vocabulary`.
 >
@@ -23,7 +23,7 @@
 >
 > Superseded 2026-09-01, against duck_block spec 6.1.
 
-**Version**: 2.0 (superseded — unrelated to duck_block `SPEC_VERSION`, now 6.1)
+**Version**: 2.0 (superseded — unrelated to duck_block `SPEC_VERSION`, now 6.2)
 **Status**: Historical
 **Last Updated**: 2026-09-01
 
