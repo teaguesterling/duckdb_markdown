@@ -30,6 +30,20 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # build in the lightweight job -- which is how this check spent its first four
 # runs failing with "missing this extension's build", correctly refusing to skip
 # in a job that could never satisfy it.
+# WATCHED, 2026-09-01, both override paths, because they were added for CI and
+# nothing local had ever taken them:
+#   MARKDOWN_EXTENSION=<v1.5.4 CI artifact>  -> loads, 18/18, rc=0
+#   DUCKDB_BIN=<released v1.5.4 CLI>         -> the local dev extension will not
+#                                               load into it, and this FAILS rc=1
+# The second is the mismatch shape duck_block_utils hit, where an extension path
+# pinned to one build and a binary falling through to another made the check SKIP
+# silently. It cannot skip here -- there is no fallback and no skip path -- but
+# the mismatch was fired rather than reasoned about.
+#
+# Note the asymmetry is real and not a bug: a v1.5.4 markdown artifact DOES load
+# into this dev build, while duck_block_utils' extension does not (it is stamped
+# v1.5.5 and this reports b155d6f63c). That is why check_against_producer.py
+# still needs its JSON bridge and this check does not.
 EXT = os.environ.get("MARKDOWN_EXTENSION") or os.path.join(
     REPO, "build/release/extension/markdown/markdown.duckdb_extension")
 DUCKDB = os.environ.get("DUCKDB_BIN") or os.path.join(REPO, "build/release/duckdb")
