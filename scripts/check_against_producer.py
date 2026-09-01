@@ -151,7 +151,7 @@ def main():
         print("               Every result below would be meaningless; not run.")
         return 1
 
-    failures = []
+    failures, expired = [], []
     for name, markdown, expected in CASES:
         out = render(to_blocks(args.producer, markdown))
         missing = [w for w in expected if w not in out]
@@ -162,6 +162,8 @@ def main():
         second = render(to_blocks(args.producer, out)) if out.strip() else out
         unstable = second.strip() != out.strip()
         known = name in KNOWN_UNSTABLE
+        if known and not unstable:
+            expired.append(name)
         if missing:
             status = "LOST"
         elif unstable:
@@ -173,10 +175,35 @@ def main():
             failures.append((name, missing, out if missing else f"unstable:\n{out!r}\n{second!r}"))
 
     print()
-    for name in sorted(n for n, _, _ in [(c[0], 0, 0) for c in CASES] if n in KNOWN_UNSTABLE):
+
+    # AUDIT THE EXCLUSIONS. An entry whose case now passes has expired, and an
+    # expired exclusion is worse than none: it goes on excusing a case that no
+    # longer needs it and hides the next regression behind an explanation
+    # nobody rechecks. `line block` lived here and expired within an hour of
+    # being written, caught only because it happened to be re-measured.
+    #
+    # This FAILS rather than warns, because the instinct on meeting a stale
+    # reason is to fix the wording, and the notice arrives exactly when you are
+    # least inclined to delete something you wrote. The fix is to delete the
+    # entry, not to reword it. (Adopted from duck_block_utils, who built the
+    # same audit over their sweep's exemption registries.)
+    dead = [n for n in KNOWN_UNSTABLE if n not in {c[0] for c in CASES}]
+    for name in expired:
+        print(f"EXPIRED {name}: listed as known-unstable, but its round trip is now STABLE.")
+        print(f"         DELETE the entry -- do not reword it. Recorded reason was:")
+        print(f"         {KNOWN_UNSTABLE[name]}")
+    for name in dead:
+        print(f"EXPIRED {name}: listed as known-unstable but no longer has a case. DELETE it.")
+    if expired or dead:
+        print()
+
+    for name in sorted(n for n in {c[0] for c in CASES} if n in KNOWN_UNSTABLE and n not in expired):
         print(f"note {name}: round trip is known-unstable -- {KNOWN_UNSTABLE[name]}")
     if KNOWN_UNSTABLE:
         print()
+    if expired or dead:
+        print("FAILED: the exclusion list is out of date.")
+        return 1
     if failures:
         for name, missing, out in failures:
             print(f"FAILED {name}: lost {missing}\n       rendered: {out!r}")
