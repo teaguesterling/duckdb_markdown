@@ -653,3 +653,41 @@ query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'lineblock', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'link', content: 'anchor', level: 2, encoding: 'text', attributes: MAP{'href': 'http://x'}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'after', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'[anchor](http://x)  \nafter\n\n';
 ----
 true
+
+# =============================================================================
+# BREAK CONSTRUCTORS. A hard break and a soft break are distinct, and both were
+# being destroyed upstream -- a hard break came back as a raw newline inside a
+# text run, a soft break vanished entirely -- because the predicate choosing
+# between flat content and inline children counted both as text. A run with a
+# break now carries children, where the distinction can live.
+#
+# Ordinary prose does NOT grow children, which matters as much as the fix: a
+# change that moved every paragraph to inline children would satisfy every
+# round-trip assertion while rewriting every document. Asserted here from this
+# writer's side -- a paragraph with plain content still renders as plain text.
+# =============================================================================
+
+# Hard break: two trailing spaces, the markdown that means a line break
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'alpha', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'beta', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'alpha  \nbeta\n\n';
+----
+true
+
+# Soft break: a bare newline, which is NOT the same thing
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'alpha', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'softbreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'beta', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'alpha\nbeta\n\n';
+----
+true
+
+# The two are distinguishable in the output, which is the whole point
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'linebreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}])
+    <> duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'softbreak', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}]);
+----
+true
+
+# Ordinary prose keeps flat content and renders as plain text
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'just a plain paragraph here', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'just a plain paragraph here\n\n';
+----
+true

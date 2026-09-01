@@ -50,6 +50,22 @@ SCHEMA = ("STRUCT(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INT
 # Round trips that are KNOWN not to be stable, with the reason. Recorded rather
 # than silently tolerated: an unexplained exclusion and a forgotten defect look
 # identical later. Anything NOT listed here that drifts is a failure.
+#
+# ENTRIES EXPIRE. `line block` lived here and was removed once upstream fixed
+# the break constructors -- keeping it would have hidden the next regression
+# behind an explanation that had stopped being true. Re-read the reason before
+# trusting an entry; the reason is what tells you it has expired, which is why
+# these record WHY rather than merely THAT.
+#
+# WHAT THIS ARM DOES AND DOES NOT CATCH. It compares pass one against pass two,
+# so it finds output that MEANS something different when read back -- a
+# definition continuation indented two columns instead of four, a caption that
+# duplicates on every pass. It does NOT catch output that is consistently
+# wrong: rendering a hard break as a soft one round-trips perfectly, because
+# the degraded form is self-consistent. Verified by perturbation in both
+# directions. Content loss is caught by the word check below; consistent
+# wrongness is what the sqllogictest suite is for. Three arms, three
+# properties, and none of them subsumes another.
 KNOWN_UNSTABLE = {
     "figure": "this writer emits a figure's caption as a separate italic line, but "
               "`![alt](src)` ALREADY carries that text -- a reader infers a figure "
@@ -58,16 +74,6 @@ KNOWN_UNSTABLE = {
               "not an inherent limit: markdown has one slot for that text and this "
               "fills two. Unfixed -- suppressing the caption needs the caption "
               "branch to know its sibling image's alt.",
-    "line block": "PLAIN-TEXT case only; a line block containing any rich inline "
-                  "is now stable. A line block has no markdown syntax, so this "
-                  "writer emits hard breaks -- but a hard break in TEXT-ONLY "
-                  "content is flattened by the producer to a raw newline in "
-                  "`content` rather than a linebreak inline, so it re-reads as a "
-                  "soft break. Not specific to line blocks: an ordinary paragraph "
-                  "written `alpha  \\nbeta` comes back as content 'alpha\\nbeta' and "
-                  "loses the same distinction, while `alpha **x**  \\nbeta` keeps it "
-                  "because the bold forces inline children. Upstream shape, "
-                  "formatting rather than words, and reported.",
 }
 
 CASES = [
