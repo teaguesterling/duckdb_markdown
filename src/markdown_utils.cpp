@@ -1074,29 +1074,36 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	// Check for frontmatter first
 	std::string frontmatter = ExtractRawFrontmatter(markdown_str);
 	if (!frontmatter.empty()) {
-		// OPEN, MEASURED 2026-09-01 against duck_block spec 6.1. Two level
-		// conventions meet here and disagree.
+		// OPEN. Which level a duck_block frontmatter row should carry.
 		//
-		// This extension's SECTION convention uses level 0 for frontmatter and
-		// 1-6 for headings. That is correct, documented, and load-bearing: the
-		// COPY TO example in README.md renders level 0 as a frontmatter block,
-		// verified by running it verbatim.
+		// MEASURED 2026-09-01, duck_block spec 6.1, and the answer moved twice
+		// while this note was being written -- which is why it records the
+		// measurements rather than a conclusion.
 		//
-		// The duck_block convention is structural DEPTH, minimum 1, since spec
-		// 3.0. So these rows are rejected by the canonical validator:
+		//   this reader                      level 0
+		//   duck_blocks_validate             rejects it: "level 0 is below 1"
+		//   duck_block_metadata(), earlier   level 0   <- what this matched
+		//   duck_block_metadata(), now       level 1   <- upstream fixed its
+		//                                                 builder (1c69c2f)
 		//
-		//   duck_blocks_validate -> {"valid":false,"errors":[{"field":"level",
-		//     "message":"level 0 is below 1; top level is 1"}]}
+		// So level 0 was not invention here: it agreed with the registered
+		// builder of the repo that owns the format, whose own validator rejected
+		// it, and whose spec table documented the bug accurately. That half is
+		// theirs and is fixed. What remains is genuinely this extension's
+		// question.
 		//
-		// Not changed here: `read_markdown_blocks` emitting level 1 instead
-		// would be a breaking change to a documented public API, and the two
-		// conventions are separately correct in their own worlds. What is
-		// unresolved is which one wins where they meet -- that is a decision,
-		// not a defect to quietly patch at the point of emission.
+		// This extension's SECTION convention uses 0 for frontmatter and 1-6 for
+		// headings. It is correct, documented, and load-bearing: README.md's
+		// COPY TO example renders a level-0 row as a frontmatter block, verified
+		// by running it verbatim. The duck_block convention is structural depth,
+		// minimum 1. Making read_markdown_blocks emit 1 is a breaking change to
+		// a documented public API, so it is a decision rather than a defect to
+		// patch at the point of emission.
 		//
-		// `block_type = "frontmatter"` is likewise outside the vocabulary, whose
-		// canonical name is `metadata`. The validator ACCEPTS it, so it is the
-		// lesser of the two.
+		// `block_type = "frontmatter"` is a separate and clearer divergence: the
+		// declared element_type is `metadata`, and `frontmatter` is in no
+		// vocabulary. The validator accepts it, so nothing objects today. Worth
+		// aligning whenever the level question resolves.
 		MarkdownBlock fm_block;
 		fm_block.block_type = "frontmatter";
 		fm_block.content = frontmatter;
