@@ -1336,7 +1336,8 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 		// Blocks and inlines sit on SEPARATE level scales: the spec puts a
 		// top-level inline at level 1 while a top-level block records NULL. And
 		// producers disagree about where a block's inline run begins -- the
-		// builders and all four panduck readers emit level 1, the Pandoc path
+		// builders emit level 1 (measured here); panduck reported the same of its
+		// four readers, relayed and unverified from this side. The Pandoc path
 		// emits 2. So a block takes the whole contiguous inline run that follows
 		// it rather than trusting the level, which is the only rule that reads
 		// both; among inlines the level IS the nesting, so a wrapper there takes

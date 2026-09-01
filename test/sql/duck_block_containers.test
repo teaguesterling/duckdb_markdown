@@ -18,7 +18,10 @@ SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL,
 ----
 true
 
-# A figure whose level is NULL still scopes its caption (producers emit NULL here)
+# A figure whose level is NULL still scopes its caption. Producers emitted NULL
+# here when this was written; since spec 3.0 gave every element an explicit
+# level a figure carries 1, measured. Kept as a DEFENSIVE case for data
+# written before that, not as a description of what anything emits now.
 query I
 SELECT duck_blocks_to_md([{kind: 'block', element_type: 'figure', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'id': 'fig1'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'BODY', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'caption', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'CAP', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) LIKE '%*CAP*%';
 ----
