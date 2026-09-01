@@ -1,10 +1,13 @@
 # Markdown Document Block Implementation
 
-This document describes the Markdown-specific implementation of the [Document Block Specification](doc_block_spec.md).
+This document describes the Markdown-specific implementation of the duck_block specification.
+The canonical vocabulary is the vendored header at `src/include/duck_block_vocabulary.hpp`
+(`DuckBlockVocabulary::SPEC_VERSION`), checked against upstream by `make check-vocabulary`.
+`docs/doc_block_spec.md` in this repo is SUPERSEDED and kept only for history.
 
 **Extension**: duckdb_markdown
 **Namespace**: `md`
-**Spec Version**: 2.0
+**Spec Version**: 6.2
 
 ## Overview
 
@@ -40,15 +43,15 @@ STRUCT(
 
 | element_type | Markdown Element | Notes |
 |--------------|------------------|-------|
-| `heading` | `#`, `##`, etc. (ATX style) | Level in `attributes['heading_level']` (1-6), falls back to `level` field |
+| `heading` | `#`, `##`, etc. (ATX style) | Rank in `attributes['heading_level']` (1-6). Carries BOTH a flattened plain-text title in `content` (what `section_id` and the sections API read) and its formatted text as inline children. Children alongside non-empty content can only mean the content is DERIVED — a single text child lives in `content` and produces no children — so the shape is self-describing and needs no declaring attribute. A consumer that reads only `content` loses formatting; one that reads children loses nothing; neither gets a wrong answer |
 | `paragraph` | Text blocks | Inline formatting preserved |
 | `code` | Fenced code blocks | Language in `attributes['language']` |
 | `blockquote` | `>` quoted blocks | Level = nesting depth |
-| `list` | `-`, `*`, `1.` lists | JSON array of items |
+| `list` | `-`, `*`, `1.` lists | STRUCTURAL: no content of its own, items are `list_item` children one level deeper. `attributes['list_type']` is `bullet`/`ordered`/`definition`; `attributes['ordered']` is a legacy alias kept for stored data |
 | `table` | GFM tables | JSON `{headers, rows}` |
 | `hr` | `---`, `***`, `___` | Normalized to `---` on output |
-| `metadata` | Frontmatter block (raw text, not YAML-parsed) | Level 0, encoding 'yaml' |
-| `frontmatter` | Frontmatter block (raw text, not YAML-parsed) | Alias for `metadata` |
+| `metadata` | Frontmatter block (raw text, not parsed) | `attributes['role'] = 'frontmatter'`, level 1, encoding `yaml` for `---` fences or `toml` for `+++` |
+| ~~`frontmatter`~~ | — | RETIRED. Never a declared duck_block type; `metadata` + role replaced it in spec 6.2. Still ACCEPTED on write so stored data keeps rendering, never emitted |
 | `image` | `![alt](src "title")` | Details in attributes |
 | `raw` | Raw HTML | Preserved HTML in markdown |
 | `html` | Raw HTML | Alias for raw |
@@ -93,11 +96,11 @@ Returns rows with duck_block shape:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `kind` | VARCHAR | Always 'block' for this reader |
+| `kind` | VARCHAR | `block` or `inline`; this reader emits both (rich text becomes inline children) |
 | `element_type` | VARCHAR | Block type identifier |
 | `content` | VARCHAR | Block content |
-| `level` | INTEGER | Document nesting depth (1 for top-level, 0 for frontmatter) |
-| `encoding` | VARCHAR | 'text', 'json', or 'yaml' |
+| `level` | INTEGER | Structural DEPTH, minimum 1 — including frontmatter. A heading's rank is `attributes['heading_level']`, not this. (`read_markdown_sections` also has a `level` column, but that one is heading rank 0-6: a different measurement) |
+| `encoding` | VARCHAR | `text`, `json` (tables), `yaml`/`toml` (frontmatter) |
 | `attributes` | MAP(VARCHAR, VARCHAR) | Block metadata (heading_level, language, id, etc.) |
 | `element_order` | INTEGER | Position in document (1-indexed) |
 | `file_path` | VARCHAR | Source file (when enabled) |
@@ -157,11 +160,11 @@ When transitioning from inline to block elements, a paragraph break (`\n\n`) is 
 | `paragraph` | content + blank line |
 | `code` | ` ``` ` + language + newline + content + ` ``` ` |
 | `blockquote` | `>` prefix per line |
-| `list` | `- ` or `N. ` per item |
-| `list_item` | `- ` for unordered, `N. ` for ordered (uses `attributes['ordered']` and `attributes['item_number']`) |
+| `list` | marker per item, from `attributes['list_type']` (falling back to the legacy `ordered`); `definition` renders term/`:   `definition |
+| `list_item` | one item; its own blocks are children one level deeper |
 | `table` | `\| cell \|` format with separator |
 | `hr` | `---` |
-| `metadata` | `---` + content + `---` |
+| `metadata` | fence + content + fence; the fence follows `encoding` (`+++` for `toml`, `---` otherwise) |
 | `image` | `![alt](src "title")` |
 
 ### Examples
@@ -250,7 +253,7 @@ Converts blocks to a list of section structs with hierarchy information.
 |--------|------|-------------|
 | `section_id` | VARCHAR | Section identifier (from `id` attribute or generated) |
 | `section_path` | VARCHAR | Hierarchical path (`"Parent > Child > Grandchild"`) |
-| `level` | INTEGER | Heading level (0 for frontmatter) |
+| `level` | INTEGER | Heading RANK: 0 for frontmatter, 1-6 for headings. Deliberately NOT the duck_block `level`, which is depth |
 | `title` | VARCHAR | Section heading text |
 | `content` | MARKDOWN | Rendered content until next heading |
 
@@ -320,8 +323,9 @@ SELECT duck_block_to_md({
 - Code block languages
 - List ordering (ordered vs unordered)
 - Table structure (headers and rows)
-- Frontmatter content
-- Inline formatting within blocks
+- Frontmatter content, and its dialect (`---` YAML / `+++` TOML round-trip as themselves)
+- Inline formatting within blocks, INCLUDING inside headings and list items
+- Nested lists, and multiple blocks inside a list item or blockquote
 
 ### Normalized
 - Whitespace between blocks → single blank line

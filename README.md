@@ -349,8 +349,8 @@ STRUCT(
     kind          VARCHAR,              -- 'block', 'inline' or 'value' (metadata)
     element_type  VARCHAR,              -- 'heading', 'paragraph', 'bold', 'link', etc.
     content       VARCHAR,              -- Text content
-    level         INTEGER,              -- Document nesting depth (1 for top-level, 0 for frontmatter)
-    encoding      VARCHAR,              -- 'text', 'json', 'yaml'
+    level         INTEGER,              -- Structural depth, minimum 1 (a heading's rank is attributes['heading_level'])
+    encoding      VARCHAR,              -- 'text', 'json' (tables), 'yaml'/'toml' (frontmatter)
     attributes    MAP(VARCHAR, VARCHAR),-- Element metadata (heading_level, language, href, etc.)
     element_order INTEGER               -- Position in sequence
 )
@@ -592,7 +592,7 @@ COPY blocks TO 'doc.md' (FORMAT MARKDOWN,
 - `paragraph` - Plain text with blank lines
 - `code` - Fenced code blocks with language from `attributes['language']`
 - `blockquote` - Prefixed with `>`
-- `list` - JSON array rendered as bullet/numbered list (uses `attributes['ordered']`)
+- `list` - structural: items are `list_item` children (uses `attributes['list_type']`, with the legacy `ordered` boolean accepted as a fallback)
 - `table` - JSON object rendered as markdown table
 - `hr` - Horizontal rule `---`
 - `frontmatter` - Raw block between `---` delimiters (emitted verbatim, not YAML-validated)

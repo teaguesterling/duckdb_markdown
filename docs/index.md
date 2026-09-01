@@ -4,7 +4,10 @@ This extension adds Markdown processing capabilities to DuckDB, enabling structu
 
 ## Documentation
 
-- [Duck Block Specification](doc_block_spec.md) - The duck_block structure for document representation
+- [Markdown duck_block Implementation](markdown_doc_block.md) - what this extension emits and accepts
+- ~~[Duck Block Specification](doc_block_spec.md)~~ - SUPERSEDED, kept for history only. The canonical
+  vocabulary is the vendored `src/include/duck_block_vocabulary.hpp`, checked against upstream by
+  `make check-vocabulary`
 - [Markdown Implementation](markdown_doc_block.md) - Markdown-specific implementation details
 - [Ecosystem Integration](ecosystem.md) - Related extensions and cross-format workflows
 
