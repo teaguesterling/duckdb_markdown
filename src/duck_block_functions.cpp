@@ -731,8 +731,8 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 			// say a list is not. Both producers emit both names, so this decides
 			// only which one wins when they disagree.
 			const string list_type = GetAttribute(attributes, Vocab::ATTR_LIST_TYPE);
-			const bool ordered =
-			    !list_type.empty() ? (list_type == "ordered") : (GetAttribute(attributes, "ordered") == "true");
+			const bool ordered = !list_type.empty() ? (list_type == Vocab::LIST_TYPE_ORDERED)
+			                                        : (GetAttribute(attributes, Vocab::ATTR_ORDERED_LEGACY) == "true");
 			int start = 1;
 			string start_str = GetAttribute(attributes, "start");
 			const bool start_from_attribute = !start_str.empty();
@@ -817,7 +817,7 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 	} else if (element_type == Vocab::TYPE_LIST_ITEM) {
 		// List item - render with bullet prefix
 		// Check if ordered from attributes
-		bool ordered = GetAttribute(attributes, "ordered") == "true";
+		bool ordered = GetAttribute(attributes, Vocab::ATTR_ORDERED_LEGACY) == "true";
 		string item_num = GetAttribute(attributes, "item_number");
 		if (ordered && !item_num.empty()) {
 			result = item_num + ". " + content + "\n";
@@ -1206,8 +1206,9 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 				if (scope_end > i + 1) {
 					// Canonical `list_type` first, then the legacy `ordered` alias.
 					const string list_type = GetAttributeOf(block_value, Vocab::ATTR_LIST_TYPE);
-					const bool ordered = !list_type.empty() ? (list_type == "ordered")
-					                                        : (GetAttributeOf(block_value, "ordered") == "true");
+					const bool ordered = !list_type.empty()
+					                         ? (list_type == Vocab::LIST_TYPE_ORDERED)
+					                         : (GetAttributeOf(block_value, Vocab::ATTR_ORDERED_LEGACY) == "true");
 					const string number_style = GetAttributeOf(block_value, "number_style");
 					const string number_delim = GetAttributeOf(block_value, "number_delim");
 					int number = 1;
@@ -1231,7 +1232,7 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 					// item with children. Measured 2026-08-31 off the live producer
 					// (duck_block_utils spec 6.1) rather than
 					// taken from its description.
-					if (list_type == "definition") {
+					if (list_type == Vocab::LIST_TYPE_DEFINITION) {
 						bool first_term = true;
 						for (idx_t j = i + 1; j < scope_end;) {
 							if (DuckBlockLevel(list_children[j]) != item_level) {

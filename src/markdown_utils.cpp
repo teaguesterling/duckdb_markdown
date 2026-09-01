@@ -1298,9 +1298,18 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 			block.encoding = "json";
 
 			cmark_list_type list_type = cmark_node_get_list_type(child);
-			block.attributes["ordered"] = (list_type == CMARK_ORDERED_LIST) ? "true" : "false";
+			const bool is_ordered = (list_type == CMARK_ORDERED_LIST);
+			// BOTH, canonical first. `list_type` is the vocabulary attribute;
+			// `ordered` is the legacy boolean the spec says producers should keep
+			// emitting because data written before the rule does not rewrite
+			// itself. Until now this reader emitted ONLY the legacy one, so a
+			// consumer reading just the canonical attribute -- which is what new
+			// code and this repo's own writer read first -- saw an untyped list
+			// and worked only by falling back.
+			block.attributes[Vocab::ATTR_LIST_TYPE] = is_ordered ? Vocab::LIST_TYPE_ORDERED : Vocab::LIST_TYPE_BULLET;
+			block.attributes[Vocab::ATTR_ORDERED_LEGACY] = is_ordered ? "true" : "false";
 
-			if (list_type == CMARK_ORDERED_LIST) {
+			if (is_ordered) {
 				int start = cmark_node_get_list_start(child);
 				block.attributes["start"] = std::to_string(start);
 			}

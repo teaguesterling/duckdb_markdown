@@ -1,0 +1,88 @@
+# name: test/sql/duck_block_list_type.test
+# description: list_type is the canonical attribute; `ordered` is the tolerated legacy alias
+# group: [sql]
+
+require markdown
+
+# The writer has always read `list_type` first. Until 2026-09-01 this READER
+# emitted only the legacy `ordered` boolean and never the canonical attribute, so
+# a consumer reading just `list_type` -- new code, and this repo's own writer --
+# saw an untyped list and worked only because the fallback existed. Nothing
+# failed when `list_type` was added to every list, because nothing asserted what
+# the reader emits. These do.
+
+# PRODUCER: a bullet list carries the canonical attribute AND the legacy alias
+query II
+SELECT e.attributes['list_type'], e.attributes['ordered']
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'- a\n- b\n')) AS e)
+WHERE e.element_type = 'list';
+----
+bullet	false
+
+# PRODUCER: an ordered list, with its start preserved
+query III
+SELECT e.attributes['list_type'], e.attributes['ordered'], e.attributes['start']
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'3. x\n4. y\n')) AS e)
+WHERE e.element_type = 'list';
+----
+ordered	true	3
+
+# CONSUMER: canonical wins when the two DISAGREE. This is the whole point of
+# having a canonical attribute -- without it, which one wins is whichever the
+# code happened to read first.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: 1, encoding: 'json',
+                           attributes: MAP{'list_type': 'ordered', 'ordered': 'false'}, element_order: 0}])
+     = E'1. a\n\n';
+----
+true
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: 1, encoding: 'json',
+                           attributes: MAP{'list_type': 'bullet', 'ordered': 'true'}, element_order: 0}])
+     = E'- a\n\n';
+----
+true
+
+# CONSUMER: legacy-only input still renders. Data written before the rule does
+# not rewrite itself, which is why the alias is tolerated rather than dropped.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: 1, encoding: 'json',
+                           attributes: MAP{'ordered': 'true'}, element_order: 0}])
+     = E'1. a\n\n';
+----
+true
+
+# A list with NEITHER attribute is a bullet list, not an error
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: 1, encoding: 'json',
+                           attributes: MAP{}::MAP(VARCHAR, VARCHAR), element_order: 0}])
+     = E'- a\n\n';
+----
+true
+
+# ROUND-TRIP: both list kinds survive, start included
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'- a\n- b\n\n3. x\n4. y\n'))
+     = E'- a\n- b\n\n3. x\n4. y\n\n';
+----
+true
+
+# `definition` is the third list_type, and is not orderedness at all
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0},
+                          {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1},
+                          {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2},
+                          {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3},
+                          {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}])
+     = E'Term\n:   Def\n\n';
+----
+true
+
+# A definition list must NOT be read as ordered just because the legacy alias says so
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: '["a"]', level: 1, encoding: 'json',
+                           attributes: MAP{'list_type': 'definition', 'ordered': 'true'}, element_order: 0}])
+     NOT LIKE '1.%';
+----
+true
