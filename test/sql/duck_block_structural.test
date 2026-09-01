@@ -414,3 +414,41 @@ SELECT bool_and(rt) FROM (
   ]) AS b));
 ----
 true
+
+# =============================================================================
+# SPEC 5.0 shapes, measured against this build and pinned. Neither is migrated:
+# 5.0 is unpublished and cannot be exercised against a real producer here.
+# =============================================================================
+
+# TABLE: 5.0 moves the native {"headers","rows"} schema into content and parks
+# the Pandoc tuple in a `pandoc_ast` attribute. This writer already renders the
+# native schema and ignores attributes it does not know, so a 5.0 table renders
+# correctly with no change -- verified rather than assumed.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'table', content: '{"headers":["A","B"],"rows":[["c1","c2"]]}', level: 1, encoding: 'json', attributes: MAP{'pandoc_ast': '[["",[],[]],[null,[]],[],[],[],[]]'}, element_order: 0}]) = E'| A | B |\n|---|---|\n| c1 | c2 |\n\n';
+----
+true
+
+# DEFINITION LIST: 5.0 drops the `deflist` type and expresses one as a `list`
+# with list_type='definition', its items tagged role='term'/'definition'. This
+# writer renders that as a flat bullet list -- the words survive, the term to
+# definition relationship does not.
+#
+# NOT migrated, deliberately, and this one is worth the reasoning because the
+# fix looks trivial: emit "Term\n: Def" as the existing deflist branch already
+# does. The risk is that a mis-guess renders WORSE than this degradation. If
+# the real shape omits the roles, or nests definitions under terms, keying on
+# role produces "Term\nDef" -- one paragraph, the list gone entirely -- where
+# bullets at least keep two items. A safe degradation beats a guessed
+# structure, so this holds until 5.0 can be run against a real producer.
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'- Term\n- Def\n\n';
+----
+true
+
+# Whatever it renders as, both the term and the definition reach the output --
+# the property that must not regress while the formatting is unmigrated
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'definition'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'term'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'Term', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{'role': 'definition'}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'Def', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) LIKE '%Term%Def%';
+----
+true
