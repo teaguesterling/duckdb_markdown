@@ -113,7 +113,7 @@ def compare_spec_version(local, upstream):
     return False, None
 
 
-def check_vendored_conformance(root, vocab_values):
+def check_vendored_conformance(root, vocab):
     """The conformance SQL embeds the type list -- a SECOND copy of the vocabulary.
 
     Two copies checked by the same party cannot detect their own disagreement, so
@@ -126,17 +126,27 @@ def check_vendored_conformance(root, vocab_values):
     if not os.path.exists(path):
         return []
     text = open(path).read()
-    m = re.search(r"MACRO duck_block_declared_types\(\) AS \(\s*\[(.*?)\]", text, re.S)
-    if not m:
-        return [f"{CONFORMANCE_REL}: could not find the declared-types list to compare"]
-    embedded = set(re.findall(r"'([^']+)'", m.group(1)))
-    missing = sorted(vocab_values - embedded)
-    extra = sorted(embedded - vocab_values)
     problems = []
-    if missing:
-        problems.append(f"{CONFORMANCE_REL} is MISSING types the header declares: {missing}")
-    if extra:
-        problems.append(f"{CONFORMANCE_REL} lists types the header does not: {extra}")
+    # Kinds and element types are DIFFERENT AXES and are compared separately.
+    # Conflating them is not hypothetical: this check's first version compared the
+    # header's whole vocabulary against the types list alone and reported block,
+    # inline and value as missing. The file exported only one axis then, which is
+    # what made the mistake available; both are exported now.
+    for label, macro, expected in (
+        ("kinds", "duck_block_declared_kinds", vocab["kinds"]),
+        ("types", "duck_block_declared_types", vocab["types"]),
+    ):
+        m = re.search(r"MACRO " + macro + r"\(\) AS \(\s*\[(.*?)\]", text, re.S)
+        if not m:
+            problems.append(f"{CONFORMANCE_REL}: no {macro}() list to compare")
+            continue
+        embedded = set(re.findall(r"'([^']+)'", m.group(1)))
+        missing = sorted(expected - embedded)
+        extra = sorted(embedded - expected)
+        if missing:
+            problems.append(f"{CONFORMANCE_REL} is MISSING {label} the header declares: {missing}")
+        if extra:
+            problems.append(f"{CONFORMANCE_REL} lists {label} the header does not: {extra}")
     return problems
 
 
@@ -317,12 +327,11 @@ def main():
         print("vocabulary constants are in sync")
 
     # The vendored conformance SQL carries its own copy of the type list.
-    # element_types only -- KIND_* are kinds, which duck_block_declared_types()
-    # correctly does not list. Comparing the two sets whole reported block, inline
-    # and value as missing on this check's first run: a false positive from the
-    # check, not drift in the file.
-    element_types = {v for k, v in vocabulary_of(local).items() if not k.startswith("KIND_")}
-    for problem in check_vendored_conformance(root, element_types):
+    vocab_axes = {
+        "kinds": {v for k, v in vocabulary_of(local).items() if k.startswith("KIND_")},
+        "types": {v for k, v in vocabulary_of(local).items() if not k.startswith("KIND_")},
+    }
+    for problem in check_vendored_conformance(root, vocab_axes):
         breaking = True
         print("DRIFT  " + problem)
         print("       Re-vendor conformance/duck_block_conformance.sql from upstream.")

@@ -2,8 +2,8 @@
 --
 --   upstream : teaguesterling/duckdb_duck_block_utils
 --              conformance/duck_block_conformance.sql
---   commit   : 8378fa42d30d6068772dc48f0e789b9a73bdadb7
---              (8378fa4, 2026-09-01)
+--   commit   : 4565c602c607ae4d4ff3f915180b1e329beb3019
+--              (4565c60, 2026-09-01)
 --
 -- Vendored because it is the ONLY conformance this extension can run. DuckDB
 -- matches extension ABI on the exact version string and this repo builds DuckDB
@@ -12,7 +12,7 @@
 -- therefore never been runnable against this reader, which is a fair part of
 -- why the defects found today survived. This file needs nothing but DuckDB.
 --
--- The embedded type list is a SECOND copy of the vocabulary. Two copies checked
+-- The embedded type AND kind lists are a SECOND copy of the vocabulary. Two copies checked
 -- by the same party cannot detect their own disagreement, so
 -- `make check-vocabulary` compares it against the vendored header, which is
 -- itself compared against upstream. Drift in either link fails.
@@ -72,8 +72,19 @@
 -- document). The FILE name is not a macro name -- also panduck, who grepped for it.
 
 -- Per-element shape. Covers 4 of the 6 things duck_blocks_validate reports.
+-- Declared `kind` values. A LITERAL here until 2026-09-01, which is how the version of
+-- this check published in the spec came to enumerate two kinds when three exist -- the
+-- instruction that leaves a producer with nowhere to put a document's title. It is a
+-- macro now for the same reason the type list is: check_conformance_macro.py compares
+-- it against duck_block_kind_names() and FAILS on drift, so the copy cannot rot.
+--
+-- Kinds and element types are DIFFERENT AXES and both are needed. duckdb_markdown
+-- reported a false positive from comparing the type list against the kind names; the
+-- file offered only one of the two, so the mistake was available to make.
+CREATE OR REPLACE MACRO duck_block_declared_kinds() AS (['block', 'inline', 'value']);
+
 CREATE OR REPLACE MACRO duck_block_is_valid(elem) AS (
-    elem.kind IN ('block', 'inline', 'value')
+    list_contains(duck_block_declared_kinds(), elem.kind)
     AND elem.element_type IS NOT NULL
     AND elem.encoding IN ('text', 'json', 'yaml', 'html', 'xml', 'latex', 'markdown')
     AND elem.level IS NOT NULL
