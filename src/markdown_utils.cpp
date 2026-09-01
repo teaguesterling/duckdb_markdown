@@ -1090,6 +1090,97 @@ static void WalkInlines(cmark_node *container, int level, int32_t &order, std::v
 	}
 }
 
+// A list, emitted STRUCTURALLY: list -> list_item -> the item's own blocks.
+//
+// This replaced a JSON array of item strings, which was not merely a shape the
+// vocabulary dislikes -- it DESTROYED content. The old code carried the comment
+// "Nested list - skip for now, just get first text", and it meant exactly that:
+//
+//   - outer            ->   content ["outer", "second"]
+//     - inner one           inner one and inner two GONE
+//     - inner two
+//   - second
+//
+// and because each item was flattened with GetInlineText, `**bold**` came back
+// as bold, `code` lost its backticks, and a second paragraph in an item vanished.
+// Every check missed it because every list any of them tested was FLAT and
+// one paragraph deep.
+//
+// Levels descend one at a time, which the conformance rules require: list at L,
+// list_item at L+1, the item's paragraph at L+2, that paragraph's inlines at L+3.
+// A nested list is just a block child of its item, so it recurses at L+2.
+// Matches MAX_INLINE_DEPTH rather than the writer's absorption guard: this file's
+// convention is a limit high enough that pathological-but-real input parses, with
+// a clear error past it -- 1000 blockquotes and 200 nested emphasis are pinned as
+// NOT throwing. A lower limit here would have turned a 500-deep list from a
+// silent truncation into a hard error, trading one wrong answer for another.
+static constexpr int MAX_LIST_NESTING = 1000;
+
+static void EmitListStructural(cmark_node *list_node, int level, int32_t &order, std::vector<MarkdownBlock> &out,
+                               bool structured_inlines, int depth = 0) {
+	if (depth > MAX_LIST_NESTING) {
+		throw InvalidInputException("Markdown list nesting exceeds maximum supported depth (%d)", MAX_LIST_NESTING);
+	}
+
+	const bool is_ordered = cmark_node_get_list_type(list_node) == CMARK_ORDERED_LIST;
+
+	MarkdownBlock lb;
+	lb.block_type = Vocab::TYPE_LIST;
+	lb.level = level;
+	lb.encoding = Vocab::ENCODING_TEXT;
+	lb.content = "";
+	lb.block_order = order++;
+	lb.attributes[Vocab::ATTR_LIST_TYPE] = is_ordered ? Vocab::LIST_TYPE_ORDERED : Vocab::LIST_TYPE_BULLET;
+	lb.attributes[Vocab::ATTR_ORDERED_LEGACY] = is_ordered ? "true" : "false";
+	if (is_ordered) {
+		lb.attributes["start"] = std::to_string(cmark_node_get_list_start(list_node));
+	}
+	out.push_back(lb);
+
+	for (cmark_node *item = cmark_node_first_child(list_node); item; item = cmark_node_next(item)) {
+		if (cmark_node_get_type(item) != CMARK_NODE_ITEM) {
+			continue;
+		}
+		MarkdownBlock ib;
+		ib.block_type = Vocab::TYPE_LIST_ITEM;
+		ib.level = level + 1;
+		ib.encoding = Vocab::ENCODING_TEXT;
+		ib.content = "";
+		ib.block_order = order++;
+		out.push_back(ib);
+
+		for (cmark_node *ic = cmark_node_first_child(item); ic; ic = cmark_node_next(ic)) {
+			if (cmark_node_get_type(ic) == CMARK_NODE_LIST) {
+				EmitListStructural(ic, level + 2, order, out, structured_inlines, depth + 1);
+				continue;
+			}
+			MarkdownBlock pb;
+			pb.block_type = Vocab::TYPE_PARAGRAPH;
+			pb.level = level + 2;
+			pb.encoding = Vocab::ENCODING_TEXT;
+			pb.block_order = order++;
+			bool walk = false;
+			std::string simple;
+			if (structured_inlines && cmark_node_get_type(ic) == CMARK_NODE_PARAGRAPH) {
+				if (SingleTextChild(ic, simple)) {
+					pb.content = simple;
+				} else {
+					pb.content = "";
+					walk = true;
+				}
+			} else {
+				// Not a paragraph (a code block, a quote): keep its text rather
+				// than dropping the child, which is what the old walk did.
+				pb.content = GetInlineText(ic);
+			}
+			out.push_back(pb);
+			if (walk) {
+				WalkInlines(ic, pb.level + 1, order, out);
+			}
+		}
+	}
+}
+
 std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool structured_inlines) {
 	std::vector<MarkdownBlock> blocks;
 
@@ -1177,6 +1268,7 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		block.level = 1; // Document-level blocks have level=1
 		block.block_order = block_order++;
 		bool emit_inlines = false;            // structured inline children follow this block
+		bool emitted_directly = false;        // the case pushed its own elements (lists)
 		cmark_node *inline_container = child; // node whose inline children to walk
 
 		switch (node_type) {
@@ -1293,64 +1385,11 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		}
 
 		case CMARK_NODE_LIST: {
-			block.block_type = "list";
-			block.level = 1;
-			block.encoding = "json";
-
-			cmark_list_type list_type = cmark_node_get_list_type(child);
-			const bool is_ordered = (list_type == CMARK_ORDERED_LIST);
-			// BOTH, canonical first. `list_type` is the vocabulary attribute;
-			// `ordered` is the legacy boolean the spec says producers should keep
-			// emitting because data written before the rule does not rewrite
-			// itself. Until now this reader emitted ONLY the legacy one, so a
-			// consumer reading just the canonical attribute -- which is what new
-			// code and this repo's own writer read first -- saw an untyped list
-			// and worked only by falling back.
-			block.attributes[Vocab::ATTR_LIST_TYPE] = is_ordered ? Vocab::LIST_TYPE_ORDERED : Vocab::LIST_TYPE_BULLET;
-			block.attributes[Vocab::ATTR_ORDERED_LEGACY] = is_ordered ? "true" : "false";
-
-			if (is_ordered) {
-				int start = cmark_node_get_list_start(child);
-				block.attributes["start"] = std::to_string(start);
-			}
-
-			// Build JSON array of list items
-			std::string json = "[";
-			bool first = true;
-			cmark_node *item = cmark_node_first_child(child);
-			while (item) {
-				if (cmark_node_get_type(item) == CMARK_NODE_ITEM) {
-					if (!first)
-						json += ", ";
-					first = false;
-
-					// Get text content of list item (from first paragraph child)
-					std::string item_text;
-					cmark_node *item_child = cmark_node_first_child(item);
-					while (item_child) {
-						if (cmark_node_get_type(item_child) == CMARK_NODE_PARAGRAPH) {
-							item_text = GetInlineText(item_child);
-							break;
-						} else if (cmark_node_get_type(item_child) == CMARK_NODE_LIST) {
-							// Nested list - skip for now, just get first text
-							break;
-						} else {
-							// Try to get inline text directly
-							std::string txt = GetInlineText(item_child);
-							if (!txt.empty()) {
-								item_text = txt;
-								break;
-							}
-						}
-						item_child = cmark_node_next(item_child);
-					}
-
-					json += "\"" + EscapeJSONString(item_text) + "\"";
-				}
-				item = cmark_node_next(item);
-			}
-			json += "]";
-			block.content = json;
+			// Rewind the order this iteration pre-allocated: the emitter numbers
+			// every element it produces, starting with the list itself.
+			block_order = block.block_order;
+			EmitListStructural(child, block.level, block_order, blocks, structured_inlines);
+			emitted_directly = true;
 			break;
 		}
 
@@ -1447,6 +1486,10 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		}
 		}
 
+		if (emitted_directly) {
+			child = cmark_node_next(child);
+			continue;
+		}
 		blocks.push_back(block);
 		if (emit_inlines) {
 			WalkInlines(inline_container, block.level + 1, block_order, blocks);

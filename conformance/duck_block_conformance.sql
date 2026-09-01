@@ -215,6 +215,14 @@ CREATE OR REPLACE MACRO duck_blocks_warnings(blocks) AS TABLE (
     FROM e WHERE el.element_type = 'table'
       AND coalesce(el.content, '') <> '' AND position('"headers"' IN el.content) = 0
     UNION ALL
+    -- A `list` carrying content is the pre-structural shape: items in a JSON array
+    -- instead of `list_item` children. The list case is more damaging than the table
+    -- one -- a nested list comes back as one run-together string that a consumer
+    -- cannot tell from real text.
+    SELECT el.element_order, 'list_not_structural',
+           'list carries content; its items belong in list_item children at level + 1'
+    FROM e WHERE el.element_type = 'list' AND coalesce(el.content, '') <> ''
+    UNION ALL
     SELECT el.element_order, 'deflist_superseded',
            'deflist is superseded by list with list_type=''definition'''
     FROM e WHERE el.element_type = 'deflist'

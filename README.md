@@ -132,7 +132,9 @@ Reads Markdown files and parses them into block-level elements (headings, paragr
 
 Frontmatter is emitted as `element_type = 'metadata'` with `attributes['role'] = 'frontmatter'`, carrying the raw text between the fences. Both dialects are recognised: `---` fences give `encoding = 'yaml'`, and Hugo-style `+++` fences give `encoding = 'toml'`. The fence is restored from the encoding on write, so a TOML document round-trips as TOML rather than being relabelled YAML. The type says it is a verbatim metadata blob; the role says which source construct produced it. (Before spec 6.2 this was `element_type = 'frontmatter'`, which was never a declared duck_block type. `duck_blocks_to_md` still accepts the old name so stored data keeps rendering.)
 
-**Encoding:** `text` for plain content, `json` for structured content (lists, tables), `yaml` for frontmatter
+**Encoding:** `text` for plain content, `json` for table content, `yaml`/`toml` for frontmatter.
+
+Lists are **structural**: a `list` carries no content of its own, and its items are `list_item` children with their text in `paragraph` blocks beneath them, one level deeper at each step (`list` → `list_item` → `paragraph` → inlines). Nested lists are `list` blocks inside a `list_item`. Before this, a list's items were packed into a JSON array in its `content`, which flattened inline formatting and discarded nested lists entirely.
 
 ```sql
 -- Parse document into blocks
