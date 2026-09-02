@@ -23,6 +23,10 @@ import urllib.request
 
 HEADER_REL = "src/include/duck_block_vocabulary.hpp"
 CONFORMANCE_REL = "conformance/duck_block_conformance.sql"
+# Docs that may name the spec version. A doc absent from disk is skipped, not
+# failed: this list is a place to LOOK, not a manifest.
+DOC_CANDIDATES = ["README.md", "docs/markdown_doc_block.md", "docs/index.md",
+                  "docs/ecosystem.md", "docs/doc_block_spec.md"]
 # WATCHED, 2026-09-01. The second candidate has NEVER been taken: this repo
 # vendors, so find_local() always matches the first and returns. Unreached by
 # HISTORY rather than unreachable by construction -- nothing in the source shows
@@ -127,6 +131,54 @@ def compare_spec_version(local, upstream):
         return True, (f"MINOR behind {local} -> {upstream}: this copy claims a newer "
                       f"spec than upstream publishes")
     return False, None
+
+
+
+def check_doc_spec_versions(root, header_version):
+    """Docs that name the duck_block SPEC_VERSION must name the current one.
+
+    docs/markdown_doc_block.md sat at "Spec Version: 2.0" for four releases while
+    describing a reader that had moved on -- kind, list shape, frontmatter level
+    and the encoding set were all wrong, and nothing said so. The version line is
+    the cheap signal that a whole document is stale: it points a person at the
+    file rather than trying to verify 99 table rows mechanically.
+
+    Deliberately NOT a per-claim check. Parsing the tables to assert each type and
+    encoding would encode the doc's structure into a script that then drifts from
+    the doc -- a third copy of the vocabulary, which is the defect this whole
+    check exists to prevent.
+
+    Two forms, both anchored so a version number that is not a SPEC_VERSION claim
+    cannot match. doc_block_spec.md carries `**Version**: 2.0` as its OWN
+    (superseded, unrelated) version and must not be flagged for it, while its
+    "SPEC_VERSION, currently 6.1" IS a claim about the canonical version and must.
+    """
+    # WATCHED, 2026-09-01, both directions:
+    #   **Spec Version**: 5.0 in markdown_doc_block.md   -> STALE, names 5.0
+    #   **Version**: 2.0 in the SUPERSEDED doc_block_spec -> NOT flagged (0 hits),
+    #     which is the false positive the anchoring exists to avoid
+    # It found two real ones on its first run: doc_block_spec.md told readers the
+    # canonical version was 6.1 in two places, in the document whose whole job is
+    # to point them at the current spec.
+    problems = []
+    field = re.compile(r"\*\*Spec Version\*\*:\s*v?(\d+\.\d+)")
+    # a version that FOLLOWS the token on the same line -- "SPEC_VERSION, now 6.1"
+    trailing = re.compile(r"SPEC_VERSION[^\n]*?v?(\d+\.\d+)")
+    for rel in sorted(DOC_CANDIDATES):
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            continue
+        for num, line in enumerate(open(path), 1):
+            for rx in (field, trailing):
+                m = rx.search(line)
+                if m and m.group(1) != header_version:
+                    problems.append(
+                        f"{rel}:{num}: names duck_block spec {m.group(1)}, "
+                        f"but the vendored header is {header_version}. "
+                        f"Re-read the document -- the version line is usually the "
+                        f"least of what has drifted.")
+                    break
+    return problems
 
 
 def check_vendored_conformance(root, vocab):
@@ -390,6 +442,10 @@ def main():
         breaking = True
         print("DRIFT  " + problem)
         print("       Re-vendor conformance/duck_block_conformance.sql from upstream.")
+
+    for problem in check_doc_spec_versions(root, local.get("SPEC_VERSION", "")):
+        breaking = True
+        print("STALE  " + problem)
 
     # Gaps: types upstream publishes that no renderer branches on.
     named, literal = handled_types(os.path.join(root, "src/duck_block_functions.cpp"))
