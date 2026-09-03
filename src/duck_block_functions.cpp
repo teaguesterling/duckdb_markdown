@@ -1651,7 +1651,39 @@ string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value)
 	if (blocks_value.IsNull() || blocks_value.type().id() != LogicalTypeId::LIST) {
 		return "";
 	}
-	auto &list_children = ListValue::GetChildren(blocks_value);
+	auto &raw_children = ListValue::GetChildren(blocks_value);
+
+	// METADATA IS TAILMATTER in duck_blocks: both metadata homes sit AFTER every
+	// body block, and there is no frontmatter position in the vocabulary (ruled
+	// 2026-09-02). Markdown is the one output format with a place to put it, and
+	// that place is the TOP of the file -- so the block is found by TYPE and
+	// hoisted, never by where it sits in the list.
+	//
+	// Rendering it in list order produced a document that was not merely
+	// misordered but destroyed: `# T\n\nBody\n\n---\ntitle: T\n---` re-parses
+	// as heading, paragraph, HR, heading. The fence at the bottom of a file is a
+	// thematic break, not frontmatter, so the metadata came back as structural
+	// noise and the round trip lost it entirely.
+	vector<Value> reordered;
+	reordered.reserve(raw_children.size());
+	idx_t metadata_at = raw_children.size();
+	for (idx_t i = 0; i < raw_children.size(); i++) {
+		const string type = DuckBlockElementType(raw_children[i]);
+		if (metadata_at == raw_children.size() && DuckBlockKind(raw_children[i]) == Vocab::KIND_BLOCK &&
+		    (type == Vocab::TYPE_METADATA || type == "frontmatter")) {
+			metadata_at = i;
+		}
+	}
+	if (metadata_at < raw_children.size()) {
+		reordered.push_back(raw_children[metadata_at]);
+		for (idx_t i = 0; i < raw_children.size(); i++) {
+			if (i != metadata_at) {
+				reordered.push_back(raw_children[i]);
+			}
+		}
+	}
+	const vector<Value> &list_children = reordered.empty() ? raw_children : reordered;
+
 	string result;
 	// Metadata is not body content, but markdown -- alone among the output formats
 	// this vocabulary targets -- has somewhere to put it, so it round-trips as
