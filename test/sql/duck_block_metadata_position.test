@@ -1,0 +1,91 @@
+# name: test/sql/duck_block_metadata_position.test
+# description: metadata keeps its source position; the writer finds it by type, not position
+# group: [sql]
+
+require markdown
+
+# Ruled 2026-09-02: metadata keeps the position the SOURCE gave it.
+#
+#   positioned at the top     -> first, role='frontmatter'   <- this reader
+#   positioned at the bottom  -> last,  role='tailmatter'
+#   no position in the source -> last,  role='document'
+#
+# Tailmatter is the FALLBACK, not the convention: it is where metadata goes when
+# the source gave it none — pandoc's `meta`, an EPUB's OPF, a docx core.xml.
+# A reader that matched a literal `---` at byte 0 knows where the block was and
+# says so. Front matter is called front matter because of where it is.
+
+# READER: a `---` fence at the head of the file is FIRST, with the role saying so
+query III
+SELECT e.element_type, e.element_order, e.attributes['role']
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\n# H\n\nBody.\n')) AS e)
+WHERE e.kind = 'block' ORDER BY e.element_order;
+----
+metadata	1	frontmatter
+heading	2	NULL
+paragraph	3	NULL
+
+# WRITER: metadata is found by TYPE, wherever it sits.
+#
+# This matters more under this rule than it would have under a tailmatter one:
+# other producers legitimately APPEND metadata when their source gave it no
+# position — duck_block_utils does exactly that with role='document' — and
+# markdown has no tailmatter syntax to render it into. A fence at the bottom of a
+# .md file is a thematic break, not metadata: `# T\n\nBody\n\n---\ntitle: T\n---`
+# re-parses as heading, paragraph, HR, heading, destroying the block outright.
+# So for markdown output every metadata block is hoisted to the front.
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+  {kind: 'block', element_type: 'paragraph', content: 'Body.', level: 1, encoding: 'text', attributes: MAP{}::MAP(VARCHAR, VARCHAR), element_order: 1},
+  {kind: 'block', element_type: 'metadata', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{'role': 'document'}, element_order: 2}])
+     = E'---\ntitle: T\n---\n\n# Title\n\nBody.\n\n';
+----
+true
+
+# ...and role='tailmatter' likewise: the role records where it was in ITS source,
+# not where markdown can put it
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+  {kind: 'block', element_type: 'metadata', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{'role': 'tailmatter'}, element_order: 1}])
+     = E'---\ntitle: T\n---\n\n# Title\n\n';
+----
+true
+
+# REGRESSION: the destroyed form must never come back
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+  {kind: 'block', element_type: 'metadata', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{'role': 'document'}, element_order: 1}])
+     NOT LIKE '%Title%---%';
+----
+true
+
+# Both orders converge on one document, so a consumer cannot tell which producer
+# emitted the list
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'metadata', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{'role': 'frontmatter'}, element_order: 0},
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 1}])
+     = duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+  {kind: 'block', element_type: 'metadata', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{'role': 'document'}, element_order: 1}]);
+----
+true
+
+# The retired `frontmatter` type is hoisted too, so stored data keeps rendering
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+  {kind: 'block', element_type: 'frontmatter', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{}::MAP(VARCHAR, VARCHAR), element_order: 1}])
+     = E'---\ntitle: T\n---\n\n# Title\n\n';
+----
+true
+
+# Both dialects still round-trip
+query II
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nBody.\n')) = E'---\ntitle: T\n---\n\nBody.\n\n',
+       duck_blocks_to_md(parse_markdown_to_duck_blocks(e'+++\ntitle = "T"\n+++\n\nBody.\n')) = E'+++\ntitle = "T"\n+++\n\nBody.\n\n';
+----
+true	true

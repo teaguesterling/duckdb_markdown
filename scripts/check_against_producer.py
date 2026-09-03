@@ -113,6 +113,17 @@ CASES = [
     ("line block",     "| Roses are red\n| Violets are blue\n",  ["Roses", "Violets"]),
     ("figure",         "![A caption](img.png)\n",                ["img.png", "A caption"]),
     ("code",           "```py\nprint(1)\n```\n",                 ["print(1)"]),
+    # METADATA, which had NO case here at all until 2026-09-02 -- ten cases and
+    # not one document with frontmatter, so the entire metadata direction went
+    # through this bridge untested. The producer appends its metadata (pandoc's
+    # `meta` has no position, so it becomes a kind='value' tree at the END of the
+    # list), and this writer must still put it at the TOP of a .md file, because
+    # markdown has nowhere else: a fence at the bottom is a thematic break.
+    #
+    # The body words are forbidden from JOINING the title, which is the shape the
+    # failure would take if the metadata were rendered in list order.
+    ("frontmatter",    "---\ntitle: T\n---\n\n# H\n\nBody.\n",     ["T", "H", "Body."],
+                       ["Body.\n\n---"]),
 ]
 
 

@@ -1290,6 +1290,24 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		fm_block.content = frontmatter;
 		fm_block.level = 1;
 		fm_block.encoding = fm_match.delimiter == '+' ? Vocab::ENCODING_TOML : Vocab::ENCODING_YAML;
+		// EMITTED FIRST, because that is where it WAS. Metadata keeps its source
+		// position (ruled 2026-09-02, 203b484):
+		//
+		//   positioned at the top     -> first, role='frontmatter'   <- this reader
+		//   positioned at the bottom  -> last,  role='tailmatter'
+		//   no position in the source -> last,  role='document'
+		//
+		// Tailmatter is the FALLBACK, not the convention: it is where metadata goes
+		// when the source gave it none -- pandoc's `meta`, an EPUB's OPF, a docx
+		// core.xml, which are properties OF a file rather than blocks IN it. A
+		// reader that matched a literal `---` at byte 0 knows exactly where the
+		// block was and says so. Front matter is called front matter because of
+		// where it is.
+		//
+		// The cost is real and was accepted rather than hidden: a document gaining
+		// frontmatter shifts every body element_order, so a structural diff reports
+		// the body as moved. Appending everything would avoid that, and it is not
+		// worth discarding the source's own structure to make a diff tidier.
 		fm_block.block_order = block_order++;
 		blocks.push_back(fm_block);
 	}
