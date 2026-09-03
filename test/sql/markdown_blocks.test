@@ -57,24 +57,50 @@ print("hello")	python
 # Test: Frontmatter extraction
 # =============================================================================
 
-query III
-SELECT element_type, level, encoding FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
+# Spec 6.2: the type is `metadata` and the ROLE says which construct it came
+# from. `frontmatter` was never a declared element_type. Level is 1 = NOT NESTED,
+# ruled upstream at 2771e9e; read_markdown_sections keeps its own 0-6 heading
+# rank on its own column, which is a different measurement.
+query IIII
+SELECT element_type, level, encoding, attributes['role']
+FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'metadata';
 ----
-frontmatter	0	yaml
+metadata	1	yaml	frontmatter
+
+# The old name must NOT come back
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
+----
+0
 
 query I
-SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'frontmatter';
+SELECT content LIKE '%title: Test Doc%' FROM read_markdown_blocks('test/data/blocks_frontmatter.md') WHERE element_type = 'metadata';
 ----
 true
 
 # =============================================================================
-# Test: List extraction (JSON encoded)
+# Test: List extraction (STRUCTURAL)
 # =============================================================================
 
+# Items are list_item children, not a JSON array in the list's content. The old
+# shape flattened each item with GetInlineText and skipped nested lists outright,
+# so `**bold**` came back as bold and a sublist's items vanished.
 query II
 SELECT element_type, encoding FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
-list	json
+list	text
+
+# list -> list_item -> paragraph, descending one level at a time
+query III
+SELECT element_type, level, content FROM read_markdown_blocks('test/data/blocks_list.md') ORDER BY element_order;
+----
+list	1	NULL
+list_item	2	NULL
+paragraph	3	Item 1
+list_item	2	NULL
+paragraph	3	Item 2
+list_item	2	NULL
+paragraph	3	Item 3
 
 query I
 SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
@@ -156,16 +182,18 @@ block	heading	true	1	text	true	1
 # Test: Complex document with multiple block types
 # =============================================================================
 
+# 11 until lists became structural: a list was one block with its items packed
+# into a JSON string. Each item is now list_item + paragraph.
 query I
 SELECT count(*) FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE kind = 'block';
 ----
-11
+18
 
 # Verify all expected block types are present
 query I
 SELECT count(DISTINCT element_type) FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE kind = 'block';
 ----
-7
+8
 
 # Rich text is emitted as structured kind='inline' children at level 2 (not
 # markdown syntax inside content); the blockquote decomposes into inline rows
@@ -219,7 +247,7 @@ true
 query I
 SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md') WHERE kind = 'block';
 ----
-33
+58
 
 query I
 SELECT count(DISTINCT file_path) FROM read_markdown_blocks('test/data/blocks_*.md', include_filepath := true);
@@ -248,7 +276,7 @@ COPY (SELECT E'---\ntitle: Only FM\n---\n') TO '__TEST_DIR__/only_fm.md' (FORMAT
 query II
 SELECT element_type, level FROM read_markdown_blocks('__TEST_DIR__/only_fm.md');
 ----
-frontmatter	0
+metadata	1
 
 # =============================================================================
 # Test: Attributes are correctly populated
@@ -276,18 +304,29 @@ SELECT content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE elem
 A quote
 
 # =============================================================================
-# Test: List JSON content is valid
+# Test: a list carries NO content -- its items are children
 # =============================================================================
 
+# The inverse of what this used to assert. `content LIKE '["%'` pinned the JSON
+# array that flattened each item and discarded nested lists; a list that carries
+# content at all is now the pre-structural shape, and upstream's advisory rules
+# object to it by name (list_not_structural).
 query I
-SELECT content LIKE '["%' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
+SELECT coalesce(content, '') = '' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
 ----
 true
 
+# ...and the items are where the text went
 query I
-SELECT content LIKE '%"]' FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list_item';
 ----
-true
+3
+
+# ...and each item's text is in a paragraph beneath it, not in the list
+query I
+SELECT string_agg(content, '|' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'paragraph';
+----
+Item 1|Item 2|Item 3
 
 # =============================================================================
 # Test: Unicode and international characters
@@ -298,15 +337,19 @@ SELECT content FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE el
 ----
 Unicode Test 日本語
 
+# bool_or, not a bare LIKE: list items are paragraphs now, so this document has
+# four of them rather than one.
 query I
-SELECT content LIKE '%émojis%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE element_type = 'paragraph';
+SELECT bool_or(content LIKE '%émojis%') FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE element_type = 'paragraph';
 ----
 true
 
+# The list's non-ASCII text lives in its items, not in the list's own content
 query I
-SELECT content LIKE '%中文%' FROM read_markdown_blocks('test/data/blocks_unicode.md') WHERE element_type = 'list';
+SELECT string_agg(content, '|' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_unicode.md') b
+WHERE b.element_type = 'paragraph' AND b.level > 1;
 ----
-true
+中文|العربية|עברית
 
 # =============================================================================
 # Test: Double round-trip stability

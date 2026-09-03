@@ -79,8 +79,12 @@ struct WriteMarkdownGlobalState : public GlobalFunctionData {
 struct WriteMarkdownLocalState : public LocalFunctionData {
 	//! Local buffer for accumulating output
 	string buffer;
-	//! Track if the last element was inline (for proper block/inline transitions)
-	bool last_was_inline = false;
+	//! Blocks mode: the elements seen so far, rendered as ONE list in Combine.
+	//! Not rendered per row: a block absorbs the inline run that follows it, and
+	//! a row-at-a-time renderer has already emitted the block's trailing newlines
+	//! before it can see whether inlines follow. Accumulating across the local
+	//! state also keeps a run intact when it spans two DataChunks.
+	vector<Value> elements;
 };
 
 //===--------------------------------------------------------------------===//
@@ -149,23 +153,11 @@ private:
 	                            const WriteMarkdownBindData &bind_data);
 
 	//===--------------------------------------------------------------------===//
-	// Blocks Mode Helpers
-	//===--------------------------------------------------------------------===//
-
-	//! Render a single element from flattened duck_block representation
-	//! Dispatches to RenderBlockElement or RenderInlineElement based on kind
-	static string RenderElement(const string &kind, const string &element_type, const string &content, int32_t level,
-	                            const string &encoding, const Value &attributes,
-	                            const WriteMarkdownBindData &bind_data);
-
-	//! Render a block element (with trailing newlines)
-	static string RenderBlockElement(const string &element_type, const string &content, int32_t level,
-	                                 const string &encoding, const Value &attributes,
-	                                 const WriteMarkdownBindData &bind_data);
-
-	//! Render an inline element (no trailing newlines)
-	static string RenderInlineElement(const string &element_type, const string &content, const Value &attributes,
-	                                  const WriteMarkdownBindData &bind_data);
+	// Blocks Mode
+	//
+	// No render helpers here: blocks mode uses the SHARED duck_block renderer
+	// (DuckBlockFunctions::RenderDuckBlocksToMarkdown), called once per local
+	// state in Combine. Sink only rebuilds each row into a duck_block struct.
 };
 
 } // namespace duckdb

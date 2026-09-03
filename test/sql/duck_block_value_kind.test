@@ -1,0 +1,72 @@
+# name: test/sql/duck_block_value_kind.test
+# description: kind='value' metadata must never render into the document body
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Regression: document metadata (kind='value') leaked into the body as prose.
+#
+# Metadata is emitted as frontmatter (see duck_block_frontmatter.test); what
+# these assertions pin down is the separate guarantee that none of it reaches
+# the body, where a reader could not tell a leaked title from real prose. Each
+# strips the frontmatter and checks what is left.
+#
+# Block shapes below are verbatim dumps of pandoc_ast_to_blocks() output from
+# duck_block_utils (feat-doc-query-pipeline), replayed as literals so this test
+# does not depend on that extension being loadable.
+# =============================================================================
+
+# MetaInlines: the value marker and its kind='inline' children are both kept out
+query I
+SELECT regexp_replace(duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 1}, {kind: 'inline', element_type: 'text', content: 'LEAKED', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]), '(?s)^---\n.*?\n---\n\n', '') = E'Body\n\n';
+----
+true
+
+# MetaBlocks: children are kind='block', so only a level-scoped skip excludes them
+query I
+SELECT regexp_replace(duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'blocks', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'abstract'}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'LEAKED', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]), '(?s)^---\n.*?\n---\n\n', '') = E'Body\n\n';
+----
+true
+
+# MetaBool / MetaList / MetaMap: scalar and nested values are all kept out
+query I
+SELECT regexp_replace(duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'bool', content: 'true', level: 1, encoding: 'text', attributes: MAP{'key': 'draft'}, element_order: 1}, {kind: 'value', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'tags'}, element_order: 2}, {kind: 'value', element_type: 'string', content: 'LEAKED_A', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'value', element_type: 'map', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'authors'}, element_order: 4}, {kind: 'value', element_type: 'string', content: 'LEAKED_B', level: 2, encoding: 'text', attributes: MAP{'key': 'name'}, element_order: 5}]), '(?s)^---\n.*?\n---\n\n', '') = E'Body\n\n';
+----
+true
+
+# The version marker carries no key and must not surface at all
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'version', content: '0.4.0', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}]) NOT LIKE '%0.4.0%';
+----
+true
+
+# Body content is still rendered normally alongside metadata
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 1}, {kind: 'inline', element_type: 'text', content: 'T', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) LIKE '%Body%';
+----
+true
+
+# Content that follows a metadata scope at top level still renders
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 0}, {kind: 'inline', element_type: 'text', content: 'T', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'After', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2}]) LIKE '%After%';
+----
+true
+
+# An unknown future kind must be skipped, not guessed at
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'sidecar', element_type: 'whatever', content: 'LEAKED', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}]) NOT LIKE '%LEAKED%';
+----
+true
+
+# An unknown future kind takes its children with it
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'sidecar', element_type: 'whatever', content: NULL, level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'inline', element_type: 'text', content: 'LEAKED', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) NOT LIKE '%LEAKED%';
+----
+true
+
+# duck_blocks_to_sections has the same walk and the same guarantee
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'heading', content: 'H', level: NULL, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 2}, {kind: 'inline', element_type: 'text', content: 'LEAKED', level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}])[1].content)::VARCHAR NOT LIKE '%LEAKED%';
+----
+true

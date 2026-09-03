@@ -1,0 +1,83 @@
+# name: test/sql/duck_block_frontmatter.test
+# description: kind='value' document metadata round-trips as YAML frontmatter
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Markdown is the one output format with a natural home for document metadata,
+# so kind='value' elements are emitted as frontmatter rather than dropped.
+# Shapes are verbatim pandoc_ast_to_blocks() output from duck_block_utils.
+# =============================================================================
+
+# MetaInlines: a title becomes a frontmatter key, never body prose
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 1}, {kind: 'inline', element_type: 'text', content: 'T', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'---\ntitle: "T"\n---\n\nBody\n\n';
+----
+true
+
+# Inline formatting inside a metadata value survives as markdown
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 0}, {kind: 'inline', element_type: 'bold', content: 'B', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'---\ntitle: "**B**"\n---\n\n';
+----
+true
+
+# MetaBool
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'bool', content: 'true', level: 1, encoding: 'text', attributes: MAP{'key': 'draft'}, element_order: 0}]) = E'---\ndraft: true\n---\n\n';
+----
+true
+
+# MetaString
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'string', content: 'v', level: 1, encoding: 'text', attributes: MAP{'key': 'lang'}, element_order: 0}]) = E'---\nlang: "v"\n---\n\n';
+----
+true
+
+# MetaList
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'tags'}, element_order: 0}, {kind: 'value', element_type: 'string', content: 'a', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'value', element_type: 'string', content: 'b', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}]) = E'---\ntags:\n  - "a"\n  - "b"\n---\n\n';
+----
+true
+
+# MetaMap
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'map', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'author'}, element_order: 0}, {kind: 'value', element_type: 'string', content: 'N', level: 2, encoding: 'text', attributes: MAP{'key': 'name'}, element_order: 1}]) = E'---\nauthor:\n  name: "N"\n---\n\n';
+----
+true
+
+# MetaBlocks becomes a literal block scalar, and does not reach the body
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'blocks', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'abstract'}, element_order: 0}, {kind: 'block', element_type: 'paragraph', content: 'ABS', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'---\nabstract: |\n  ABS\n---\n\n';
+----
+true
+
+# The version marker carries no key and stays out of the document's metadata
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'version', content: '0.4.0', level: 1, encoding: 'text', attributes: MAP{}, element_order: 1}]) = E'Body\n\n';
+----
+true
+
+# Values are quoted, so a value cannot forge frontmatter structure
+query I
+SELECT duck_blocks_to_md([{kind: 'value', element_type: 'string', content: E'x"\n---\ninjected: 1', level: 1, encoding: 'text', attributes: MAP{'key': 'k'}, element_order: 0}]) = E'---\nk: "x\\"\\n---\\ninjected: 1"\n---\n\n';
+----
+true
+
+# An existing frontmatter block wins; no second frontmatter is synthesised
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'metadata', content: 'title: existing', level: 0, encoding: 'yaml', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'string', content: 'other', level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 1}]) = E'---\ntitle: existing\n---\n\n';
+----
+true
+
+# A document with no metadata gains no frontmatter
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}]) = E'Body\n\n';
+----
+true
+
+# Metadata does not leak into sections either, which have no frontmatter slot
+query I
+SELECT (duck_blocks_to_sections([{kind: 'block', element_type: 'paragraph', content: 'Body', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0}, {kind: 'value', element_type: 'inlines', content: NULL, level: 1, encoding: 'text', attributes: MAP{'key': 'title'}, element_order: 1}, {kind: 'inline', element_type: 'text', content: 'LEAKED', level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}])[1].content)::VARCHAR NOT LIKE '%LEAKED%';
+----
+true

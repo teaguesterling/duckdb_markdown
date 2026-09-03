@@ -392,11 +392,15 @@ WHERE b.element_type = 'table';
 ----
 {"headers": ["a"], "rows": [["[D](https://duckdb.org)"]]}
 
-# A link in a list item is serialised the same way (the list path shares the
-# inline serialiser).
-query I
-SELECT b.content
+# A link in a list ITEM is no longer serialised at all. It used to be flattened
+# into the list's JSON string as the literal text "see [D](https://duckdb.org)",
+# which a consumer could not tell from prose that happened to contain brackets.
+# Structural lists give it back as a real inline carrying its href, the same as
+# a link anywhere else. Tables still flatten, because a cell has no child slot.
+query III
+SELECT b.kind, b.element_type, coalesce(b.attributes['href'], b.content)
 FROM (SELECT UNNEST(parse_markdown_to_duck_blocks('- see [D](https://duckdb.org)')) b)
-WHERE b.element_type = 'list';
+WHERE b.kind = 'inline';
 ----
-["see [D](https://duckdb.org)"]
+inline	text	see 
+inline	link	https://duckdb.org
