@@ -27,6 +27,9 @@ using namespace duckdb_yyjson;
 // silently stops matching.
 using Vocab = DuckBlockVocabulary;
 
+// Defined below, used by both the inline and the block renderer.
+static string EscapeMarkdownText(const string &content, bool at_line_start);
+
 // Maximum Pandoc inline-nesting depth walked by ExtractPandocText. Guards
 // against unbounded recursion (stack overflow) on adversarially nested JSON.
 static constexpr int MAX_PANDOC_DEPTH = 1000;
@@ -539,22 +542,20 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 // RenderInlineElementToMarkdown (helper for inline elements)
 //===--------------------------------------------------------------------===//
 
-// Several branches below accept an HTML-flavoured alias beside the canonical
-// vocabulary name -- "em"/"emphasis" for italic, "strong" for bold, "del" for
-// strikethrough, and so on.
+// Escape the characters that would otherwise be re-parsed as markup.
 //
-// MEASURED 2026-08-31 against duck_block_utils spec 6.1, because this was
-// previously described here and to other consumers
-// as "legacy names this extension's own parser emits", and that is false: it
-// emits none of them. Nor does duck_block_utils, nor webbed -- webbed MAPS the
-// HTML tags `em`/`strong`/`del` onto the canonical names and carries the same
-// accepting aliases in its own writer, so two consumers hold identical
-// leniency that no observed producer exercises.
+// cmark DECODES backslash escapes into plain text -- `\\#` becomes a text node
+// holding `#` -- so a writer that emits text verbatim loses the escape and the
+// document changes meaning on the next parse:
 //
-// Kept rather than deleted: accepting an alias costs nothing and removing one
-// can only break a producer nobody here has looked at. But it is defensive
-// acceptance, not compatibility with anything known, and the difference
-// matters if someone later reasons from its presence.
+//   \\# not a heading   pass 1: paragraph      pass 2: HEADING
+//   a \\*x\\* b          pass 1: 0 italics     pass 2: 1 italic
+//
+// Only characters that can BEGIN a construct are escaped, and `#` only where a
+// heading could actually start. Escaping more would be safe for meaning and
+// worse for the bytes: prose containing an ordinary `*` would grow a backslash
+// that was never in the source.
+
 string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_type, const string &content,
                                                          const Value &attributes) {
 	if (element_type == Vocab::INLINE_LINK) {
@@ -591,8 +592,15 @@ string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_t
 		}
 		return "`" + content + "`";
 	} else if (element_type == Vocab::INLINE_TEXT) {
-		// Plain text
-		return content;
+		// Plain text, re-escaped so it cannot be re-parsed as markup.
+		//
+		// at_line_start=true: an inline run is frequently the first thing in its
+		// block, where a leading `#` or `>` WOULD open a heading or a quote. The
+		// renderer cannot see its own position, so it assumes the risky one. The
+		// cost is a backslash on a `#` that begins a mid-paragraph run, which
+		// renders as `#` either way; the alternative is a paragraph that silently
+		// becomes a heading on the next parse.
+		return EscapeMarkdownText(content, true);
 	} else if (element_type == Vocab::INLINE_SPACE) {
 		// Word separator
 		return " ";
@@ -663,6 +671,64 @@ string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_t
 //===--------------------------------------------------------------------===//
 // RenderBlockElementToMarkdown (helper for block elements)
 //===--------------------------------------------------------------------===//
+
+static string EscapeMarkdownText(const string &content, bool at_line_start) {
+	string out;
+	out.reserve(content.size());
+	for (size_t i = 0; i < content.size(); i++) {
+		const char c = content[i];
+		const bool line_start = (i == 0) ? at_line_start : (content[i - 1] == '\n');
+		bool escape = false;
+		switch (c) {
+		case '\\':
+		case '`':
+		case '*':
+		case '[':
+		case ']':
+			escape = true;
+			break;
+		case '_':
+			// Intraword underscores do not open emphasis in CommonMark, so a
+			// snake_case identifier keeps its bytes.
+			escape = (i == 0 || !isalnum(static_cast<unsigned char>(content[i - 1]))) ||
+			         (i + 1 >= content.size() || !isalnum(static_cast<unsigned char>(content[i + 1])));
+			break;
+		case '<':
+			// Only where it could open a tag or an autolink.
+			escape = i + 1 < content.size() && (isalpha(static_cast<unsigned char>(content[i + 1])) ||
+			                                    content[i + 1] == '/' || content[i + 1] == '!');
+			break;
+		case '#':
+		case '>':
+			escape = line_start;
+			break;
+		default:
+			break;
+		}
+		if (escape) {
+			out += '\\';
+		}
+		out += c;
+	}
+	return out;
+}
+
+// Several branches below accept an HTML-flavoured alias beside the canonical
+// vocabulary name -- "em"/"emphasis" for italic, "strong" for bold, "del" for
+// strikethrough, and so on.
+//
+// MEASURED 2026-08-31 against duck_block_utils spec 6.1, because this was
+// previously described here and to other consumers
+// as "legacy names this extension's own parser emits", and that is false: it
+// emits none of them. Nor does duck_block_utils, nor webbed -- webbed MAPS the
+// HTML tags `em`/`strong`/`del` onto the canonical names and carries the same
+// accepting aliases in its own writer, so two consumers hold identical
+// leniency that no observed producer exercises.
+//
+// Kept rather than deleted: accepting an alias costs nothing and removing one
+// can only break a producer nobody here has looked at. But it is defensive
+// acceptance, not compatibility with anything known, and the difference
+// matters if someone later reasons from its presence.
 
 string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content,
                                                         int32_t level, const string &encoding,

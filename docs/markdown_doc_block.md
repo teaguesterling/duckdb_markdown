@@ -7,7 +7,7 @@ The canonical vocabulary is the vendored header at `src/include/duck_block_vocab
 
 **Extension**: duckdb_markdown
 **Namespace**: `md`
-**Spec Version**: 6.2
+**Spec Version**: 6.3
 
 ## Overview
 
@@ -50,7 +50,7 @@ STRUCT(
 | `list` | `-`, `*`, `1.` lists | STRUCTURAL: no content of its own, items are `list_item` children one level deeper. `attributes['list_type']` is `bullet`/`ordered`/`definition`; `attributes['ordered']` is a legacy alias kept for stored data |
 | `table` | GFM tables | JSON `{headers, rows}` |
 | `hr` | `---`, `***`, `___` | Normalized to `---` on output |
-| `metadata` | Frontmatter block (raw text, not parsed) | `attributes['role'] = 'frontmatter'`, level 1, encoding `yaml` for `---` fences or `toml` for `+++`. Keeps its SOURCE position: a `---` fence at the head of a file is the FIRST element, `role='frontmatter'`. Metadata whose source gave it no position (pandoc `meta`, EPUB OPF) is appended by that producer with `role='document'`; `tailmatter` is metadata positioned at the END of its source. The writer finds the block by TYPE wherever it sits and always writes it at the top, because markdown has nowhere else: a fence at the bottom is a thematic break |
+| `metadata` | Frontmatter block (raw text, not parsed) | `attributes['role'] = 'frontmatter'`, level 1, encoding `yaml` for `---` fences or `toml` for `+++`. Keeps its SOURCE position, and the role is the positional claim: `frontmatter` = before the body (this reader), `tailmatter` = the author placed it after the body, `document` = the blob IS the whole document, and NO role = the format supplied it with no position at all (pandoc `meta`, EPUB OPF), so the producer appends it and claims nothing. The writer finds the block by TYPE wherever it sits and always writes it at the top, because markdown has nowhere else: a fence at the bottom is a thematic break |
 | ~~`frontmatter`~~ | — | RETIRED. Never a declared duck_block type; `metadata` + role replaced it in spec 6.2. Still ACCEPTED on write so stored data keeps rendering, never emitted |
 | `image` | `![alt](src "title")` | Details in attributes |
 | `raw` | Raw HTML | Preserved HTML in markdown |

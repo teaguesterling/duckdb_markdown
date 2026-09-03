@@ -43,6 +43,17 @@ SELECT duck_blocks_to_md([
 ----
 true
 
+# ...and a block with NO role at all — the format supplied the metadata with no
+# position, so the producer appends it and claims nothing. This is the shape
+# duck_block_utils actually emits, and it must still reach the top of a .md file.
+query I
+SELECT duck_blocks_to_md([
+  {kind: 'block', element_type: 'heading', content: 'Title', level: 1, encoding: 'text', attributes: MAP{'heading_level': '1'}, element_order: 0},
+  {kind: 'block', element_type: 'metadata', content: 'title: T', level: 1, encoding: 'yaml', attributes: MAP{}::MAP(VARCHAR, VARCHAR), element_order: 1}])
+     = E'---\ntitle: T\n---\n\n# Title\n\n';
+----
+true
+
 # ...and role='tailmatter' likewise: the role records where it was in ITS source,
 # not where markdown can put it
 query I
@@ -89,3 +100,32 @@ SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\nB
        duck_blocks_to_md(parse_markdown_to_duck_blocks(e'+++\ntitle = "T"\n+++\n\nBody.\n')) = E'+++\ntitle = "T"\n+++\n\nBody.\n\n';
 ----
 true	true
+
+# role='frontmatter' is a POSITIONAL CLAIM, so this reader must never attach it to
+# something it appends. webbed carried exactly that latent bug -- appending
+# unconditionally while labelling frontmatter -- and anything that appends without
+# checking shares it.
+#
+# Structurally impossible here: the block is emitted only when the frontmatter
+# scanner matches at the HEAD of the document, and it is pushed first. Pinned
+# anyway, because "structurally impossible" is a claim about code that can change.
+query I
+SELECT bool_and(is_first) FROM (
+  SELECT (SELECT min(e.element_order) FROM (SELECT unnest(parse_markdown_to_duck_blocks(md)) AS e)
+          WHERE e.attributes['role'] = 'frontmatter') = 1 AS is_first
+  FROM (VALUES (e'---\ntitle: T\n---\n\n# H\n\nBody.\n'),
+               (e'---\ntitle: T\n---\n'),
+               (e'+++\nt = 1\n+++\n\nB.\n'),
+               (e'---\na: 1\n---\n\n- x\n- y\n\n> q\n')) v(md));
+----
+true
+
+# A fence at the BOTTOM is not metadata under cmark -- it is a thematic break
+# followed by a heading -- so there is nothing there to mislabel. (pandoc's reader
+# DOES lift a trailing fence into meta; "markdown says X" is a claim about a
+# specific parser, and these two disagree about where a metadata fence may sit.)
+query I
+SELECT count(*) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'# H\n\nBody.\n\n---\ntitle: T\n---\n')) AS e)
+WHERE e.element_type = 'metadata';
+----
+0

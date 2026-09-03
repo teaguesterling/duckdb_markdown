@@ -981,6 +981,57 @@ static std::string GetInlineText(cmark_node *node, int depth = 0) {
 
 // True if `container`'s inline content is a single plain-text run (or empty),
 // in which case `text` holds it and no structured decomposition is needed.
+// Whether a text run holds a character that would be re-parsed as markup.
+//
+// cmark DECODES backslash escapes, so `\#` reaches us as a text node holding
+// `#` and the escape is unrecoverable from the node alone. The writer can
+// re-escape an inline TEXT element, but not a block's `content`: after
+// absorption that field holds RENDERED MARKDOWN -- the writer assembles child
+// output into it -- so escaping there would destroy the writer's own markup.
+//
+// So the choice is the READER's. A run with nothing significant in it goes in
+// `content`, which is compact and what most prose is. A run carrying a special
+// goes to an inline child instead, where the writer will escape it correctly.
+// Same information either way; only the representation differs.
+static bool NeedsMarkdownEscape(const std::string &text) {
+	for (size_t i = 0; i < text.size(); i++) {
+		switch (text[i]) {
+		case '\\':
+		case '`':
+		case '*':
+		case '[':
+		case ']':
+			return true;
+		case '_':
+			if (i == 0 || !std::isalnum(static_cast<unsigned char>(text[i - 1])) || i + 1 >= text.size() ||
+			    !std::isalnum(static_cast<unsigned char>(text[i + 1]))) {
+				return true;
+			}
+			break;
+		case '<':
+			if (i + 1 < text.size() &&
+			    (std::isalpha(static_cast<unsigned char>(text[i + 1])) || text[i + 1] == '/' || text[i + 1] == '!')) {
+				return true;
+			}
+			break;
+		case '#':
+		case '>':
+			if (i == 0 || text[i - 1] == '\n') {
+				return true;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	return false;
+}
+
+// Returns true when the container's text can live in a `content` field rather
+// than as an inline child. A run carrying a markdown special CANNOT: `content`
+// is not escapable by the writer (after absorption it holds rendered markdown),
+// so such a run is reported as NOT simple and routed to a child, where the
+// writer escapes it. See NeedsMarkdownEscape.
 static bool SingleTextChild(cmark_node *container, std::string &text) {
 	cmark_node *c = cmark_node_first_child(container);
 	if (!c) {
@@ -995,6 +1046,13 @@ static bool SingleTextChild(cmark_node *container, std::string &text) {
 	}
 	const char *lit = cmark_node_get_literal(c);
 	text = lit ? lit : "";
+	if (NeedsMarkdownEscape(text)) {
+		// Not "simple" for our purposes: it must go to an inline child so the
+		// writer can escape it. The caller's else-branch already does exactly
+		// that, so this needs no new code path.
+		text.clear();
+		return false;
+	}
 	return true;
 }
 
@@ -1078,6 +1136,24 @@ static void WalkInlines(cmark_node *container, int level, int32_t &order, std::v
 					WalkInlines(c, level + 1, order, out, depth + 1);
 				}
 			}
+			break;
+		}
+		case CMARK_NODE_HTML_INLINE: {
+			// Raw inline HTML carries its content in the node's LITERAL, not in
+			// child text nodes -- so the default arm's GetInlineText() returned
+			// EMPTY and the markup was silently dropped:
+			//
+			//   a <span>b</span> c   ->   a b c
+			//   a <br/> c            ->   a  c
+			//   a <!-- note --> c    ->   a  c
+			//
+			// `raw` is the declared inline type for it, and the writer already
+			// emits an inline raw's content verbatim, so only the reader was
+			// losing it.
+			ib.block_type = Vocab::INLINE_RAW;
+			const char *lit = cmark_node_get_literal(c);
+			ib.content = lit ? lit : "";
+			out.push_back(ib);
 			break;
 		}
 		default:

@@ -1,0 +1,54 @@
+# name: test/sql/duck_block_inline_html.test
+# description: raw inline HTML survives; it carries its literal, not child text
+# group: [sql]
+
+require markdown
+
+# `<span>`, `<br/>` and comments were SILENTLY DROPPED. An HTML-inline node keeps
+# its content in the node's LITERAL rather than in child text nodes, so the
+# reader's unknown-node fallback -- which flattens children -- returned empty and
+# the markup vanished:
+#
+#   a <span>b</span> c   ->   a b c
+#   a <br/> c            ->   a  c
+#   a <!-- note --> c    ->   a  c
+#
+# Block-level HTML was always fine; only the inline path lost it, and nothing
+# asserted the inline path.
+
+query II
+SELECT c, duck_blocks_to_md(parse_markdown_to_duck_blocks(md)) = expected
+FROM (VALUES
+  ('span',    e'a <span>b</span> c\n', E'a <span>b</span> c\n\n'),
+  ('br',      e'a <br/> c\n',          E'a <br/> c\n\n'),
+  ('comment', e'a <!-- n --> c\n',     E'a <!-- n --> c\n\n'),
+  ('attrs',   e'a <i class="x">b</i> c\n', E'a <i class="x">b</i> c\n\n')
+) v(c, md, expected);
+----
+span	true
+br	true
+comment	true
+attrs	true
+
+# It is emitted as the declared inline `raw` type, carrying the tag verbatim
+query III
+SELECT e.kind, e.element_type, e.content
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'a <span>b</span> c\n')) AS e)
+WHERE e.element_type = 'raw';
+----
+inline	raw	<span>
+inline	raw	</span>
+
+# Block-level HTML is unaffected
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'<div class="x">raw</div>\n')) = E'<div class="x">raw</div>\n\n';
+----
+true
+
+# Stable over a second pass, not merely lossless once
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(
+         duck_blocks_to_md(parse_markdown_to_duck_blocks(e'a <span>b</span> c\n'))))
+     = duck_blocks_to_md(parse_markdown_to_duck_blocks(e'a <span>b</span> c\n'));
+----
+true
