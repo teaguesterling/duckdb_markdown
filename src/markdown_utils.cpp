@@ -1247,9 +1247,6 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 
 	int32_t block_order = 1;
 
-	MarkdownBlock deferred_metadata;
-	bool has_metadata = false;
-
 	// Check for frontmatter first. The MATCH is used rather than the extracted
 	// string because the fence determines the encoding: `---` is YAML, `+++` is
 	// TOML. Reporting TOML as 'yaml' would be a worse failure than the flattening
@@ -1293,22 +1290,26 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		fm_block.content = frontmatter;
 		fm_block.level = 1;
 		fm_block.encoding = fm_match.delimiter == '+' ? Vocab::ENCODING_TOML : Vocab::ENCODING_YAML;
-		// PUSHED AFTER THE BODY, not here. Metadata is TAILMATTER in duck_blocks:
-		// both metadata homes sit after every body block and there is no
-		// frontmatter position in the vocabulary (ruled 2026-09-02). The block is
-		// built here because this is where the fence was matched; its ORDER is
-		// assigned once the body is walked.
+		// EMITTED FIRST, because that is where it WAS. Metadata keeps its source
+		// position (ruled 2026-09-02, 203b484):
 		//
-		// The end rather than the beginning, and the reason is the diff: with
-		// metadata last, "no metadata" and "has metadata" produce identical body
-		// sequences, so a document gaining frontmatter reports metadata and
-		// nothing else. Prepending renumbers every body element to record
-		// something most documents do not have.
+		//   positioned at the top     -> first, role='frontmatter'   <- this reader
+		//   positioned at the bottom  -> last,  role='tailmatter'
+		//   no position in the source -> last,  role='document'
 		//
-		// `attributes['role']` now carries the whole provenance -- it records what
-		// the block WAS, so the position does not have to.
-		deferred_metadata = fm_block;
-		has_metadata = true;
+		// Tailmatter is the FALLBACK, not the convention: it is where metadata goes
+		// when the source gave it none -- pandoc's `meta`, an EPUB's OPF, a docx
+		// core.xml, which are properties OF a file rather than blocks IN it. A
+		// reader that matched a literal `---` at byte 0 knows exactly where the
+		// block was and says so. Front matter is called front matter because of
+		// where it is.
+		//
+		// The cost is real and was accepted rather than hidden: a document gaining
+		// frontmatter shifts every body element_order, so a structural diff reports
+		// the body as moved. Appending everything would avoid that, and it is not
+		// worth discarding the source's own structure to make a diff tidier.
+		fm_block.block_order = block_order++;
+		blocks.push_back(fm_block);
 	}
 
 	// Strip frontmatter before parsing with cmark
@@ -1599,11 +1600,6 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	}
 
 	cmark_node_free(doc);
-
-	if (has_metadata) {
-		deferred_metadata.block_order = block_order++;
-		blocks.push_back(deferred_metadata);
-	}
 	return blocks;
 }
 

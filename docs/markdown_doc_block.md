@@ -50,7 +50,7 @@ STRUCT(
 | `list` | `-`, `*`, `1.` lists | STRUCTURAL: no content of its own, items are `list_item` children one level deeper. `attributes['list_type']` is `bullet`/`ordered`/`definition`; `attributes['ordered']` is a legacy alias kept for stored data |
 | `table` | GFM tables | JSON `{headers, rows}` |
 | `hr` | `---`, `***`, `___` | Normalized to `---` on output |
-| `metadata` | Frontmatter block (raw text, not parsed) | `attributes['role'] = 'frontmatter'`, level 1, encoding `yaml` for `---` fences or `toml` for `+++`. TAILMATTER: emitted AFTER every body block, so the body's `element_order` is identical whether or not a document has metadata. The writer finds it by type and hoists it to the top of the `.md` file, so a producer that emits it first renders the same document |
+| `metadata` | Frontmatter block (raw text, not parsed) | `attributes['role'] = 'frontmatter'`, level 1, encoding `yaml` for `---` fences or `toml` for `+++`. Keeps its SOURCE position: a `---` fence at the head of a file is the FIRST element, `role='frontmatter'`. Metadata whose source gave it no position (pandoc `meta`, EPUB OPF) is appended by that producer with `role='document'`; `tailmatter` is metadata positioned at the END of its source. The writer finds the block by TYPE wherever it sits and always writes it at the top, because markdown has nowhere else: a fence at the bottom is a thematic break |
 | ~~`frontmatter`~~ | — | RETIRED. Never a declared duck_block type; `metadata` + role replaced it in spec 6.2. Still ACCEPTED on write so stored data keeps rendering, never emitted |
 | `image` | `![alt](src "title")` | Details in attributes |
 | `raw` | Raw HTML | Preserved HTML in markdown |
