@@ -1080,6 +1080,24 @@ static void WalkInlines(cmark_node *container, int level, int32_t &order, std::v
 			}
 			break;
 		}
+		case CMARK_NODE_HTML_INLINE: {
+			// Raw inline HTML carries its content in the node's LITERAL, not in
+			// child text nodes -- so the default arm's GetInlineText() returned
+			// EMPTY and the markup was silently dropped:
+			//
+			//   a <span>b</span> c   ->   a b c
+			//   a <br/> c            ->   a  c
+			//   a <!-- note --> c    ->   a  c
+			//
+			// `raw` is the declared inline type for it, and the writer already
+			// emits an inline raw's content verbatim, so only the reader was
+			// losing it.
+			ib.block_type = Vocab::INLINE_RAW;
+			const char *lit = cmark_node_get_literal(c);
+			ib.content = lit ? lit : "";
+			out.push_back(ib);
+			break;
+		}
 		default:
 			// Unknown inline node: fall back to its flattened text.
 			ib.block_type = "text";
