@@ -1,0 +1,95 @@
+# name: test/sql/duck_block_escapes.test
+# description: backslash escapes survive a round trip; the document keeps its meaning
+# group: [sql]
+
+require markdown
+
+# cmark DECODES escapes -- `\#` reaches the reader as a text node holding `#` --
+# so a writer emitting text verbatim lost the escape and the document CHANGED
+# MEANING on the next parse. Not formatting loss; semantic corruption:
+#
+#   \# not a heading   pass 1: paragraph      pass 2: HEADING
+#   a \*x\* b          pass 1: 0 italics      pass 2: 1 italic
+#
+# The escape cannot be restored in a block's `content`, because after absorption
+# that field holds RENDERED MARKDOWN -- the writer assembles child output into it,
+# so escaping there would destroy the writer's own markup. So the READER chooses:
+# a run carrying a special goes to an inline child, where the writer escapes it.
+
+# STRUCTURE is preserved, which is the property that was broken
+query II
+SELECT
+  (SELECT string_agg(e.element_type, ',' ORDER BY e.element_order)
+   FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'\\# not a heading\n')) AS e) WHERE e.kind = 'block'),
+  (SELECT string_agg(e.element_type, ',' ORDER BY e.element_order)
+   FROM (SELECT unnest(parse_markdown_to_duck_blocks(
+           duck_blocks_to_md(parse_markdown_to_duck_blocks(e'\\# not a heading\n')))) AS e) WHERE e.kind = 'block');
+----
+paragraph	paragraph
+
+# An escaped emphasis marker does not become emphasis
+query II
+SELECT
+  (SELECT count(*) FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'a \\*x\\* b\n')) AS e) WHERE e.element_type = 'italic'),
+  (SELECT count(*) FROM (SELECT unnest(parse_markdown_to_duck_blocks(
+     duck_blocks_to_md(parse_markdown_to_duck_blocks(e'a \\*x\\* b\n')))) AS e) WHERE e.element_type = 'italic');
+----
+0	0
+
+# Escapes survive in every position they can appear
+query II
+SELECT c, duck_blocks_to_md(parse_markdown_to_duck_blocks(md)) = expected
+FROM (VALUES
+  ('hash',        e'\\# not a heading\n',   E'\\# not a heading\n\n'),
+  ('gt',          e'\\> not a quote\n',     E'\\> not a quote\n\n'),
+  ('emphasis',    e'a \\*x\\* b\n',          E'a \\*x\\* b\n\n'),
+  ('code span',   e'a \\`x\\` b\n',          E'a \\`x\\` b\n\n'),
+  ('brackets',    e'a \\[x\\](y) b\n',       E'a \\[x\\](y) b\n\n'),
+  ('inside bold', e'**a \\*x\\* b**\n',      E'**a \\*x\\* b**\n\n'),
+  ('in heading',  e'# a \\*x\\* b\n',        E'# a \\*x\\* b\n\n')
+) v(c, md, expected);
+----
+hash	true
+gt	true
+emphasis	true
+code span	true
+brackets	true
+inside bold	true
+in heading	true
+
+# REAL markup is untouched -- the escaper must not eat the document's own syntax
+query II
+SELECT c, duck_blocks_to_md(parse_markdown_to_duck_blocks(md)) = expected
+FROM (VALUES
+  ('italic',      e'a *x* b\n',        E'a *x* b\n\n'),
+  ('bold',        e'a **x** b\n',      E'a **x** b\n\n'),
+  ('code',        e'a `x` b\n',        E'a `x` b\n\n'),
+  ('link',        e'a [x](y) b\n',     E'a [x](y) b\n\n'),
+  ('heading',     e'# real heading\n', E'# real heading\n\n'),
+  ('quote',       e'> real quote\n',   E'> real quote\n\n'),
+  ('inline html', e'a <span>b</span> c\n', E'a <span>b</span> c\n\n')
+) v(c, md, expected);
+----
+italic	true
+bold	true
+code	true
+link	true
+heading	true
+quote	true
+inline html	true
+
+# Intraword underscores do not open emphasis in CommonMark, so an identifier
+# keeps its bytes rather than growing backslashes
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(e'a snake_case_id b\n')) = E'a snake_case_id b\n\n';
+----
+true
+
+# Everything above is STABLE, not merely correct once
+query I
+SELECT bool_and(duck_blocks_to_md(parse_markdown_to_duck_blocks(duck_blocks_to_md(parse_markdown_to_duck_blocks(md))))
+              = duck_blocks_to_md(parse_markdown_to_duck_blocks(md)))
+FROM (VALUES (e'\\# h\n'), (e'a \\*x\\* b\n'), (e'**a \\*x\\* b**\n'), (e'a *x* b\n'),
+             (e'# real\n'), (e'a snake_case_id b\n'), (e'a <span>b</span> c\n')) v(md);
+----
+true
