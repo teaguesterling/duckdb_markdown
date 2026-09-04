@@ -95,7 +95,12 @@ leading indicator, not a test.
 Ask DuckDB what its own type is instead (see change 2).
 
 **The same hazard sits on `__has_include("duckdb/common/vector/list_vector.hpp")`**,
-which several headers use to gate `CompatSetOutputCardinality`. That one fails
+which several headers use to gate `CompatSetOutputCardinality`. Note this is a
+statement about the shim's **selector**, not its **semantics** — change 18 says
+leave the `SetChildCardinality` *choice* alone, and that still holds. Fix how the
+branch is chosen; do not change which branch is chosen. The two instructions look
+contradictory and are not, and a literal reading of "leave it alone" would leave
+the bomb in place. That one fails
 *loudly* — a backported header without `SetChildCardinality` is a compile error,
 not a wrong branch — but it still breaks the **shipped** build on a submodule
 bump. Probe the member (`SetChildCardinality`) and let the `__has_include` do
@@ -760,20 +765,6 @@ it to a local (or a small `register_fallible` lambda). This compounds with chang
 5: set members are no longer mutable, so the property must be set **before**
 hand-off to a `FunctionSet`.
 
-**Assert the coupling, but assert something that can fail.** A useful guard ties
-the derived name type to its overload set — it holds on both lines, and catches
-`CompatName` resolving to `Identifier` on a DuckDB whose `identifier.hpp` the
-header did not find (so the `Identifier` overload was never declared):
-
-```cpp
-static_assert(std::is_same<decltype(CompatNameStr(std::declval<const CompatName &>())), string>::value,
-              "CompatNameStr must accept the derived CompatName on every DuckDB line");
-```
-
-Do **not** assert `is_same<CompatName, string>` — that is true on the pin and
-false on main, so it hard-fails the v2.0 build. And asserting `CompatName` equals
-the expression it is *defined* by is a tautology that can never fire.
-
 **Scope notes.** Table functions, COPY and casts are outside this contract —
 casts run through `BoundCastInfo`, not `BaseScalarFunction::Execute`. And
 `PragmaFunction` derives from `SimpleNamedParameterFunction`, not
@@ -1215,6 +1206,13 @@ canary leg specifically gets starved while the stable leg runs — that was wron
 and it would send you hunting a workflow bug that does not exist. The two legs
 were simply caught by the same backlog at different moments.)
 
+**Not every matrix leg runs tests.** The per-arch flags in
+`_extension_distribution.yml` control whether a leg reaches `make test_release`
+at all, so one arch can go green as a *build only*. "arm64 green and amd64 built"
+is therefore **not** two independent confirmations — if only amd64 tests, a green
+arm64 corroborates nothing about runtime. Check which legs actually ran a `Test`
+step before counting them as agreement.
+
 **The canary covers fewer platforms than the stable leg.** The canary matrix
 generates only `linux_amd64` and `linux_arm64`, while a stable leg typically
 covers five (both Linux arches, both macOS arches, Windows/MSVC) plus Wasm. So
@@ -1312,6 +1310,13 @@ post_build_command: './build/release/test/unittest test/sql/foo.test || true'
 ```
 
 Mark it temporary and revert it before proposing the port for merge.
+
+**Replay your fixture setup inside it.** `post_build_command` runs *before* the
+test phase, so any fixture wired into the test target (a `test/Makefile.inc` hook
+on `test_release_internal`, say) does not exist yet. Without replaying setup you
+diagnose a missing-fixture error instead of the real one — the diagnostic lies,
+convincingly. Guard each re-run with `|| true` so the build step still succeeds
+and you get the log either way.
 
 **Reading the failure needs the REST API, not `gh run view`.** Because the canary
 job calls a *reusable* workflow, `gh run view <run> --log-failed` prints nothing
