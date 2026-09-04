@@ -63,12 +63,16 @@ inline LogicalType CompatWithAlias(TYPE type, string alias) {
 Probe each change **separately**. Tying several to one macro silently picks the
 wrong branch if they ever land in different releases.
 
-## The three changes
+## The changes
 
 ### 1. `LogicalType::SetAlias` → `WithAlias`
 
 `WithAlias` returns a copy rather than mutating a type whose type-info may be
 shared. Use the `CompatWithAlias` shim above.
+
+`SetAlias` is **removed**, not deprecated — on main the compiler says
+"`struct duckdb::LogicalType` has no member named `SetAlias`; did you mean
+`GetAlias`?". There is no grace period to plan around.
 
 *Check while you are there:* `SetAlias` was a setter, so calling it twice
 **replaced** the alias rather than adding one. If your code did that, only the
@@ -105,13 +109,38 @@ Then `vector<string> &names` becomes `vector<CompatName> &names` in every bind
 declaration *and* definition, and runtime boundaries use the helpers. Do not add
 an implicit conversion — the explicitness is the upstream change's point.
 
-Grep for **all** of them before starting; the compiler stops at the first few:
+It is not only bind parameters. COPY **option keys** are identifiers too, so
+`option.first` needs the same helper. Grep for all of it before starting — and
+note that the compiler will not show you the whole list:
 
 ```
 grep -rn 'vector<string> &names\|vector<string> &return_names' src/
+grep -rn 'option\.first\|names\[' src/
 ```
 
-### 3. `UnaryExecutor::ExecuteWithNulls` — removed
+### 3. `FlatVector::GetData<T>` is read-only; writes need `GetDataMutable<T>`
+
+```
+v1.5:  GetData<T>(vec)         -> T*
+v2.0:  GetData<T>(vec)         -> const T*
+       GetDataMutable<T>(vec)  -> T*
+```
+
+Writing through the v2.0 read accessor is a compile error, which is the split's
+purpose. Probe for the member and route the write path:
+
+```cpp
+template <class VALUE, class FV = FlatVector>
+inline VALUE *CompatFlatDataMutable(Vector &vec) {
+	if constexpr (CompatHasFlatGetDataMutable<FV>::value) {
+		return FV::template GetDataMutable<VALUE>(vec);
+	} else {
+		return FV::template GetData<VALUE>(vec);
+	}
+}
+```
+
+### 4. `UnaryExecutor::ExecuteWithNulls` — removed
 
 There is no drop-in shim, because the replacement has a different shape: v2.0's
 `Execute` adds nulls when the lambda returns `optional<RESULT_TYPE>`.
@@ -137,6 +166,29 @@ likely to alter behaviour quietly. Comparing ours showed the original lambda's
 the function, so a null input produced NULL either way and the branch never
 decided anything.
 
+### 5. `FunctionSet<T>::functions` yields `shared_ptr<const T>`
+
+A function set no longer hands out mutable references to its members, so a loop
+that configures functions *after* adding them stops compiling:
+
+```
+error: 'class duckdb::shared_ptr<const duckdb::ScalarFunction>' has no member
+       named 'SetStability'
+```
+
+There is no shim for this, and one would be wrong anyway: the fix is to finish
+configuring each function **before** it goes into the set.
+
+```cpp
+// was: for (auto &f : set.functions) { f.SetStability(...); }   // no longer mutable
+ScalarFunction f(...);
+f.SetStability(FunctionStability::VOLATILE);   // configure first
+set.AddFunction(f);                            // then add
+```
+
+Watch for this wherever a helper "post-processes" a whole set — null handling,
+varargs and stability are the usual ones.
+
 ## You cannot test this locally
 
 Your submodule is the stable line, so a local build only proves the v1.5 half.
@@ -154,6 +206,22 @@ duckdb-next-build:
 ```
 
 Then `gh workflow run <workflow>.yml --ref <your-branch>` drives the port.
+
+**Reading the failure needs the REST API, not `gh run view`.** Because the canary
+job calls a *reusable* workflow, `gh run view <run> --log-failed` prints nothing
+at all — which reads exactly like a job that produced no errors. Get the job id
+first, then fetch its log directly:
+
+```
+gh run view <run-id> --json jobs \
+   --jq '.jobs[] | select(.conclusion=="failure") | "\(.databaseId) \(.name)"'
+gh api repos/:owner/:repo/actions/jobs/<job-id>/logs | grep 'error:'
+```
+
+**Dispatch after pushing, and do not push again while it runs.** The standard
+`concurrency:` group keys on the workflow and ref, so a push run and a dispatch
+run on the same branch cancel each other. Two of my canary runs were cancelled
+this way before I noticed I was reading a superseded run.
 
 Two notes on that job. Restricting it to `workflow_dispatch` (or pushes to main)
 matters: a push and a `pull_request` both fire on the same commit, and a PR's check
