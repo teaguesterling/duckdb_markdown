@@ -127,6 +127,9 @@ CASES = [
 ]
 
 
+_SEEN_STDERR = set()
+
+
 def sql(binary, text, unsigned=True):
     with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False) as f:
         f.write(text)
@@ -134,8 +137,25 @@ def sql(binary, text, unsigned=True):
     try:
         argv = [binary] + (["-unsigned"] if unsigned else []) + ["-noheader", "-list"]
         r = subprocess.run(argv, stdin=open(path), capture_output=True, text=True)
-        if r.returncode != 0 or r.stderr.strip():
+        # A NON-ZERO exit is fatal. Non-empty stderr with a ZERO exit is not:
+        # DuckDB writes deprecation notices there while succeeding, and treating
+        # those as errors broke this bridge the day duck_block_utils deprecated
+        # pandoc_ast_to_blocks.
+        #
+        # It is still PRINTED, every time, and that matters more than the pass/fail
+        # decision: the opposite bug -- swallowing stderr entirely -- is what once
+        # made a failing query here read as "no findings". A warning that is
+        # visible cannot rot into a silence.
+        if r.returncode != 0:
             raise RuntimeError((r.stderr or "rc=%d" % r.returncode).strip())
+        if r.stderr.strip():
+            # Once per distinct message: the same deprecation on all 11 documents
+            # is 22 identical lines, which is the volume that trains a reader to
+            # skip the notices entirely.
+            for line in r.stderr.strip().splitlines():
+                if line not in _SEEN_STDERR:
+                    _SEEN_STDERR.add(line)
+                    print(f"  note (producer stderr): {line}")
         return r.stdout.strip()
     finally:
         os.unlink(path)
