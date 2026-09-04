@@ -529,13 +529,20 @@ urlpattern alone). `duckdb_webbed`'s header has a
 transitively**. It presents as `'StructVector' has not been declared`, which
 reads like a missing symbol rather than a moved header.
 
+There are **six** of them, and it is easy to include three and be caught later by
+the fourth — `ArrayVector` in particular tends to surface only deep in a file:
+
+```
+duckdb/common/vector/{flat,list,struct,array,constant,dictionary}_vector.hpp
+```
+
 Include them defensively — including in your compat header, which names
 `FlatVector` at namespace scope:
 
 ```cpp
 #if __has_include("duckdb/common/vector/flat_vector.hpp")
 #include "duckdb/common/vector/flat_vector.hpp"
-#endif   // likewise list_vector.hpp, struct_vector.hpp
+#endif   // and the other five
 ```
 
 ### 10. `Vector::Reference(const Value &)` gained a count — and cannot be `if constexpr`
@@ -797,10 +804,13 @@ never bind a reference to `.Name()`.
 
 ### 17. Result and prepared-statement names are `Identifier`
 
-`QueryResult::names` is `vector<Identifier>` on v2.0 (`query_result.hpp:65`), so
-any `result.names[col]` used as a string breaks — result formatters and DDL
-builders are the usual victims. There is also a `GetNames()` accessor returning
-`const vector<Identifier> &`.
+`BaseQueryResult::names` and `types` are **private** on v2.0
+(`query_result.hpp:55` onward), not merely retyped — so `result.names[col]` and
+`result.types[i]` stop compiling outright, whatever you do about the element
+type. Use the public `GetNames()` (`:43`, returning `const vector<Identifier> &`)
+and `GetTypes()` (`:41`). Result formatters and DDL builders are the usual
+victims, and a repo that runs its own internal queries hits this far from any
+bind signature.
 
 `PreparedStatement::named_param_map` is **still a public member** — it did not
 move behind an accessor, its *element type* changed, from
