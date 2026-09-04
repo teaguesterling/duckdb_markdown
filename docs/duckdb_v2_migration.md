@@ -186,6 +186,7 @@ a fully green canary does not clear you of either.
 | 17 | result / prepared-statement names are `Identifier` | compile error |
 | 18 | `SetCardinality` → `SetChildCardinality` | compiles; may throw `InternalException` at run time |
 | 19 | single-arrow lambdas rejected by the binder | **SQL, not C++ — no compile signal at all** |
+| 20 | `CopyInfo::options` rekeyed to `identifier_map_t` | compile error — **second form has nothing to grep** |
 
 Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
 Class 11 can compile and misbehave. Class 15 can return **wrong rows** with no
@@ -1029,6 +1030,49 @@ grep -rnE '(list_transform|list_filter|list_reduce|apply|filter|reduce)\(.*->' t
 contains an arrow lambda fails at **USE** time on v2.0, with no compile signal
 and possibly no test coverage either.
 
+### 20. `CopyInfo::options` was rekeyed — and the second failure has nothing to grep for
+
+```
+v1.5:  case_insensitive_map_t<vector<Value>> options;
+v2.0:  identifier_map_t<vector<Value>>       options;
+```
+
+Change 2 already tells you to wrap key *reads* (`CompatNameStr(kv.first)`). That
+catches the obvious error:
+
+```
+cannot convert 'const duckdb::Identifier' to 'const std::string &'
+```
+
+**The second one is the trap.** Any extension that declares its own
+`case_insensitive_map_t<vector<Value>>` local and assigns it into
+`CopyInfo::options` now fails:
+
+```
+no match for 'operator=' between identifier_map_t<vector<Value>>
+                             and case_insensitive_map_t<vector<Value>>
+```
+
+There is no `kv.first` anywhere near it, so every grep in change 2 misses it
+completely. Search for the container type and the struct instead:
+
+```
+grep -rn 'case_insensitive_map_t<vector<Value>>\|CopyInfo\|copied_info' src/
+```
+
+The fix needs no shim and no version branch — **derive the local's type from the
+member it is destined for**, the same move as `CompatName`:
+
+```cpp
+decltype(copied_info.options) csv_copy_options {{"file_extension", {"yaml"}}};
+```
+
+Literal keys need no helper (`Identifier(const char *)` is implicit), so only the
+declaration changes — and it survives the next rekey too.
+
+Note that *registering* options is unaffected: `input.options["my_option"] = ...`
+with a literal key compiles on both lines.
+
 ## Deprecated is not removed — check before you port
 
 Not everything that changed is a hard break, and porting the soft ones costs
@@ -1160,6 +1204,12 @@ covers five (both Linux arches, both macOS arches, Windows/MSVC) plus Wasm. So
 deduction it rejects that GCC and AppleClang accept, for instance — is invisible
 to it. Your MSVC coverage comes from the stable leg only, which is another reason
 not to treat that leg as merely a formality.
+
+**A canary whose Build FAILED tells you nothing about classes 7, 13 or 19** —
+those are runtime contracts, and the Test step never ran. Check that `Test` says
+`success`, not `skipped`. A port reporting "the build is green" from a run whose
+Test step was skipped has verified half of what it thinks it has, and the half it
+skipped is the half no compiler can check.
 
 **A green *build* is not a green canary.** The job runs Build and then Test, and
 community-extensions' `test_against_latest` runs tests too — so it gates on both.
