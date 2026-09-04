@@ -540,7 +540,10 @@ function is not marked as fallible - the function must call SetFallible().
 would take the same branch on both, which is detection that detects nothing.
 Call `f.SetFallible()` directly.
 
-**It is NOT inert on the version you ship.** On v1.5 `errors` feeds
+**It is not a no-op on the version you ship — it is unenforced.** The
+distinction matters: v1.5 *has* the flag and *consults* it; it simply does not
+enforce the contract. Calling it a no-op invites blanket-marking on the theory
+that the pinned version cannot care, and it can. On v1.5 `errors` feeds
 `BoundFunctionExpression::CanThrow()`, which gates conjunct reordering
 (`expression_heuristics`, `adaptive_filter`), filter pushdown
 (`pushdown_get` / `_projection` / `_outer_join`) and dictionary-expression
@@ -561,6 +564,20 @@ constructs a temporary, so there is no object to call `SetFallible()` on. Hoist
 it to a local (or a small `register_fallible` lambda). This compounds with change
 5: set members are no longer mutable, so the property must be set **before**
 hand-off to a `FunctionSet`.
+
+**Assert the coupling, but assert something that can fail.** A useful guard ties
+the derived name type to its overload set — it holds on both lines, and catches
+`CompatName` resolving to `Identifier` on a DuckDB whose `identifier.hpp` the
+header did not find (so the `Identifier` overload was never declared):
+
+```cpp
+static_assert(std::is_same<decltype(CompatNameStr(std::declval<const CompatName &>())), string>::value,
+              "CompatNameStr must accept the derived CompatName on every DuckDB line");
+```
+
+Do **not** assert `is_same<CompatName, string>` — that is true on the pin and
+false on main, so it hard-fails the v2.0 build. And asserting `CompatName` equals
+the expression it is *defined* by is a tautology that can never fire.
 
 **Scope notes.** Table functions, COPY and casts are outside this contract —
 casts run through `BoundCastInfo`, not `BaseScalarFunction::Execute`. And
@@ -781,12 +798,23 @@ gh run list --workflow MainDistributionPipeline.yml --limit 20 \
    --json databaseId,conclusion,headBranch,createdAt
 ```
 
-**A canary job can sit in `queued` forever.** One run's matrix job was never
-scheduled at all — 70+ minutes queued while all six stable-leg jobs on the same
-`ubuntu-latest` pool started and finished green. `--json status` reads `queued`
-the whole time, so a naive wait loop blocks indefinitely with no signal. Compare
-job-level `startedAt` against its siblings to tell "slow" from "never scheduled",
-and cancel and re-dispatch rather than waiting.
+**A run can sit in `queued` for over an hour, and `--json status` reads
+`queued` the whole time** — so a naive `until status == completed` loop blocks
+indefinitely with no signal at all.
+
+The cause is usually account-wide runner backlog rather than anything about your
+workflow, and it is self-inflicted if you are porting several repos at once: the
+concurrent ports contend for one runner quota. Before concluding a run is stuck,
+check whether *anything* is progressing:
+
+```
+gh api '/repos/OWNER/REPO/actions/runs?status=in_progress' --jq .total_count
+```
+
+Zero means backlog, not a broken job. (An earlier draft of this guide claimed the
+canary leg specifically gets starved while the stable leg runs — that was wrong,
+and it would send you hunting a workflow bug that does not exist. The two legs
+were simply caught by the same backlog at different moments.)
 
 **A green *build* is not a green canary.** The job runs Build and then Test, and
 community-extensions' `test_against_latest` runs tests too — so it gates on both.

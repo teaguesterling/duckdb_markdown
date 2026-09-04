@@ -83,6 +83,15 @@ inline CompatName CompatMakeName(string name) {
 	return CompatName(std::move(name));
 }
 
+// Ties the derived type to its overload set. Deriving CompatName fixes the type
+// but leaves a second failure mode open: CompatName could resolve to Identifier
+// on a DuckDB whose identifier.hpp this header did not find, so the Identifier
+// overload above was never declared -- and then CompatNameStr either fails to
+// match or silently picks a worse conversion. Assert the coupling instead of
+// assuming it.
+static_assert(std::is_same<decltype(CompatNameStr(std::declval<const CompatName &>())), string>::value,
+              "CompatNameStr must accept the derived CompatName on every DuckDB line");
+
 // --- LogicalType alias ---------------------------------------------------------
 // v1.5: void SetAlias(string)      -- mutates in place
 // v2.0: LogicalType WithAlias(string) const -- returns a copy, never mutating a
