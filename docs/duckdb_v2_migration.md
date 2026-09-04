@@ -108,6 +108,32 @@ markdown's header is written this way, so it is safe to copy into a C++11 repo.
 
 ## The changes
 
+Sorted by how they announce themselves. **The two that announce themselves not at
+all are the ones to plan around** — nothing in your toolchain will find them, and
+a fully green canary does not clear you of either.
+
+| # | change | how you find out |
+|---|---|---|
+| 1 | `LogicalType::SetAlias` removed → `WithAlias` | compile error |
+| 2 | bind signatures take `vector<Identifier>` | compile error |
+| 3 | `FlatVector::GetData<T>` is read-only | compile error |
+| 4 | `ExecuteWithNulls` removed | compile error |
+| 5 | `FunctionSet<T>::functions` is `shared_ptr<const T>` | compile error |
+| 6 | public fields → accessors (`varargs`, `return_type`, …) | compile error, **no grep finds it** |
+| 7 | `capture_argument_aliases` defaults to false | **RUNTIME, green build** |
+| 8 | `StructVector::GetEntries` element type | compile error |
+| 9 | per-vector accessor headers moved | compile error (reads as a missing symbol) |
+| 10 | `Vector::Reference` gained `count_t` | compile error — **must be `#ifdef`, not `if constexpr`** |
+| 11 | `ScalarFunction` ctor dropped a positional parameter | **may still compile, silently wrong** |
+| 12 | `DefaultMacro` changed shape | compile error |
+| 13 | throwing scalar functions must `SetFallible()` | **RUNTIME, green build, one arch only** |
+| 14 | `FlatVector::Validity` const split | compile error, **at the mutation, not the call** |
+
+Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
+Class 11 can compile and misbehave. Class 13 additionally shows up on **one CI
+architecture only**, because its enforcement is an assertion — so "green on
+arm64" is not evidence of anything.
+
 ### 1. `LogicalType::SetAlias` → `WithAlias`
 
 `WithAlias` returns a copy rather than mutating a type whose type-info may be
