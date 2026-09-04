@@ -185,6 +185,7 @@ a fully green canary does not clear you of either.
 | 16 | `CreateInfo`/`DropInfo` names → private `QualifiedName` | compile error (storage extensions only) |
 | 17 | result / prepared-statement names are `Identifier` | compile error |
 | 18 | `SetCardinality` → `SetChildCardinality` | compiles; may throw `InternalException` at run time |
+| 19 | single-arrow lambdas rejected by the binder | **SQL, not C++ — no compile signal at all** |
 
 Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
 Class 11 can compile and misbehave. Class 15 can return **wrong rows** with no
@@ -987,6 +988,46 @@ it throws an `InternalException` if a column is neither flat nor constant and it
 size disagrees, or if the count exceeds a flat vector's capacity, where the old
 call was silent. That fails loudly, so a canary whose Test step exercises those
 paths is real evidence.
+
+### 19. Single-arrow lambdas are a binder ERROR — and it is not C++ at all
+
+The only class here that lives in **SQL**, not in your source. No shim can reach
+it, and a build that is green on both architectures tells you nothing about it.
+
+```
+Binder Error: Deprecated lambda arrow (->) detected. Please transition to the new
+lambda syntax, i.e., lambda x, i: x + i, before DuckDB's next release.
+Use SET lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.
+```
+
+The mechanism (`bind_function_expression.cpp`, ~line 209) is worth knowing,
+because it is counter-intuitive: the lambda is bound **successfully first**, and
+*then* thrown on.
+
+```cpp
+bool invalid_syntax = setting != LambdaSyntax::ENABLE_SINGLE_ARROW && syntax_type == SINGLE_ARROW;
+// ... BindLambdaFunction succeeds ...
+if (!lambda_bind_result.HasError()) { if (!invalid_syntax) { return ...; } throw BinderException(msg); }
+```
+
+**The fix is version-agnostic and cheap.** `lambda x: expr` is accepted by the
+pinned v1.5 too, so convert rather than setting the escape-hatch pragma. Verify a
+couple of the converted shapes return identical values on the pin before trusting
+the rest; an unchanged assertion count afterwards is what shows it was a syntax
+change and not a behaviour change.
+
+**Grep for the lambda shape, not for `->`.** A bare `grep ' -> '` is badly
+misleading: `->` is also DuckDB's JSON operator, and it shows up constantly in
+prose. In this repo all 30 hits were **comments**, and none was a lambda — a
+blind conversion would have been pure noise. Anchor on the functions instead:
+
+```
+grep -rnE '(list_transform|list_filter|list_reduce|apply|filter|reduce)\(.*->' test/ src/
+```
+
+**Check shipped SQL, not just tests.** An extension whose `DefaultMacro` body
+contains an arrow lambda fails at **USE** time on v2.0, with no compile signal
+and possibly no test coverage either.
 
 ## Deprecated is not removed — check before you port
 
