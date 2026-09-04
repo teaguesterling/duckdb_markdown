@@ -461,12 +461,19 @@ branch instead.
 Two hazards that cost real time here, both of which produce a *false pass*
 rather than a failure — which is why they are worth stating.
 
-**Give scratch files project-unique names.** Agents sharing one scratch
-directory wrote `build.sh` and `build.log`, and one of them nohup'd a `build.sh`
+**A shared-directory log is a trigger, never evidence.** Agents sharing one
+scratch directory wrote `build.sh` and `build.log`, and one nohup'd a `build.sh`
 that another had overwritten between write and exec. The log came back full of a
-different repo's cmake output and ended in a clean `BUILD_EXIT=0`. It was very
-nearly recorded as "builds green locally" for a project that had never compiled
-at all. Before believing any build log, grep it for your own repo's path.
+different repo's cmake output and ended in a clean `BUILD_EXIT=0` — very nearly
+recorded as "builds green locally" for a project that had never compiled at all.
+
+Use such a file to know *when* something finished, but take the pass/fail claim
+from something only your repo could have produced: a test file name that exists
+nowhere else, a built artifact with your extension's name and a fresh timestamp,
+a function name unique to your source. Best of all, let the result come back
+through the tool result rather than off disk. (Output files the tool itself
+creates for background commands are already collision-safe — they are named per
+invocation. The exposure is only scripts you write into a shared directory.)
 
 **Wait on your own PID, not a `pgrep` pattern.** `pgrep -f 'make release'`
 matches every concurrent build, not yours. It makes a waiter block until the
