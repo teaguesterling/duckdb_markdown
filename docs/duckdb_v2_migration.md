@@ -779,6 +779,24 @@ casts run through `BoundCastInfo`, not `BaseScalarFunction::Execute`. And
 `PragmaFunction` derives from `SimpleNamedParameterFunction`, not
 `BaseScalarFunction`, so pragmas are unaffected.
 
+**A passing `statement error` test is NOT evidence the error mode is right.**
+This is the trap that makes class 13 hard to close out, and several ports
+(including this one) leaned on the wrong inference. The InternalException
+**embeds the original error text**:
+
+```
+INTERNAL Error: Scalar function "from_data_uri" threw an execution error, but the
+function is not marked as fallible - the function must call SetFallible().
+Error: Invalid data: URI - must start with 'data:'
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ your test's expected substring
+```
+
+So a `statement error` test matching on a substring of your own message still
+**passes** while the function is mis-declared. The enforcement surfaces only in
+tests that match the whole message, or downstream in whatever the internal error
+cascades into. "Our error-path tests are green, so class 13 is handled" does not
+follow.
+
 **When measuring, make sure your bad input actually throws.** One port's first
 probe used a malformed-looking URL that the parser happily accepted, so the probe
 was vacuous and measured nothing. Test that your input errors before you trust a
@@ -1267,6 +1285,14 @@ test/sql/foo.test:78: FAILED:
 — no message, no expected, no actual, nowhere in the job log. Since the pinned
 build cannot reproduce a v2.0-only failure by construction, the reason can be
 genuinely unobtainable.
+
+**Do not pair an error with the nearest test name above it.** The runner uses 3
+workers and their stdout **interleaves**. Error lines get printed inside a
+*different* test's failure report than the one that raised them, and a Catch2
+`FAILED:` marker can end up concatenated onto another worker's
+`[8/9] (88%): <other test> took 0.025s` progress line. Attribute a failure by the
+per-failure **source excerpt**, never by proximity — and treat any tidy-looking
+"which tests failed" tally from a parallel run as provisional.
 
 **The empty shape is itself a signal.** A real result mismatch *would* have
 printed a diff, and a thrown DuckDB exception *does* reach the log (we have an
