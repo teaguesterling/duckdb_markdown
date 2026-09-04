@@ -28,9 +28,23 @@ jobs:
   # WORKFLOW accepts only name/needs/if/permissions/uses/with/secrets/strategy/
   # concurrency -- `continue-on-error` is not among them, and adding it makes the whole
   # workflow fail to PARSE (zero jobs scheduled, run marked failed).
+  # PARKED 2026-09-03: DuckDB main is the v2.0 line (v2.0-cyanoptera), and a MAJOR
+  # release breaks API by definition. The canary is for advance warning of drift
+  # worth reacting to; against a major bump it reports the same known breakage on
+  # every push, which is noise rather than warning -- and it turns main's own CI
+  # red for a reason that has nothing to do with this extension's health.
+  #
+  # Currently outstanding against v2.0, from run 33717059343:
+  #   LogicalType::SetAlias                 removed
+  #   UnaryExecutor::ExecuteWithNulls       removed
+  #   vector<string> -> vector<Identifier>  in copy_to_bind_t and table_function_bind_t
+  #
+  # Still runnable ON DEMAND (Actions -> this workflow -> Run workflow), so the
+  # v2.0 port can be driven from it when that work is picked up. Unparking is
+  # deleting one condition.
   duckdb-next-build:
     name: Canary — build against DuckDB main (advisory)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch'
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       duckdb_version: main
