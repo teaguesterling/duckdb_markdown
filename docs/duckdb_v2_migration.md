@@ -857,56 +857,61 @@ an `Identifier`.
 answers yes on **both** versions and then fails deep inside the instantiation.
 Probe the `GetNamedParameterMap` accessor instead.
 
-### 18. `SetCardinality` → `SetChildCardinality` is not a safe blanket rename
+### 18. `SetCardinality` vs `SetChildCardinality` — grep for `Append`, not for order
 
-**Corrected.** An earlier version of this section called this silent data
-corruption, on the strength of upstream's doc comment
-(`data_chunk.hpp:72-74`), which says forwarding "would resize/overwrite their
-data". That reading was **wrong**, and it was circulated as an urgent warning
-before anyone traced the implementation. The comment is real; the inference from
-it was not.
+**This entry has been wrong twice. Both errors came from reasoning about a doc
+comment instead of reading the implementation, and each would have broken
+working code in a different direction.** It is recorded that way deliberately,
+because the mistakes are more instructive than the conclusion.
 
-What the code actually does on current `main`:
+- *First version:* "forwarding silently overwrites your data." **False** — the
+  path is `v_size = n` behind a bounds check, and nothing touches element bytes.
+- *Second version:* "write-then-set sites must move to `SetCardinalityUnsafe`."
+  **Also false, and actively harmful** for the commonest table-function idiom.
+
+The discriminator is **which write API you used**, not the order:
 
 ```
-DataChunk::SetChildCardinality(n)        data_chunk.cpp:155
-   flat/constant vector -> FlatVector::SetSize(v, n)
-   any other vector     -> throw InternalException if v.size() != n
-FlatVector::SetSize -> VectorBuffer::SetVectorSize   vector_buffer.cpp:36
-   same size -> return;  CONSTANT -> ok;  FLAT -> bounds-check, then v_size = n
-   anything else -> throw InternalException
-VectorStructBuffer::SetVectorSize        struct_vector.cpp:63
-   propagates the size to each child; no realloc, no zeroing, no copy
+Vector::SetValue(index, val)   ->  buffer->SetValue(type, index, val)      vector.cpp:350
+      writes AT AN INDEX. Does NOT move v_size.
+VectorBuffer::AppendValue      ->  Reserve(n+1); SetValue(type, v_size, val);
+                                   SetVectorSize(n+1)                      vector_buffer.cpp:263
+      ADVANCES v_size as it goes.
 ```
 
-Every leaf is `v_size = n` behind a bounds check. Nothing on the path touches
-element bytes, and there is no `VectorListBuffer` override, so LIST/MAP child
-entries are untouched too.
+After `DataChunk::Reset()` the children sit at `v_size == 0`. So:
 
-**So the real hazard is a loud one.** Forwarding is unsafe as a *blanket* rename
-because `SetChildCardinality` **validates and propagates** where the old call did
-neither:
+| how you fill the chunk | children's size when you finish | what you need |
+|---|---|---|
+| `DataChunk::SetValue` / `Vector::SetValue` | still **0** | **`SetChildCardinality`** — it is what sizes them |
+| `Vector::Append` / `AppendValue` | already **N** | `SetChildCardinality(N)` is a **no-op** (`Size() == new_size` returns early); `SetCardinality`/`SetCardinalityUnsafe` equally fine |
 
-- it throws if a column is neither flat nor constant and its size disagrees;
-- it throws if `n` exceeds a flat vector's capacity;
-- it pushes the size down into `STRUCT`/`ARRAY` children.
+For the `SetValue` idiom, "fixing" the shim to `SetCardinalityUnsafe` leaves every
+child vector at size 0, and the next `CheckCardinality` throws *"vector has size 0
+but expected size N"*. That is the opposite of a fix.
 
-An extension that leaves a column non-flat, or over-fills past capacity, gets an
-`InternalException` where it previously got silence. That is worth auditing —
-but it fails visibly, and a green canary that exercises those code paths is
-meaningful evidence that you are fine.
+Upstream's warning — that callers who "mutate the child vectors directly ... and
+then call `SetCardinality` rely on" the non-resizing behaviour — is scoped to
+callers who **moved the size themselves**, i.e. the `Append` family. Writing at
+an index never moved it, so it is not that case.
 
-**Do not "fix" write-then-set sites reflexively.** `SetCardinality` is
-`[[deprecated]]` but preserved *precisely* to keep them working, and
-`SetCardinalityUnsafe` is the non-deprecated spelling of the same behaviour.
-Equally, do not assume a shim to `SetChildCardinality` is wrong: at least one
-extension adopted it deliberately because DuckDB `main` wants child buffer sizes
-synchronised after `SetValue` writes, and its full suite passes against `main`
-through exactly those sites with `STRUCT`, `MAP` and `LIST` columns.
+**The one-line audit:**
 
-The honest summary: **which call you want depends on whether your children's
-sizes are already correct when you set the cardinality**, and the deprecation
-warning alone does not tell you. It is an audit, not a mechanical substitution.
+```
+grep -rn '\.Append(\|AppendValue' src/
+```
+
+**Empty means your existing `SetChildCardinality` shim is correct and needs no
+change.** If it is non-empty, check whether you ever append *more* rows than the
+final count — only then does `SetChildCardinality(N)` shrink the logical size,
+and `SetCardinality` (deprecated but preserved, forwarding to
+`SetCardinalityUnsafe`) is the zero-risk option there.
+
+The genuine v2.0 difference that remains: `SetChildCardinality` **validates** —
+it throws an `InternalException` if a column is neither flat nor constant and its
+size disagrees, or if the count exceeds a flat vector's capacity, where the old
+call was silent. That fails loudly, so a canary whose Test step exercises those
+paths is real evidence.
 
 ## Deprecated is not removed — check before you port
 
