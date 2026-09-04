@@ -442,6 +442,70 @@ The signature moved *inside* the definition string —
 `DefaultTableMacro` did **not** change, so a repo can be hit by one and not the
 other.
 
+### 13. Fallible scalar functions must say so — a SILENT runtime break
+
+Like change 7, this is a **runtime contract with no compile error and nothing to
+grep for**. v2.0 requires a scalar function that can throw during execution to
+declare it. Throwing from one that has not is an `InternalException`:
+
+```
+INTERNAL Error: Scalar function "to_xml" threw an execution error, but the
+function is not marked as fallible - the function must call SetFallible().
+```
+
+`BaseScalarFunction::SetFallible()` (scalar_function.hpp) takes **no arguments**.
+Call it **before** the function goes into a `FunctionSet` — set members are no
+longer mutable (change 5).
+
+**This is the cause of the amd64/arm64 asymmetry described below.** The contract
+is violated on *both* arches; only the assertion-enabled image reports it. So the
+same commit is green on one leg and red on the other, and the failing test is
+always one that exercises an *error path*.
+
+Confirmed on two unrelated extensions, one of which has **no compat work at all**
+— which is the point: you do not have to port anything to violate a contract that
+is new.
+
+```
+duckdb_webbed  3 of 4 amd64 failures: to_xml, xml_extract_text, xml_wrap_fragment
+duck_hunt      amd64 failure: duck_hunt_load_parser_config   (unported)
+```
+
+The shim is safe and cheap — probe for the member, no-op on v1.5:
+
+```cpp
+template <class FUNC> inline void CompatSetFallible(FUNC &fun);   // see the header
+```
+
+The cost is that it must be applied at every function-construction site, so find
+them by grepping your *own* code for `throw` inside scalar function lambdas.
+
+### 14. `FlatVector::Validity` got the same const split — and hides better
+
+```
+v1.5:  Validity(Vector &)              -> ValidityMask &
+v2.0:  Validity(const Vector &)        -> const ValidityMask &
+       ValidityMutable(Vector &)       -> ValidityMask &
+```
+
+Same copy-on-write distinction as change 3 (`ValidityMutable` un-shares through
+`BufferMutable()`; `Validity` does not).
+
+**Harder to find than change 3**, because the accessor call still compiles:
+`auto &m = FlatVector::Validity(v)` just deduces a const reference. The error
+appears later, at the mutation:
+
+```
+error: passing 'const duckdb::ValidityMask' as 'this' argument discards qualifiers
+```
+
+which names neither `Validity` nor `FlatVector`. So grep for the **mutation**,
+then walk back to where the reference was bound:
+
+```
+grep -rn 'SetInvalid\|SetValid(\|SetAllInvalid\|SetAllValid' src/
+```
+
 ## Deprecated is not removed — check before you port
 
 Not everything that changed is a hard break, and porting the soft ones costs
@@ -472,6 +536,18 @@ identically to the broken cases in a grep, so they are easy to over-port:
   `expr->SetAlias(bound.names[i])` compiles unchanged on both versions.
 - `FunctionSet<T>::name` is still a public member (an `Identifier`). Only
   `functions` became `shared_ptr<const T>` (change 5).
+- **`ConstantVector` did not get a `GetDataMutable`.** It kept a const-overloaded
+  pair instead — `GetData(const Vector &)` returning `const T *` and
+  `GetData(Vector &)` returning `T *` — so `ConstantVector` write sites need no
+  change. Parameterising the shim on the accessor class handles this correctly:
+  the probe is false, it falls back to `GetData`, and `GetData` on a non-const
+  `Vector &` already returns a mutable pointer. Do not "fix" these into a
+  `ConstantVector::GetDataMutable` that does not exist.
+- `named_parameter_map_t` is now `identifier_map_t<Value>`, so `kv.first` in a
+  named-parameter loop is an `Identifier` — and still needs no change.
+  `Identifier` has `operator==` against `const char *`, `const string &` and
+  `Identifier`, and `fn.named_parameters["literal"] = type` still works through
+  the implicit literal constructor.
 
 You can settle any such question in seconds without a CI round and without
 cloning: read the header on `raw.githubusercontent.com/duckdb/duckdb/main/...`.

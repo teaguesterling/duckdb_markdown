@@ -90,6 +90,13 @@ void MarkdownFunctions::RegisterConversionFunctions(ExtensionLoader &loader) {
 		        });
 	    });
 
+	// Both convert through a third-party renderer and rethrow its failures as
+	// InvalidInputException. v2.0 requires a scalar function that can throw at
+	// execution time to say so, or the throw becomes an InternalException
+	// complaining the function is not marked fallible. No-op on v1.5.
+	CompatSetFallible(md_to_html_fun);
+	CompatSetFallible(md_to_text_fun);
+
 	loader.RegisterFunction(md_to_html_fun);
 	loader.RegisterFunction(md_to_text_fun);
 }

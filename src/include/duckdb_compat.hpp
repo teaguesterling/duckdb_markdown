@@ -163,4 +163,71 @@ inline VALUE *CompatFlatDataMutable(Vector &vec) {
 	return CompatFlatDataMutableImpl<VALUE, FV>(vec, CompatHasFlatGetDataMutable<FV>());
 }
 
+// --- scalar function fallibility ------------------------------------------------
+// v2.0 added a RUNTIME contract: a scalar function that can throw during
+// execution must declare it. Throwing from a function that has not is an
+// InternalException:
+//
+//   INTERNAL Error: Scalar function "f" threw an execution error, but the
+//   function is not marked as fallible - the function must call SetFallible().
+//
+// This is NOT a compile error and no grep finds it -- the only symptom is a test
+// that exercises an error path, and only on a build with assertions enabled, so
+// one CI arch can be green while another is red on the very same commit.
+//
+// No-op on v1.5, where the member does not exist. Must be called BEFORE the
+// function goes into a FunctionSet, since set members are no longer mutable
+// (see the FunctionSet<T>::functions change).
+template <class T, class = void>
+struct CompatHasSetFallible : std::false_type {};
+template <class T>
+struct CompatHasSetFallible<T, decltype(void(std::declval<T &>().SetFallible()))> : std::true_type {};
+
+template <class FUNC>
+inline void CompatSetFallibleImpl(FUNC &fun, std::true_type) {
+	fun.SetFallible();
+}
+template <class FUNC>
+inline void CompatSetFallibleImpl(FUNC &, std::false_type) {
+}
+template <class FUNC>
+inline void CompatSetFallible(FUNC &fun) {
+	CompatSetFallibleImpl(fun, CompatHasSetFallible<FUNC>());
+}
+
+// --- FlatVector validity mask -----------------------------------------------
+// v1.5: Validity(Vector &)              returns ValidityMask &
+// v2.0: Validity(const Vector &)        returns const ValidityMask &
+//       ValidityMutable(Vector &)       returns ValidityMask &
+//
+// Same copy-on-write split as GetData/GetDataMutable: ValidityMutable goes
+// through BufferMutable() and un-shares, Validity goes through Buffer() and does
+// not. Probed separately from the GetDataMutable change because they are two
+// independent upstream changes.
+//
+// Worse to diagnose than the GetData case: `auto &m = FlatVector::Validity(v)`
+// still COMPILES on v2.0, silently deducing a const reference. The error appears
+// later, at the mutation, as "passing 'const duckdb::ValidityMask' as 'this'
+// argument discards qualifiers" -- naming neither Validity nor FlatVector. Grep
+// for the MUTATION (SetInvalid/SetValid/SetAllInvalid/SetAllValid) and walk back
+// to where the reference was bound.
+template <class T, class = void>
+struct CompatHasFlatValidityMutable : std::false_type {};
+template <class T>
+struct CompatHasFlatValidityMutable<T, decltype(void(T::ValidityMutable(std::declval<Vector &>())))>
+    : std::true_type {};
+
+template <class FV>
+inline ValidityMask &CompatFlatValidityMutableImpl(Vector &vec, std::true_type) {
+	return FV::ValidityMutable(vec);
+}
+template <class FV>
+inline ValidityMask &CompatFlatValidityMutableImpl(Vector &vec, std::false_type) {
+	return FV::Validity(vec);
+}
+template <class FV = FlatVector>
+inline ValidityMask &CompatFlatValidityMutable(Vector &vec) {
+	return CompatFlatValidityMutableImpl<FV>(vec, CompatHasFlatValidityMutable<FV>());
+}
+
 } // namespace duckdb
