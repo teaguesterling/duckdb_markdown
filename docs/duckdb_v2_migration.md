@@ -1105,6 +1105,38 @@ and re-read the body afterwards either way:
 gh api -X PATCH repos/OWNER/REPO/pulls/N -F body=@body.md
 ```
 
+**A failing test's error message may not be in the log at all.** DuckDB's
+parallel runner (`scripts/ci/run_tests.py`, 3 workers) renders expected/actual
+only for failures it classifies as `wrong_result`. Anything else falls through to
+a low-information path, and all that reaches the log is the statement plus a bare
+
+```
+test/sql/foo.test:78: FAILED:
+```
+
+— no message, no expected, no actual, nowhere in the job log. Since the pinned
+build cannot reproduce a v2.0-only failure by construction, the reason can be
+genuinely unobtainable.
+
+**The empty shape is itself a signal.** A real result mismatch *would* have
+printed a diff, and a thrown DuckDB exception *does* reach the log (we have an
+`INTERNAL Error: ... not marked as fallible` printed in full from another repo).
+So an empty `FAILED:` argues against both a wrong answer and a thrown error, and
+points at an assertion or crash — consistent with assertions being enabled on the
+`linux_amd64` image and not on `linux_arm64`.
+
+**How to get the message out.** `_extension_distribution.yml` accepts a
+`post_build_command` input, which `ci_phase.py` runs at the end of `build_linux`
+— after `make release`, before the test phase. Re-run the specific test files
+*serially* through the raw unittest binary there and the real error lands in the
+log:
+
+```yaml
+post_build_command: './build/release/test/unittest test/sql/foo.test || true'
+```
+
+Mark it temporary and revert it before proposing the port for merge.
+
 **Reading the failure needs the REST API, not `gh run view`.** Because the canary
 job calls a *reusable* workflow, `gh run view <run> --log-failed` prints nothing
 at all — which reads exactly like a job that produced no errors. Get the job id
