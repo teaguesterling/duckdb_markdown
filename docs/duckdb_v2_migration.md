@@ -630,7 +630,22 @@ shipped planner **strictly more conservative** around it. That direction is safe
 — it can only stop a throwing function being evaluated on rows it should not
 have been — but it is a real change, so measure it rather than assuming.
 
-**Mark precisely, not defensively.** Because the property is optimizer-visible,
+**Marking is often a latent v1.5 *fix*, not a cost.** `CanThrow()` is read in
+six places on the pin (`expression_heuristics:48`, `pushdown_outer_join:125`,
+`pushdown_projection:54`, `pushdown_get:119`, `adaptive_filter:15`,
+`execute_function:11`), and every one asks whether a *filter expression* can
+throw. An extension that leaves a file-opening function marked
+`CANNOT_ERROR` is telling the planner it may hoist that call onto rows a guard
+was there to exclude — so `CASE WHEN ok THEN risky(f) END` can be evaluated on
+the rows the `CASE` exists to protect. Declaring it fallible restrains exactly
+that, which is the point rather than the price.
+
+It also means the interaction is narrower than it first looks: if your own
+pushed-down filters are plain column comparisons that never call your functions,
+marking them cannot restrain your own pushdown — the two never meet. One port
+measured precisely this and its pushdown tests were unchanged.
+
+**Mark precisely, not defensively.** The property is optimizer-visible, so
 over-marking is a small real pessimisation of the shipped binary, not a free
 hedge.
 
@@ -962,10 +977,29 @@ gh run view <run-id> --json jobs \
 gh api repos/:owner/:repo/actions/jobs/<job-id>/logs | grep 'error:'
 ```
 
-**Dispatch after pushing, and do not push again while it runs.** The standard
-`concurrency:` group keys on the workflow and ref, so a push run and a dispatch
-run on the same branch cancel each other. Two of my canary runs were cancelled
-this way before I noticed I was reading a superseded run.
+**Push and dispatch on the same commit cancel each other — and the wrong one
+survives.** The `concurrency:` group covers the workflow, the ref *and* the SHA,
+so a `push` run and a `workflow_dispatch` run on the **same commit** share a
+group. The survivor may be the **push** run, which on a feature branch has the
+canary gated OFF — so it schedules no canary at all and looks like a slow queue
+rather than a mistake.
+
+Two orderings work:
+
+```
+push  ->  cancel the push run  ->  dispatch          # what to do if you must push
+dispatch on a commit you already pushed, then leave the branch alone
+```
+
+Runs on *different* SHAs do **not** cancel each other, so a stale earlier run
+also sits in the queue eating runners until you cancel it explicitly. When
+porting several repos at once, that stale-run backlog is self-inflicted and
+worth clearing:
+
+```
+gh run list --workflow W.yml --branch B --limit 25 --json databaseId,status \
+  --jq '.[]|select(.status=="queued" or .status=="in_progress")|.databaseId'
+```
 
 Two notes on that job. Restricting it to `workflow_dispatch` (or pushes to main)
 matters: a push and a `pull_request` both fire on the same commit, and a PR's check
