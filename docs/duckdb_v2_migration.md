@@ -63,6 +63,15 @@ inline LogicalType CompatWithAlias(TYPE type, string alias) {
 Probe each change **separately**. Tying several to one macro silently picks the
 wrong branch if they ever land in different releases.
 
+**Probe for the thing that exists only on the NEW line.** This is the rule that
+is easy to get backwards, and getting it backwards fails silently. Our
+`ToUnifiedFormat` shim probed for the *count-taking* overload — the one being
+replaced. But v2.0 kept that overload as `[[deprecated]]` rather than deleting
+it, so the probe was true on **both** versions and the shim always took the old
+branch, never once reaching the new API it existed for. It compiled and behaved
+correctly everywhere, which is why nothing caught it. Probing for the count-free
+overload — which exists only on v2.0 — is what actually discriminates.
+
 ### Check your C++ standard before copying shims
 
 `if constexpr` is C++17. Several extensions here compile their TUs at **C++11 on
@@ -294,6 +303,38 @@ An extension that only *registers* functions barely touches this. One that
 *introspects* the catalog or rewrites expressions (`func_apply` is the extreme
 case) touches almost all of it.
 
+### 7. Named-argument aliases are no longer captured — a SILENT runtime break
+
+The most dangerous item here, because there is **no compile error and nothing to
+grep for**. The build is green and the extension fails at runtime.
+
+v1.5 always recorded a named argument's alias on the bound child expression, so a
+bind callback could read it back with `GetAlias()`. v2.0 added
+`FunctionProperties::capture_argument_aliases`, defaulting to **false** — so on
+v2.0 those aliases come back **empty**.
+
+Any function that derives named parameters from argument aliases binds every
+named argument as unnamed and then fails at run time. The fix is to opt in:
+
+```cpp
+func.SetCaptureArgumentAliases(true);
+```
+
+If your extension has functions taking `name := value` style arguments, assume
+you are affected and check. A green canary build does not clear you of this —
+only a test that actually passes a named argument does.
+
+### 8. `StructVector::GetEntries` changed element type
+
+```
+v1.5:  vector<unique_ptr<Vector>> &     ->  *entries[i]
+v2.0:  vector<Vector> &                 ->   entries[i]
+```
+
+`*entries[i]` becomes `no match for operator*`. Mechanical, but it can be many
+sites (19 in urlpattern alone). `duckdb_webbed`'s header has a
+`CompatStructGetField(Vector &, idx_t)` helper for exactly this.
+
 ## Deprecated is not removed — check before you port
 
 Not everything that changed is a hard break, and porting the soft ones costs
@@ -349,6 +390,15 @@ duckdb-next-build:
 ```
 
 Then `gh workflow run <workflow>.yml --ref <your-branch>` drives the port.
+
+**Check for an old failed canary run before your first round.** If the repo ever
+ran a canary on its default branch, its job log is a complete v2.0 error list you
+can have for free, right now, instead of 20 minutes from now:
+
+```
+gh run list --workflow MainDistributionPipeline.yml --limit 20 \
+   --json databaseId,conclusion,headBranch,createdAt
+```
 
 **A green *build* is not a green canary.** The job runs Build and then Test, and
 community-extensions' `test_against_latest` runs tests too — so it gates on both.
