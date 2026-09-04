@@ -46,11 +46,17 @@ SELECT (md_stats(doc())).link_count - (md_stats(doc(), true)).link_count
 ----
 true
 
-# The `exact :=` spelling binds to the same overload. DuckDB does not validate
-# named-argument labels for scalar functions, so this is sugar, not a contract;
-# asserted so the documented call form is known to work.
+# The documented call form: the second argument is POSITIONAL.
+#
+# This was once spelled `md_stats(doc, exact := true)`, and that worked on
+# DuckDB <= v1.5 -- but only because the label was never validated. Scalar
+# functions have no named-parameter map, so any label bound identically;
+# `md_stats(doc, totally_wrong_label := true)` was accepted just the same.
+# Newer DuckDB rejects named arguments on functions that do not declare them,
+# which is the correct behaviour. The contract asserted here -- exact mode
+# takes link_count from cmark -- is unchanged; only the spelling is.
 query I
-SELECT (md_stats(doc(), exact := true)).link_count;
+SELECT (md_stats(doc(), true)).link_count;
 ----
 3
 

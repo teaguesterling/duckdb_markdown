@@ -241,10 +241,13 @@ void MarkdownFunctions::RegisterStatsFunctions(ExtensionLoader &loader) {
 	// values -- and the accurate counts are one explicit argument away, in the
 	// same columns, so nothing downstream has to be renamed.
 	//
-	// Note on spelling: DuckDB accepts `md_stats(doc, exact := true)` and it
+	// Note on spelling: the second argument is POSITIONAL and is documented that
+	// way. DuckDB <= v1.5 also accepted `md_stats(doc, exact := true)`, which
 	// reads well, but scalar functions have no named-parameter map, so the label
-	// is not validated -- it binds positionally either way. Documented as a
-	// positional BOOLEAN for that reason.
+	// was never validated -- `md_stats(doc, totally_wrong_label := true)` bound
+	// exactly the same. Newer DuckDB rejects named arguments on functions that
+	// do not declare them, so the labelled spelling is now an error rather than
+	// decoration. Nothing here changes: it was always the positional overload.
 	ScalarFunction md_stats_exact_fun(
 	    "md_stats", {markdown_type, LogicalType::BOOLEAN}, stats_struct_type,
 	    [](DataChunk &args, ExpressionState &state, Vector &result) { ExecuteStats(args, result, true); });
