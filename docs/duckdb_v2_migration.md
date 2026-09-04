@@ -94,6 +94,13 @@ leading indicator, not a test.
 
 Ask DuckDB what its own type is instead (see change 2).
 
+**The same hazard sits on `__has_include("duckdb/common/vector/list_vector.hpp")`**,
+which several headers use to gate `CompatSetOutputCardinality`. That one fails
+*loudly* — a backported header without `SetChildCardinality` is a compile error,
+not a wrong branch — but it still breaks the **shipped** build on a submodule
+bump. Probe the member (`SetChildCardinality`) and let the `__has_include` do
+nothing but pull the header in.
+
 ### Check your C++ standard before copying shims
 
 `if constexpr` is C++17. Several extensions here compile their TUs at **C++11 on
@@ -1035,6 +1042,16 @@ gh run view <run-id> --json jobs \
 gh api repos/:owner/:repo/actions/jobs/<job-id>/logs | grep 'error:'
 ```
 
+**Verify the dispatch actually happened.** `gh` shares one *user-level* REST
+rate limit, and several concurrent ports polling run status will exhaust it. When
+it goes, you get `HTTP 403: API rate limit exceeded` — and it takes out
+`gh workflow run` too. The failure mode is nasty: your `git push` went over SSH
+and succeeded, but the dispatch was refused, so you are left with a **push run
+that does not include the `workflow_dispatch`-gated canary**. It looks exactly
+like a slow queue. After dispatching, confirm a `workflow_dispatch` run exists
+before waiting on one, and widen poll intervals when several ports share a
+limit.
+
 **Push and dispatch on the same commit cancel each other — and the wrong one
 survives.** The `concurrency:` group covers the workflow, the ref *and* the SHA,
 so a `push` run and a `workflow_dispatch` run on the **same commit** share a
@@ -1108,6 +1125,12 @@ a function name unique to your source. Best of all, let the result come back
 through the tool result rather than off disk. (Output files the tool itself
 creates for background commands are already collision-safe — they are named per
 invocation. The exposure is only scripts you write into a shared directory.)
+
+**`~/.duckdb/extensions/` is shared too.** A local `FORCE INSTALL` from one port
+replaces an extension binary that every other port on the box loads. One repo's
+tests went red on a renamed function it had never heard of, with nothing wrong in
+its own tree. If you install locally, expect to break your neighbours; if a test
+fails on a symbol from a *different* extension, suspect this before your diff.
 
 **Wait on your own PID, not a `pgrep` pattern.** `pgrep -f 'make release'`
 matches every concurrent build, not yours. It makes a waiter block until the

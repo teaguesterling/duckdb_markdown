@@ -65,8 +65,18 @@ namespace duckdb {
 // bind out-parameter on both lines (verified: table_function.hpp:110/288 on the
 // pin, :123/319 on main), so asking it what the name type is cannot drift --
 // it IS the thing that changed.
-using CompatName =
-    std::remove_reference<decltype(std::declval<TableFunctionBindInput &>().input_table_names)>::type::value_type;
+// Read the name type off table_function_bind_t ITSELF -- its fourth parameter is
+// the vector being ported. Tighter than deriving from
+// TableFunctionBindInput::input_table_names, which is a sibling that happens to
+// move in step; here there is no "happens to" left, because the typedef named is
+// the one that changed. Every bind signature then follows automatically.
+template <class T>
+struct CompatBindNamesOf;
+template <class R, class A, class B, class C, class D>
+struct CompatBindNamesOf<R (*)(A, B, C, D)> {
+	using type = typename std::remove_reference<D>::type::value_type;
+};
+using CompatName = CompatBindNamesOf<table_function_bind_t>::type;
 
 inline string CompatNameStr(const string &name) {
 	return name;
