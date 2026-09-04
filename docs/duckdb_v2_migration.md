@@ -1245,6 +1245,35 @@ is therefore **not** two independent confirmations — if only amd64 tests, a gr
 arm64 corroborates nothing about runtime. Check which legs actually ran a `Test`
 step before counting them as agreement.
 
+**Match the canary's arch set to what the GATE builds, not to what your repo
+ships.** These are different things, and the difference runs the wrong way.
+
+The gate's platform set comes from the extension's entry in
+`duckdb/community-extensions`, via `build.excluded_platforms` in its
+`description.yml`:
+
+```yaml
+build:
+  excluded_platforms: "windows_amd64_rtools;windows_amd64_mingw"   # if absent: FULL default matrix
+```
+
+That string becomes `COMMUNITY_EXTENSION_EXCLUDE_PLATFORMS` and then
+`exclude_archs` in `build.yml`. **If the key is absent, the gate builds the full
+default matrix — Windows and Wasm included.** Checked across four of these
+extensions, none sets it, so all four are gated on the full matrix while their
+canaries build two Linux legs.
+
+Two consequences:
+
+- A green canary is **weaker evidence than the gate requires**. It is not wrong,
+  it is narrow — and Windows/MSVC is exactly where template-deduction differences
+  live (see the C++ standard section).
+- Do **not** copy your shipping job's `exclude_archs` onto the canary to hide a
+  known-flaky runner. That narrows the canary away from the thing it exists to
+  predict. If a platform genuinely cannot build, exclude it at the *gate* by
+  setting `excluded_platforms` in `description.yml` — a deliberate, visible
+  decision — rather than quietly in the canary.
+
 **The canary covers fewer platforms than the stable leg.** The canary matrix
 generates only `linux_amd64` and `linux_arm64`, while a stable leg typically
 covers five (both Linux arches, both macOS arches, Windows/MSVC) plus Wasm. So
