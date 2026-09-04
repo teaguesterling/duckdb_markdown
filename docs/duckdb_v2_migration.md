@@ -419,6 +419,21 @@ Test-failure on `linux_amd64` while `linux_arm64` was green end to end — readi
 the rollup as "the port does not compile" would have sent the next round chasing
 an API problem that did not exist.
 
+**A `linux_amd64` Test failure with `linux_arm64` green may not be yours.** We
+have seen this shape on two unrelated extensions against DuckDB `main`:
+
+| repo | ported? | amd64 | arm64 |
+|---|---|---|---|
+| duckdb_markdown | yes | Build ok, Test **fail** (`readme_integration.test`) | green |
+| duck_hunt | **no** — plain default branch | Build ok, Test **fail** (`config_parser.test`) | green |
+
+Different tests, different repos, same asymmetry. Because the second extension
+has no compat work on it at all, **this shape is demonstrably not something the
+porting introduces.** If your canary comes back amd64-Test-red while arm64 is
+green end to end, check the arm64 leg first and report the amd64 failure as a
+separate open question rather than folding it into the port. If *both* platforms
+fail the same test, that is much more likely to be yours.
+
 **Reading the failure needs the REST API, not `gh run view`.** Because the canary
 job calls a *reusable* workflow, `gh run view <run> --log-failed` prints nothing
 at all — which reads exactly like a job that produced no errors. Get the job id
