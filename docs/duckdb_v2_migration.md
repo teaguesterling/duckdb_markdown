@@ -135,6 +135,30 @@ inline LogicalType CompatWithAlias(TYPE t, string a) {
 
 markdown's header is written this way, so it is safe to copy into a C++11 repo.
 
+**The `Impl` overloads must be templates.** This is the footgun in the idiom, and
+it fails on the **pinned** build, not on v2.0:
+
+```cpp
+// WRONG -- both bodies are compiled, so the v2.0 branch breaks the v1.5 build
+inline void CompatXImpl(DataChunk &c, idx_t n, std::true_type)  { c.SetChildCardinality(n); }
+inline void CompatXImpl(DataChunk &c, idx_t n, std::false_type) { c.SetCardinality(n); }
+```
+
+Tag dispatch only avoids compiling the untaken branch when that branch is a
+**template that is never instantiated**. As ordinary functions, both bodies are
+compiled and you get *"class duckdb::DataChunk has no member named
+SetChildCardinality"* — from the very shim whose job is to prevent that. Give
+each `Impl` a template parameter (even an unused one) so the untaken overload is
+never instantiated.
+
+**And probe members, not headers, when the question is about a member.** A
+`__has_include("duckdb/common/vector/list_vector.hpp")` that gates a *method*
+choice has the same defect as the `CompatName` bomb: those headers can be
+backported to the stable branch without the method coming along, and then the
+**pinned** build breaks. Use `__has_include` only to decide whether to
+`#include` something — which genuinely is a question about headers — and a
+member probe for everything else.
+
 ## The changes
 
 Sorted by how they announce themselves. **The two that announce themselves not at
