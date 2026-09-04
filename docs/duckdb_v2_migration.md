@@ -113,6 +113,24 @@ markdown's header is written this way, so it is safe to copy into a C++11 repo.
 `WithAlias` returns a copy rather than mutating a type whose type-info may be
 shared. Use the `CompatWithAlias` shim above.
 
+**Make the entry point a concrete function, not a deduced template.** This one
+bites on the pinned v1.5 build, not on v2.0:
+
+```cpp
+template <class TYPE = LogicalType>          // WRONG -- the default is inert
+LogicalType CompatWithAlias(TYPE type, string alias);
+```
+
+Deduction wins over the default, so `CompatWithAlias(LogicalType::VARCHAR, "yaml")`
+deduces `TYPE = LogicalTypeId` — `LogicalType::VARCHAR` is a `static constexpr
+LogicalTypeId` (`types.hpp`), not a `LogicalType` — and hard-errors inside the
+shim with *"request for member 'SetAlias' in 'type', which is of non-class type
+'duckdb::LogicalTypeId'"*. Take a concrete `LogicalType` parameter so the
+implicit `LogicalTypeId` conversion happens at the call site, and keep only the
+tag-dispatch `Impl` overloads templated. Code that already wrote
+`LogicalType(LogicalTypeId::VARCHAR)` never sees this, which is exactly how it
+survives review.
+
 `SetAlias` is **removed**, not deprecated — on main the compiler says
 "`struct duckdb::LogicalType` has no member named `SetAlias`; did you mean
 `GetAlias`?". There is no grace period to plan around.
@@ -170,7 +188,26 @@ v2.0:  GetData<T>(vec)         -> const T*
 ```
 
 Writing through the v2.0 read accessor is a compile error, which is the split's
-purpose. Probe for the member and route the write path:
+purpose.
+
+**`const_cast<T *>(FlatVector::GetData<T>(v))` is not a fix — it is a silent
+data-corruption path.** The two accessors do different work, not just different
+constness:
+
+```
+GetData         -> vector.GetBufferRef()->GetData()      // no un-share
+GetDataMutable  -> vector.BufferMutable().GetData()      // un-shares COW buffer first
+```
+
+Casting the const away compiles and then writes into a buffer that may still be
+shared with another vector. If a repo "already handled" the const change that
+way, it has a latent bug rather than a working shim:
+
+```
+grep -rn 'const_cast<[^>]*\*>(FlatVector::GetData' src/
+```
+
+Probe for the member and route the write path:
 
 ```cpp
 template <class VALUE, class FV = FlatVector>
@@ -320,6 +357,11 @@ named argument as unnamed and then fails at run time. The fix is to opt in:
 func.SetCaptureArgumentAliases(true);
 ```
 
+DuckDB does this to itself: `src/function/scalar/struct/struct_pack.cpp` calls
+`SetCaptureArgumentAliases(true)` with a comment explaining why. That also means
+an extension emitting a `struct_pack` with aliased children is relying on
+*upstream's* opt-in rather than its own.
+
 If your extension has functions taking `name := value` style arguments, assume
 you are affected and check. A green canary build does not clear you of this —
 only a test that actually passes a named argument does.
@@ -354,6 +396,17 @@ went const-only (change 3).
 The genuinely removed ones — the compile errors — are `LogicalType::SetAlias`,
 `UnaryExecutor`/`BinaryExecutor`/`TernaryExecutor::ExecuteWithNulls`, and the
 public fields of change 6.
+
+**Three things that look like they need porting and do not.** These read
+identically to the broken cases in a grep, so they are easy to over-port:
+
+- `BaseExpression::SetAlias` still **exists** on main; it just takes an
+  `Identifier` now, which is implicit from `const char *`. Only
+  `LogicalType::SetAlias` was removed. A grep for `SetAlias` finds both.
+- `BoundStatement::names` is `vector<Identifier>` on main, so
+  `expr->SetAlias(bound.names[i])` compiles unchanged on both versions.
+- `FunctionSet<T>::name` is still a public member (an `Identifier`). Only
+  `functions` became `shared_ptr<const T>` (change 5).
 
 You can settle any such question in seconds without a CI round and without
 cloning: read the header on `raw.githubusercontent.com/duckdb/duckdb/main/...`.

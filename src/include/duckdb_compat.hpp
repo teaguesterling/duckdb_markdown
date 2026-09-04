@@ -77,9 +77,20 @@ inline LogicalType CompatWithAliasImpl(TYPE type, string alias, std::false_type)
 	type.SetAlias(std::move(alias));
 	return type;
 }
-template <class TYPE = LogicalType>
-inline LogicalType CompatWithAlias(TYPE type, string alias) {
-	return CompatWithAliasImpl(std::move(type), std::move(alias), CompatHasWithAlias<TYPE>());
+// The ENTRY POINT is deliberately NOT a template. A `template <class TYPE =
+// LogicalType>` form looks equivalent but is not: the default template argument
+// is inert because deduction wins, so the very common call
+//
+//     CompatWithAlias(LogicalType::VARCHAR, "md")
+//
+// deduces TYPE = LogicalTypeId -- `LogicalType::VARCHAR` is a static constexpr
+// LogicalTypeId (types.hpp), not a LogicalType -- and then hard-errors inside
+// the shim with "request for member 'SetAlias' in 'type', which is of non-class
+// type 'duckdb::LogicalTypeId'". A concrete parameter restores the implicit
+// LogicalTypeId -> LogicalType conversion at the call site. Only the Impl
+// overloads stay templated, which is all the tag dispatch needs.
+inline LogicalType CompatWithAlias(LogicalType type, string alias) {
+	return CompatWithAliasImpl(std::move(type), std::move(alias), CompatHasWithAlias<LogicalType>());
 }
 
 // --- Vector::ToUnifiedFormat ---------------------------------------------------

@@ -15,7 +15,7 @@ LogicalType MarkdownTypes::MarkdownType() {
 	// returns md). Both names still resolve, because each is registered as a type
 	// name separately -- the alias only decides what typeof() prints. Kept as `md`
 	// to preserve that observable behaviour; changing it is a separate decision.
-	return CompatWithAlias(LogicalType(LogicalTypeId::VARCHAR), "md");
+	return CompatWithAlias(LogicalType::VARCHAR, "md");
 }
 
 //===--------------------------------------------------------------------===//
