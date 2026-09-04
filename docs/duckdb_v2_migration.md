@@ -189,6 +189,52 @@ set.AddFunction(f);                            // then add
 Watch for this wherever a helper "post-processes" a whole set — null handling,
 varargs and stability are the usual ones.
 
+### 6. Public fields became private; accessors replace them
+
+The largest class by error count, and the one a source grep will **not** find —
+there is no distinctive token to search for. `ScalarFunction` and the expression
+hierarchy closed their data members:
+
+```
+ScalarFunction::varargs        -> GetVarArgs() / SetVarArgs()
+ScalarFunction::null_handling  -> GetNullHandling() / SetNullHandling()
+ScalarFunction::return_type    -> GetReturnType() / SetReturnType()
+Expression::return_type            (now protected)  -> GetReturnType()
+BaseExpression::alias              (now protected, and now an Identifier)
+BoundFunctionExpression::bind_info (now private)
+```
+
+`bind_scalar_function_t` also collapsed its three parameters into one input
+object, and `Catalog::GetEntry`, `FunctionBinder::BindScalarFunction` and the
+`FunctionExpression` constructor all take `Identifier` where they took `string`.
+
+**Do not write these shims from scratch.** `duckdb_yaml`'s
+`src/include/duckdb_compat.hpp` is the most complete in the fleet and already has
+them — `DUCKDB_SCALAR_BIND_PARAMS` / `_CONTEXT` / `_ARGS`, `CompatExprReturnType`,
+`CompatBoundChildren`, `CompatBoundBindInfo`, `CompatSetScalarReturnType`,
+`CompatSetScalarNullHandling`, `CompatSetScalarVarArgs`, plus working
+`CompatUnaryExecuteWithNulls` / `CompatBinaryExecuteWithNulls`. Start from that
+header and add this document's v2.0 shims to it, rather than starting from a
+smaller one and rediscovering the same helpers.
+
+An extension that only *registers* functions barely touches this. One that
+*introspects* the catalog or rewrites expressions (`func_apply` is the extreme
+case) touches almost all of it.
+
+## Which header to start from
+
+The fleet's headers are at different generations, and copying the wrong one costs
+a full CI round:
+
+| starting point | covers |
+|---|---|
+| `duckdb_yaml` | the most complete: v1.4 vector/bind changes **and** the scalar-function/expression accessors of change 6 |
+| `duckdb_webbed` | v1.4-era changes plus `PreventStructConstantFolding`, `CompatForceMaxLogicalType` |
+| `duckdb_markdown` | the v2.0 changes 1-4, verified green against `main` |
+
+None is a superset. Merge, do not replace — the sources in each repo already call
+that repo's helpers by name.
+
 ## You cannot test this locally
 
 Your submodule is the stable line, so a local build only proves the v1.5 half.
