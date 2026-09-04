@@ -1052,6 +1052,14 @@ like a slow queue. After dispatching, confirm a `workflow_dispatch` run exists
 before waiting on one, and widen poll intervals when several ports share a
 limit.
 
+**A coordinator watching every repo is usually the biggest consumer.** A status
+sweep across fourteen repos costs two API calls each; on a 90-second loop that is
+~1,100 calls an hour on its own, before any of the ports poll at all. I exhausted
+the limit this way and then could not read *any* run status — every query
+returned 403, which is indistinguishable from "no runs exist" if you are not
+reading the error. Prefer one long-lived waiter per run over repeated sweeps, and
+treat an empty status sweep as suspect until you have checked it is not a 403.
+
 **Push and dispatch on the same commit cancel each other — and the wrong one
 survives.** The `concurrency:` group covers the workflow, the ref *and* the SHA,
 so a `push` run and a `workflow_dispatch` run on the **same commit** share a
