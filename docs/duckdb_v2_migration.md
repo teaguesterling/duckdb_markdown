@@ -232,6 +232,48 @@ inline string CompatNameStr(const Identifier &id) { return id.GetIdentifierName(
 inline CompatName CompatMakeName(string name) { return CompatName(std::move(name)); }
 ```
 
+**Write it WITHOUT `typename`.** `std::remove_reference<decltype(...)>::type::value_type`
+is non-dependent at namespace scope, and `typename` outside a template is only
+legal from C++20. GCC tolerates it; **MSVC does not**, so it breaks the Windows
+leg and nothing else. The same applies to any
+`child_list_t<...>::value_type::first_type`.
+
+**Assert the coupling.** Deriving the type fixes one failure mode and leaves
+another: `CompatName` can resolve to `Identifier` on a DuckDB whose
+`identifier.hpp` this header did not find, so the `Identifier` overload was never
+declared. This holds on both lines and is not a tautology:
+
+```cpp
+static_assert(std::is_same<decltype(CompatNameStr(std::declval<const CompatName &>())), string>::value,
+              "CompatNameStr must accept the derived CompatName on every DuckDB line");
+```
+
+(When it does fire, the failure is a hard error inside the `decltype` —
+*"'CompatNameStr' was not declared in this scope"* — so the message string never
+prints. Right line, right file, but the comment beside it does the explaining.)
+Do **not** assert `is_same<CompatName, string>`: true on the pin, false on main,
+so it hard-fails the v2.0 build. And asserting `CompatName` equals the expression
+that *defines* it can never fire.
+
+#### The same bomb, a second time: `child_list_t` keys
+
+STRUCT/UNION field names are the other boundary that moved, and a
+`CompatMakeIdentifier`-style helper selected by `__has_include` has **exactly the
+same defect**. Verified: `child_list_t`'s key is `std::string` on the pin **and on
+the stable branch tip**, and `Identifier` only on main — so a header probe flips
+the constructed key type while `child_list_t` still wants strings.
+
+Derive it from the same boundary:
+
+```cpp
+using CompatIdentifierKey = child_list_t<LogicalType>::value_type::first_type;
+```
+
+Only **construction** has to choose; *reading* a key can be overloaded
+unconditionally. String **literals** are fine either way — `Identifier` is
+implicitly constructible from `const char *` — so this only bites where a
+**runtime** string becomes a field name.
+
 Then `vector<string> &names` becomes `vector<CompatName> &names` in every bind
 declaration *and* definition, and runtime boundaries use the helpers. Do not add
 an implicit conversion — the explicitness is the upstream change's point.
@@ -402,6 +444,20 @@ BoundFunctionExpression::bind_info (now private)
 object, and `Catalog::GetEntry`, `FunctionBinder::BindScalarFunction` and the
 `FunctionExpression` constructor all take `Identifier` where they took `string`.
 
+Most of these need **no shim at all** — the setters already exist on the pin
+(`SetNullHandling` at `function.hpp:199`, likewise `SetReturnType`,
+`GetReturnType`, `GetStability`, and `BaseExpression::GetAlias`). `varargs` is
+the one member that genuinely needs a branch, because v1.5's `SimpleFunction` has
+a public field and no `SetVarArgs`.
+
+The grep that finds this class is on the **assignment**, not the setter —
+searching for `SetStability|SetNullHandling|SetVarArgs` only finds code that has
+already been fixed:
+
+```
+grep -rnE '\.(null_handling|stability|varargs|bind|serialize) *=' src/
+```
+
 **Do not write these shims from scratch.** `duckdb_yaml`'s
 `src/include/duckdb_compat.hpp` is the most complete in the fleet and already has
 them — `DUCKDB_SCALAR_BIND_PARAMS` / `_CONTEXT` / `_ARGS`, `CompatExprReturnType`,
@@ -534,11 +590,33 @@ INTERNAL Error: Scalar function "to_xml" threw an execution error, but the
 function is not marked as fallible - the function must call SetFallible().
 ```
 
-**No shim.** `SetFallible()` exists identically on the pin
-(`function.hpp:211`, on `BaseScalarFunction`) and on main
-(`scalar_function.hpp:249`) — same name, same zero-argument spelling. A probe
-would take the same branch on both, which is detection that detects nothing.
-Call `f.SetFallible()` directly.
+**Read this before the error message above: v1.5 already has this flag.**
+`BaseScalarFunction::SetFallible()` is at `function.hpp:211` on the pin, and
+`FunctionErrors errors` (defaulting to `CANNOT_ERROR`) already feeds
+`Expression::CanThrow()`. **v2.0 did not add the contract — it added
+enforcement of a contract that already existed and that these extensions have
+been quietly violating on the version they ship.** That reframes the whole
+change: it is not a v2.0 compat chore, it is a latent correctness bug on v1.5
+that v2.0 surfaces.
+
+**A plain function needs no shim; a `FunctionSet` does.** This is the trap, and
+most functions live in sets:
+
+```
+pin:   FunctionSet has `vector<T> functions`         and NO set-level SetFallible
+main:  FunctionSet has SetFallible()                 and `vector<shared_ptr<const T>>`
+```
+
+So neither spelling works on both. Probe for the set-level member:
+
+```cpp
+// true_type  -> set.SetFallible();                              // v2.0 set, or any plain function
+// false_type -> for (auto &f : set.functions) f.SetFallible();  // v1.5 set, members still mutable
+```
+
+A guide that just says "call it directly" leaves **every `ScalarFunctionSet`
+unmarked on the shipping version** — in one repo that was 10 sets against 8 plain
+functions, i.e. most of the surface.
 
 **It is not a no-op on the version you ship — it is unenforced.** The
 distinction matters: v1.5 *has* the flag and *consults* it; it simply does not
@@ -553,11 +631,24 @@ shipped planner **strictly more conservative** around it. That direction is safe
 have been — but it is a real change, so measure it rather than assuming.
 
 **Mark precisely, not defensively.** Because the property is optimizer-visible,
-declaring it on a function that *cannot* throw is itself a behaviour change, not
-free insurance. The reachability question is answerable statically: grep your own
-code for `throw`, then find the transitive callers of any throwing *helper*. In
-one repo three files included a throwing helper's header for an unrelated parser
-and did not reach the throw at all.
+over-marking is a small real pessimisation of the shipped binary, not a free
+hedge.
+
+A one-step `grep throw` **over-marks**. Make it two steps: grep `throw`, then
+check whether an enclosing handler *swallows* it. The tell is a catch-all that
+**returns** rather than rethrows:
+
+```cpp
+catch (...) { return false; }              // NOT fallible -- the throw never escapes
+catch (const InvalidInputException &) { throw; }   // IS fallible
+```
+
+Two functions can look identical until you read the handler. In one repo, 18 of
+21 scalar functions were fallible and the 3 that were not could not be told apart
+by grepping `throw` at all. Also follow the transitive callers of any throwing
+*helper* — and note that including a throwing helper's header proves nothing;
+one repo had three files including such a header for an unrelated parser and
+never reaching the throw.
 
 **Registration shape can block the fix.** `loader.RegisterFunction(ScalarFunction(...))`
 constructs a temporary, so there is no object to call `SetFallible()` on. Hoist

@@ -65,8 +65,8 @@ namespace duckdb {
 // bind out-parameter on both lines (verified: table_function.hpp:110/288 on the
 // pin, :123/319 on main), so asking it what the name type is cannot drift --
 // it IS the thing that changed.
-using CompatName = typename std::remove_reference<decltype(
-    std::declval<TableFunctionBindInput &>().input_table_names)>::type::value_type;
+using CompatName =
+    std::remove_reference<decltype(std::declval<TableFunctionBindInput &>().input_table_names)>::type::value_type;
 
 inline string CompatNameStr(const string &name) {
 	return name;
