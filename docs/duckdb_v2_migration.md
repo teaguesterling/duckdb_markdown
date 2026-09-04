@@ -72,6 +72,28 @@ branch, never once reaching the new API it existed for. It compiled and behaved
 correctly everywhere, which is why nothing caught it. Probing for the count-free
 overload — which exists only on v2.0 — is what actually discriminates.
 
+**And probe the thing itself, never a proxy for it.** The same mistake one level
+up nearly shipped fleet-wide. `CompatName` was selected by
+`__has_include("duckdb/common/identifier.hpp")` — the header's existence standing
+in for "bind signatures take `Identifier`". Those are two different facts, and
+they have **already come apart upstream**:
+
+```
+v1.5-variegata @ b155d6f63c (the pin)   no identifier.hpp    bind: vector<string>
+v1.5-variegata @ branch TIP             HAS identifier.hpp   bind: vector<string>   <-- proxy fails here
+main (v2.0)                             HAS identifier.hpp   bind: vector<Identifier>
+```
+
+`identifier.hpp` was **backported to the stable branch** without changing
+`table_function_bind_t`. The probe is right today only because the pin predates
+the backport; on the next submodule bump it flips `CompatName` to `Identifier` on
+a DuckDB that still wants strings, and every bind signature in the extension
+stops compiling at once. Since v2.0 deprecates rather than deletes and backports
+freely, *the header arrives before the behaviour does* — so a header probe is a
+leading indicator, not a test.
+
+Ask DuckDB what its own type is instead (see change 2).
+
 ### Check your C++ standard before copying shims
 
 `if constexpr` is C++17. Several extensions here compile their TUs at **C++11 on
@@ -128,11 +150,19 @@ a fully green canary does not clear you of either.
 | 12 | `DefaultMacro` changed shape | compile error |
 | 13 | throwing scalar functions must `SetFallible()` | **RUNTIME, green build, one arch only** |
 | 14 | `FlatVector::Validity` const split | compile error, **at the mutation, not the call** |
+| 15 | filter pushdown reworked | compile errors — **plus silent wrong results** |
+| 16 | `CreateInfo`/`DropInfo` names → private `QualifiedName` | compile error (storage extensions only) |
+| 17 | result / prepared-statement names are `Identifier` | compile error |
 
 Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
-Class 11 can compile and misbehave. Class 13 additionally shows up on **one CI
-architecture only**, because its enforcement is an assertion — so "green on
-arm64" is not evidence of anything.
+Class 11 can compile and misbehave. Class 15 can return **wrong rows** with no
+error at all, if your pushdown *is* the filter rather than an optimisation.
+Class 13 additionally shows up on **one CI architecture only**, because its
+enforcement is an assertion — so "green on arm64" is not evidence of anything.
+
+Nothing in this list is found by the greps in change 2. Classes 6, 7 and 13 are
+not found by any grep of the DuckDB API at all — for those you grep your *own*
+code, for field accesses, alias reads, and `throw`.
 
 ### 1. `LogicalType::SetAlias` → `WithAlias`
 
@@ -178,18 +208,28 @@ explicit Identifier(const string&); // EXPLICIT — promoting a runtime string i
 ```
 
 So `names.emplace_back("file_path")` compiles unchanged on both. **Only the
-signatures move**, plus the few places a *runtime* string crosses the boundary:
+signatures move**, plus the few places a *runtime* string crosses the boundary.
+
+Define the name type by **asking DuckDB for it**, not by probing a header (see
+the warning above — the header probe is already wrong on the stable branch tip):
 
 ```cpp
+#include "duckdb/function/table_function.hpp"
+
+// TableFunctionBindInput::input_table_names has the same element type as the
+// bind out-parameter on both lines: table_function.hpp:110/288 on the pin,
+// :123/319 on main. This cannot drift, because it IS the thing that changed.
+using CompatName = typename std::remove_reference<decltype(
+    std::declval<TableFunctionBindInput &>().input_table_names)>::type::value_type;
+
+inline string CompatNameStr(const string &name) { return name; }
 #ifdef DUCKDB_HAS_IDENTIFIER
-using CompatName = Identifier;
+// Declares the overload only. It must NOT decide CompatName. Both overloads
+// coexist fine when CompatName is still string.
 inline string CompatNameStr(const Identifier &id) { return id.GetIdentifierName(); }
-inline Identifier CompatMakeName(string n) { return Identifier(std::move(n)); }
-#else
-using CompatName = string;
-inline string CompatNameStr(const string &n) { return n; }
-inline string CompatMakeName(string n) { return n; }
 #endif
+
+inline CompatName CompatMakeName(string name) { return CompatName(std::move(name)); }
 ```
 
 Then `vector<string> &names` becomes `vector<CompatName> &names` in every bind
@@ -334,6 +374,15 @@ set.AddFunction(f);                            // then add
 Watch for this wherever a helper "post-processes" a whole set — null handling,
 varargs and stability are the usual ones.
 
+For **read-only** introspection no probe is needed at all: `shared_ptr<const T>`
+names a valid type on both versions, so two overloads and partial ordering settle
+it.
+
+```cpp
+template <class T> inline const T &CompatFunctionRef(const T &f)                   { return f; }
+template <class T> inline const T &CompatFunctionRef(const shared_ptr<const T> &f) { return *f; }
+```
+
 ### 6. Public fields became private; accessors replace them
 
 The largest class by error count, and the one a source grep will **not** find —
@@ -396,7 +445,12 @@ The grep that settles it is `GetAlias` / `capture_argument_aliases`, not
 `option`.
 
 If your extension has functions taking `name := value` style arguments, assume
-you are affected and check. A green canary build does not clear you of this —
+you are affected and check.
+
+**The dangerous case is named arguments that are *untested*.** A repo whose suite
+exercises the named-argument path gets caught by the canary's Test step. A repo
+where named arguments exist but nothing tests them ships a green build and a
+broken function. Check which of the two you are before trusting a green canary. A green canary build does not clear you of this —
 only a test that actually passes a named argument does.
 
 ### 8. `StructVector::GetEntries` changed element type
@@ -470,41 +524,65 @@ other.
 
 ### 13. Fallible scalar functions must say so — a SILENT runtime break
 
-Like change 7, this is a **runtime contract with no compile error and nothing to
-grep for**. v2.0 requires a scalar function that can throw during execution to
-declare it. Throwing from one that has not is an `InternalException`:
+Like change 7, a **runtime contract with no compile error and nothing in the
+DuckDB API to grep for**. v2.0 requires a scalar function that can throw during
+execution to declare it. Throwing from one that has not is an
+`InternalException`:
 
 ```
 INTERNAL Error: Scalar function "to_xml" threw an execution error, but the
 function is not marked as fallible - the function must call SetFallible().
 ```
 
-`BaseScalarFunction::SetFallible()` (scalar_function.hpp) takes **no arguments**.
-Call it **before** the function goes into a `FunctionSet` — set members are no
-longer mutable (change 5).
+**No shim.** `SetFallible()` exists identically on the pin
+(`function.hpp:211`, on `BaseScalarFunction`) and on main
+(`scalar_function.hpp:249`) — same name, same zero-argument spelling. A probe
+would take the same branch on both, which is detection that detects nothing.
+Call `f.SetFallible()` directly.
+
+**It is NOT inert on the version you ship.** On v1.5 `errors` feeds
+`BoundFunctionExpression::CanThrow()`, which gates conjunct reordering
+(`expression_heuristics`, `adaptive_filter`), filter pushdown
+(`pushdown_get` / `_projection` / `_outer_join`) and dictionary-expression
+caching (`execute_function.cpp`). Declaring a function fallible makes the
+shipped planner **strictly more conservative** around it. That direction is safe
+— it can only stop a throwing function being evaluated on rows it should not
+have been — but it is a real change, so measure it rather than assuming.
+
+**Mark precisely, not defensively.** Because the property is optimizer-visible,
+declaring it on a function that *cannot* throw is itself a behaviour change, not
+free insurance. The reachability question is answerable statically: grep your own
+code for `throw`, then find the transitive callers of any throwing *helper*. In
+one repo three files included a throwing helper's header for an unrelated parser
+and did not reach the throw at all.
+
+**Registration shape can block the fix.** `loader.RegisterFunction(ScalarFunction(...))`
+constructs a temporary, so there is no object to call `SetFallible()` on. Hoist
+it to a local (or a small `register_fallible` lambda). This compounds with change
+5: set members are no longer mutable, so the property must be set **before**
+hand-off to a `FunctionSet`.
+
+**Scope notes.** Table functions, COPY and casts are outside this contract —
+casts run through `BoundCastInfo`, not `BaseScalarFunction::Execute`. And
+`PragmaFunction` derives from `SimpleNamedParameterFunction`, not
+`BaseScalarFunction`, so pragmas are unaffected.
+
+**When measuring, make sure your bad input actually throws.** One port's first
+probe used a malformed-looking URL that the parser happily accepted, so the probe
+was vacuous and measured nothing. Test that your input errors before you trust a
+before/after comparison built on it.
 
 **This is the cause of the amd64/arm64 asymmetry described below.** The contract
 is violated on *both* arches; only the assertion-enabled image reports it. So the
 same commit is green on one leg and red on the other, and the failing test is
-always one that exercises an *error path*.
-
-Confirmed on two unrelated extensions, one of which has **no compat work at all**
-— which is the point: you do not have to port anything to violate a contract that
-is new.
+always one that exercises an *error path*. Confirmed on two unrelated extensions,
+one of which has **no compat work at all** — which is the point: you do not have
+to port anything to violate a contract that is new.
 
 ```
 duckdb_webbed  3 of 4 amd64 failures: to_xml, xml_extract_text, xml_wrap_fragment
 duck_hunt      amd64 failure: duck_hunt_load_parser_config   (unported)
 ```
-
-The shim is safe and cheap — probe for the member, no-op on v1.5:
-
-```cpp
-template <class FUNC> inline void CompatSetFallible(FUNC &fun);   // see the header
-```
-
-The cost is that it must be applied at every function-construction site, so find
-them by grepping your *own* code for `throw` inside scalar function lambdas.
 
 ### 14. `FlatVector::Validity` got the same const split — and hides better
 
@@ -532,6 +610,75 @@ then walk back to where the reference was bound:
 grep -rn 'SetInvalid\|SetValid(\|SetAllInvalid\|SetAllValid' src/
 ```
 
+### 15. Filter pushdown was reworked — and can go silently wrong
+
+Only bites extensions that implement pushdown, but it bites hard. Four compile
+breaks and one semantic landmine.
+
+- `TableFilterSet` moved to `duckdb/planner/table_filter_set.hpp` (a good
+  `__has_include` probe — it does not exist on v1.5), made `filters` **private**,
+  rekeyed it from `idx_t` to `ProjectionIndex`, and replaced map access with
+  `begin()`/`end()` yielding entries with `GetIndex()`/`Filter()`. Presents as
+  *"invalid use of incomplete type 'class duckdb::TableFilterSet'"*, which reads
+  like a missing include and is actually a moved-and-closed member. Note v1.5's
+  `TableFilterSet` has **no** `HasFilters()` — the one you may remember belongs
+  to `DynamicTableFilterSet` in the same header.
+- `ConstantFilter` → `LegacyConstantFilter`, `InFilter` → `LegacyInFilter`, and
+  the enumerators gained a `LEGACY_` prefix, because v2.0 represents filters as a
+  general `ExpressionFilter`. There is no SFINAE probe for a type *name*, so gate
+  these on the header probe and say so. Take the kind constant from the aliased
+  class (`CompatConstantFilter::TYPE`) rather than spelling the enumerator, so
+  the name lives in one place.
+- `BoundConjunctionExpression::children` is private;
+  `GetChildren()`/`GetChildrenMutable()` replace it. Probe the **mutable** one.
+- `ClientContext::interrupted` (a public atomic) is gone. `IsInterrupted()`
+  exists on **both** versions, so no shim — just use the accessor. The compiler's
+  *"did you mean 'Interrupt'?"* points at the wrong member.
+
+**The landmine.** v2.0 keeps the legacy filter classes only for
+*deserialization*. A **running** scan is handed an `ExpressionFilter`, so code
+matching on the legacy kinds simply never matches. Whether that is harmless
+depends entirely on what your pushdown is *for*:
+
+- pushdown as an **optimisation** (best-effort narrowing, every filter still
+  re-applied above) → you read more data and return the same rows;
+- pushdown as **the filter itself** → **silent wrong results**.
+
+A purely mechanical port cannot tell these apart. Check which shape you have.
+
+Related: v2.0's `TableFilterSet` has a **second** collection for multi-column
+filters that `begin()`/`end()` does not visit. Since DuckDB deletes a fully-pushed
+filter from the plan, an unseen filter is an *unapplied* filter. Detect it and
+refuse (`NotImplementedException`); there is no correct "ignore it".
+
+### 16. `CreateInfo`/`DropInfo` names became a private `QualifiedName`
+
+Hits any extension with its own `Catalog`/`SchemaCatalogEntry` — i.e. a storage
+extension with an ATTACH backend. `info.schema` and `info.name` are gone;
+`GetQualifiedName().Schema()` / `.Name()`, `CreateSchemaInfo::SchemaName()` and
+`CreateInfo::SetSchema(Identifier)` replace them.
+
+Two traps: probe on `GetQualifiedName` (present on v2.0 *and* the stable branch
+tip) rather than on the absent field; and the tip's backported
+`GetQualifiedName()` returns **by value** while v2.0 returns by reference, so
+never bind a reference to `.Name()`.
+
+### 17. Result and prepared-statement names are `Identifier`
+
+`QueryResult::names` is `vector<Identifier>` on v2.0, so any `result.names[col]`
+used as a string breaks — result formatters and DDL builders are the usual
+victims. `PreparedStatement::named_param_map` (public
+`case_insensitive_map_t<idx_t>`) became `GetNamedParameterMap()`
+(`identifier_map_t<idx_t>`), `Execute` takes
+`identifier_map_t<BoundParameterData>`, and `Appender`'s table-name parameter is
+an `Identifier`.
+
+**Probe trap:** do *not* probe this by trying to call `Execute` with an
+`identifier_map_t`. `PreparedStatement` has a variadic
+`template <class... ARGS> Execute(ARGS...)` that swallows anything, so the probe
+answers yes on **both** versions and then fails deep inside the instantiation.
+Probe the `GetNamedParameterMap` accessor instead.
+
 ## Deprecated is not removed — check before you port
 
 Not everything that changed is a hard break, and porting the soft ones costs
@@ -547,6 +694,13 @@ Vector::Resize
 `ConstantVector::GetData<T>(Vector &)` also still has a non-const overload
 returning `T*`, so writes through *it* are fine — only `FlatVector::GetData`
 went const-only (change 3).
+
+Also `[[deprecated]]` but present, and noisy rather than fatal: the **templated**
+`Catalog::GetEntry<T>(context, schema, name, if_not_found)` — prefer the
+non-template `GetEntry(context, CatalogType, Identifier, Identifier, OnEntryNotFound)`,
+which exists on both — and all three of `KeywordHelper::WriteQuoted` /
+`WriteOptionallyQuoted` / `EscapeQuotes`, superseded by `SQLString` /
+`SQLIdentifier` / `SQLQuotedIdentifier`.
 
 The genuinely removed ones — the compile errors — are `LogicalType::SetAlias`,
 `UnaryExecutor`/`BinaryExecutor`/`TernaryExecutor::ExecuteWithNulls`, and the
@@ -627,6 +781,13 @@ gh run list --workflow MainDistributionPipeline.yml --limit 20 \
    --json databaseId,conclusion,headBranch,createdAt
 ```
 
+**A canary job can sit in `queued` forever.** One run's matrix job was never
+scheduled at all — 70+ minutes queued while all six stable-leg jobs on the same
+`ubuntu-latest` pool started and finished green. `--json status` reads `queued`
+the whole time, so a naive wait loop blocks indefinitely with no signal. Compare
+job-level `startedAt` against its siblings to tell "slow" from "never scheduled",
+and cancel and re-dispatch rather than waiting.
+
 **A green *build* is not a green canary.** The job runs Build and then Test, and
 community-extensions' `test_against_latest` runs tests too — so it gates on both.
 An extension can compile against v2.0 and still fail behaviourally.
@@ -701,12 +862,22 @@ whole workflow fail to parse, scheduling zero jobs.
 minute: pull each file's compile command out of `build/release/compile_commands.json`
 and re-run it with `-fsyntax-only`. One process, no link, no DuckDB rebuild.
 
-**Do not run `make format` as a pre-push step.** On several of these repos
-clang-format 11.0.1 — the version `duckdb/scripts/format.py` demands — reports
-drift on a *pristine* default branch, while CI's format check is green. Running
-it mixes unrelated reformatting into your port diff and makes the review
-worthless. Check that your branch adds no *new* drift relative to the default
-branch instead.
+**Check your repo's format baseline before trusting — or distrusting — the
+formatter.** clang-format 11.0.1 (the version `duckdb/scripts/format.py` demands)
+reports drift on a pristine default branch in *some* of these repos but not
+others; markdown and func_apply are both zero-drift. One line tells you which
+you are in:
+
+```
+clang-format --style=file path/to/file | diff -u path/to/file -
+```
+
+Where the baseline is **clean**, verify your own diff is format-clean too — a
+repo whose CI runs the format check goes red otherwise, and a shim block copied
+from another repo is a common way to import drift. Where the baseline is
+**dirty**, do not run `make format` as a pre-push step: it mixes unrelated
+reformatting into your port and makes the review worthless. Check only that your
+branch adds no *new* drift.
 
 ## If you port several repos at once
 
