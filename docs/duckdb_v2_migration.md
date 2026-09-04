@@ -221,6 +221,30 @@ An extension that only *registers* functions barely touches this. One that
 *introspects* the catalog or rewrites expressions (`func_apply` is the extreme
 case) touches almost all of it.
 
+## Deprecated is not removed — check before you port
+
+Not everything that changed is a hard break, and porting the soft ones costs
+effort while buying nothing. On `main` these are `[[deprecated]]` but **still
+present**, so they compile with a warning:
+
+```
+Vector::ToUnifiedFormat(count, data)     DataChunk::SetCardinality(idx_t)
+DataChunk::SetValue(col, idx, val)       Vector::Flatten(count)
+Vector::Resize
+```
+
+`ConstantVector::GetData<T>(Vector &)` also still has a non-const overload
+returning `T*`, so writes through *it* are fine — only `FlatVector::GetData`
+went const-only (change 3).
+
+The genuinely removed ones — the compile errors — are `LogicalType::SetAlias`,
+`UnaryExecutor`/`BinaryExecutor`/`TernaryExecutor::ExecuteWithNulls`, and the
+public fields of change 6.
+
+You can settle any such question in seconds without a CI round and without
+cloning: read the header on `raw.githubusercontent.com/duckdb/duckdb/main/...`.
+Do that before porting a whole change class on the assumption it is fatal.
+
 ## Which header to start from
 
 The fleet's headers are at different generations, and copying the wrong one costs
