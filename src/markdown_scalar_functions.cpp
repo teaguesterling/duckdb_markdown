@@ -23,30 +23,27 @@ void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 	                            [](DataChunk &args, ExpressionState &state, Vector &result) {
 		                            auto &input_vector = args.data[0];
 
-		                            // Written as an explicit loop rather than through
-		                            // UnaryExecutor::ExecuteWithNulls, which DuckDB v2.0
-		                            // removed. The semantics being preserved are the
-		                            // reason it cannot be a plain Execute: md_valid maps
-		                            // a NULL input to FALSE, it does not propagate the
-		                            // null, and a plain Execute propagates.
-		                            UnifiedVectorFormat vdata;
-		                            CompatToUnifiedFormat(input_vector, args.size(), vdata);
-		                            const auto in = UnifiedVectorFormat::GetData<string_t>(vdata);
-
-		                            result.SetVectorType(VectorType::FLAT_VECTOR);
-		                            auto out = CompatFlatDataMutable<bool>(result);
-		                            for (idx_t i = 0; i < args.size(); i++) {
-			                            const auto idx = vdata.sel->get_index(i);
-			                            if (!vdata.validity.RowIsValid(idx)) {
-				                            out[i] = false;
-				                            continue;
-			                            }
-			                            try {
-				                            out[i] = !in[idx].GetString().empty();
-			                            } catch (...) {
-				                            out[i] = false;
-			                            }
-		                            }
+		                            // Was UnaryExecutor::ExecuteWithNulls, which DuckDB v2.0
+		                            // removed. A plain Execute is the exact equivalent here,
+		                            // not an approximation: ExecuteWithNulls copies the input
+		                            // validity into the result mask and then SKIPS the lambda
+		                            // for null rows, so the old lambda's `if (!RowIsValid)
+		                            // return false` branch was unreachable and a NULL input
+		                            // has always produced NULL. Execute propagates nulls the
+		                            // same way, so this preserves that exactly.
+		                            //
+		                            // Do not "simplify" this into a loop that writes false for
+		                            // null inputs -- that silently turns NULL into FALSE for
+		                            // non-constant inputs, which is the regression this
+		                            // comment exists to prevent.
+		                            UnaryExecutor::Execute<string_t, bool>(input_vector, result, args.size(),
+		                                                                   [](string_t md_str) {
+			                                                                   try {
+				                                                                   return !md_str.GetString().empty();
+			                                                                   } catch (...) {
+				                                                                   return false;
+			                                                                   }
+		                                                                   });
 	                            });
 
 	loader.RegisterFunction(md_valid_fun);
