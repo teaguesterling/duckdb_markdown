@@ -487,10 +487,25 @@ source bug. Gate on `MemAvailable` and drop to `-j2`.
 
 ## Order of work
 
-1. Grep for every affected site first — the compiler reports only the first few.
-2. Add the compat header; port one change at a time.
-3. After each, build against the pinned DuckDB and run the full suite. Behaviour
-   on the version you actually ship must not move.
-4. Dispatch the canary to check the other half.
-5. Repeat. Expect more errors after the first batch clears — the v2.0 build stops
-   at the first failing translation unit, so the error list is a floor, not a total.
+1. **Look for an old failed canary log first** (see above). If one exists you
+   start with the real error list instead of a guess.
+2. Grep for every affected site — but know that grep does not find change 6
+   (fields that became accessors) or change 7 (argument aliases) at all, so the
+   grep is a starting point, never the work list.
+3. Pick the right header to start from, merge rather than replace, and check
+   your C++ standard before copying `if constexpr` shims.
+4. Port one change class at a time.
+5. After each, build against the pinned DuckDB and run the full suite. Behaviour
+   on the version you actually ship must not move — and for anything touching
+   nulls, *measure* old against new rather than reasoning about it. Put the NULL
+   inside a non-constant vector or you are not testing the path you changed.
+6. Push, then dispatch the canary, then leave the branch alone until it finishes.
+7. Read the result on a **completed** run, per step, per platform. Build and Test
+   are separate; a green build is not a green canary.
+8. Repeat. Expect more errors after the first batch clears — the v2.0 build stops
+   at the first failing translation unit, so every error list is a floor, not a
+   total.
+
+And one thing the canary cannot tell you: change 7 fails at **run time** with a
+green build. If your extension has functions taking `name := value` arguments,
+add a test that passes one, or you will ship a break that CI never saw.
