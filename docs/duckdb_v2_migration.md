@@ -1253,6 +1253,26 @@ deduction it rejects that GCC and AppleClang accept, for instance — is invisib
 to it. Your MSVC coverage comes from the stable leg only, which is another reason
 not to treat that leg as merely a formality.
 
+**"Canary green" can mean "green over the half that ran."** `sqllogictest` turns
+an *unavailable extension* into a **skip**, not a failure — so any test file
+opening with `INSTALL json` / `require json` (or any other extension) is silently
+dropped on a canary where that extension is not installable. One repo's suite is
+1122 assertions locally; on v2.0, 10 of 12 files ran for 575 assertions and
+**547 — roughly half — were skipped**. The run was green, and it was green over
+half the suite.
+
+This matters most for exactly the classes the canary is supposed to cover: a
+skipped file's class 7, 13 and 19 exposure is untested, and skipping is invisible
+in a pass/fail conclusion. Check it explicitly:
+
+```
+grep -c 'All tests were skipped' <job log>
+grep -rln 'INSTALL \|require ' test/sql/           # your skip candidates
+```
+
+and compare the canary's assertion count against your local one. Report "green
+over N of M files" rather than "green" when they differ.
+
 **A canary whose Build FAILED tells you nothing about classes 7, 13 or 19** —
 those are runtime contracts, and the Test step never ran. Check that `Test` says
 `success`, not `skipped`. A port reporting "the build is green" from a run whose
@@ -1462,6 +1482,15 @@ workflow** accepts only a fixed set of keys; adding `continue-on-error` makes th
 whole workflow fail to parse, scheduling zero jobs.
 
 ## Two local shortcuts
+
+**"No tests ran" exits 0 and looks exactly like "all tests passed."** The
+unittest binary only discovers tests under the project root, so a file staged
+somewhere else — a scratch directory, say — yields `No test cases matched ... /
+No tests ran` and a **zero exit status**. Any perturbation you make to check that
+an assertion is live has to be made *in place* and restored afterwards. This is
+the empty-`FAILED:` failure mode in a different costume: a check that ran nothing
+and a check that passed are indistinguishable unless you read the whole output,
+not the exit code.
 
 **Syntax-check single TUs instead of building.** While waiting for build capacity
 (or CI), you can verify the pinned-v1.5 half of your changed files in about a
