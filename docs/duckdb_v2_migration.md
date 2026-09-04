@@ -376,13 +376,71 @@ only a test that actually passes a named argument does.
 ### 8. `StructVector::GetEntries` changed element type
 
 ```
-v1.5:  vector<unique_ptr<Vector>> &     ->  *entries[i]
-v2.0:  vector<Vector> &                 ->   entries[i]
+v1.5:  vector<unique_ptr<Vector>> &     ->  *entries[i]  /  entries[i]->SetValue(...)
+v2.0:  vector<Vector> &                 ->   entries[i]  /  entries[i].SetValue(...)
 ```
 
-`*entries[i]` becomes `no match for operator*`. Mechanical, but it can be many
-sites (19 in urlpattern alone). `duckdb_webbed`'s header has a
+The *element type* changed, not just the header location, so `*entries[i]` and
+`entries[i]->` both stop compiling. Mechanical, but it can be many sites (19 in
+urlpattern alone). `duckdb_webbed`'s header has a
 `CompatStructGetField(Vector &, idx_t)` helper for exactly this.
+
+### 9. The per-vector accessor headers moved
+
+`FlatVector`, `ListVector`, `StructVector` and friends split out of
+`duckdb/common/types/vector.hpp` into one header each under
+`duckdb/common/vector/`, and **`duckdb.hpp` no longer pulls them in
+transitively**. It presents as `'StructVector' has not been declared`, which
+reads like a missing symbol rather than a moved header.
+
+Include them defensively — including in your compat header, which names
+`FlatVector` at namespace scope:
+
+```cpp
+#if __has_include("duckdb/common/vector/flat_vector.hpp")
+#include "duckdb/common/vector/flat_vector.hpp"
+#endif   // likewise list_vector.hpp, struct_vector.hpp
+```
+
+### 10. `Vector::Reference(const Value &)` gained a count — and cannot be `if constexpr`
+
+```
+v1.5:  Reference(const Value &)
+v2.0:  Reference(const Value &, count_t)      // pass args.size()
+```
+
+`count_t` is a strong type (`duckdb/common/types/size.hpp`) whose constructor
+from `idx_t` is **explicit**, and the type does not exist on v1.5 at all.
+
+**That last part forces `#ifdef`, not `if constexpr`.** `if constexpr` discards
+the untaken branch but the compiler still *parses* it, and a missing
+non-dependent name is a hard error at parse time. So this one must be gated on
+`__has_include("duckdb/common/types/size.hpp")`. It is the one change in this
+document where the tag-dispatch/`if constexpr` idiom does not work.
+
+### 11. `ScalarFunction`'s constructor dropped a positional parameter
+
+`bind_scalar_function_extended_t` was removed from between `bind` and
+`statistics`. Any call site threading a value through a run of `nullptr`s to
+reach the positional tail now **shifts one slot** — landing a `nullptr` on the
+`LogicalType varargs` parameter. It may still compile, which is what makes it
+dangerous.
+
+Stop counting positions: set it afterwards with `SetStability()`, which exists
+on both versions. (Stability is also no longer a public field; it moved into a
+protected `FunctionProperties`.)
+
+### 12. `DefaultMacro` changed shape
+
+```
+v1.5:  {schema, name, parameters[8], named_parameters[8], macro}
+v2.0:  {schema, name, macro_definition}
+```
+
+The signature moved *inside* the definition string —
+`"(a, b, c := 'x') AS body"` — parsed as `CREATE MACRO __dummy__...`.
+`DefaultTableMacro` did **not** change, so a repo can be hit by one and not the
+other.
 
 ## Deprecated is not removed — check before you port
 
@@ -437,6 +495,13 @@ that repo's helpers by name.
 
 Your submodule is the stable line, so a local build only proves the v1.5 half.
 The v2.0 half is verified by CI, and the loop is ~20 minutes.
+
+The reverse is also true and worth using: **the stable leg of your own pipeline
+is CI-grade evidence for the v1.5 half.** It builds against the pinned release
+*and runs the suite*, on more platforms than you have locally. If local build
+capacity is scarce, a green stable leg stands in for the local run — and its
+Windows/MSVC job is the only thing in the matrix that will catch template
+deduction that GCC and AppleClang accept.
 
 Keep a canary job that builds against `main` and can be run on demand:
 

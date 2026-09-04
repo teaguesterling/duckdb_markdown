@@ -23,6 +23,23 @@
 #include "duckdb/common/identifier.hpp"
 #endif
 
+// v2.0 split the per-vector accessor classes out of
+// duckdb/common/types/vector.hpp into one header each under
+// duckdb/common/vector/, and duckdb.hpp no longer pulls them in transitively.
+// This header names FlatVector at namespace scope, so include it explicitly
+// rather than relying on a transitive include that a given TU may not have.
+// Presents otherwise as "'FlatVector' has not been declared", which reads like
+// a missing symbol rather than a moved header.
+#if __has_include("duckdb/common/vector/flat_vector.hpp")
+#include "duckdb/common/vector/flat_vector.hpp"
+#endif
+#if __has_include("duckdb/common/vector/list_vector.hpp")
+#include "duckdb/common/vector/list_vector.hpp"
+#endif
+#if __has_include("duckdb/common/vector/struct_vector.hpp")
+#include "duckdb/common/vector/struct_vector.hpp"
+#endif
+
 namespace duckdb {
 
 // --- bind-signature name type -------------------------------------------------
