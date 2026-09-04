@@ -1054,11 +1054,17 @@ limit.
 
 **A coordinator watching every repo is usually the biggest consumer.** A status
 sweep across fourteen repos costs two API calls each; on a 90-second loop that is
-~1,100 calls an hour on its own, before any of the ports poll at all. I exhausted
-the limit this way and then could not read *any* run status — every query
-returned 403, which is indistinguishable from "no runs exist" if you are not
-reading the error. Prefer one long-lived waiter per run over repeated sweeps, and
-treat an empty status sweep as suspect until you have checked it is not a 403.
+~1,100 calls an hour on its own, before any of the ports poll at all. Prefer one
+long-lived waiter per run over repeated sweeps, and treat an empty status sweep
+as suspect until you have checked it is not a 403 — a rate-limited query renders
+as an empty result and is indistinguishable from "no runs exist".
+
+**And `gh api /rate_limit` will tell you nothing is wrong.** The limit you hit
+this way is GitHub's *secondary* (abuse-detection) limit, which throttles request
+*rate* rather than hourly volume — and it is not reported in `/rate_limit`, which
+happily shows `core: 5000/5000` while every real call returns 403. Do not
+conclude from a healthy `/rate_limit` that the 403 was something else. Back off
+on wall-clock time; it clears on its own.
 
 **Push and dispatch on the same commit cancel each other — and the wrong one
 survives.** The `concurrency:` group covers the workflow, the ref *and* the SHA,
