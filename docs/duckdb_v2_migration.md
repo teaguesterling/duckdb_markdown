@@ -726,6 +726,24 @@ by grepping `throw` at all. Also follow the transitive callers of any throwing
 one repo had three files including such a header for an unrelated parser and
 never reaching the throw.
 
+**Follow the throwing *helpers*, not the literal throws — and expect the guard
+to be two files away.** The commonest under-marking is a recursion or
+input-validation guard reached indirectly. A depth guard's entire purpose is to
+turn a stack overflow into a readable error; undeclared on v2.0, the guard still
+prevents the crash but its message is rewritten as an `InternalException`, so it
+stops delivering the one thing it exists for. In this repo the shallow pass
+marked 2 of 6 fallible functions; the other 4 reached a `MAX_*_DEPTH` throw three
+call levels away, in a different file.
+
+**You may not be able to prove reachability, and that is worth saying out loud.**
+For those four, no input we could construct actually reached the guard — nested
+lists collapse inside cmark, nested emphasis saturated below the cap, and a
+1200-deep synthetic AST did not raise. Reachability was established by reading
+the call chain, not by executing it, so no regression test could be written that
+fails first. Marking anyway is defensible — the guard's author judged the input
+reachable, and the cost is a small conservative planner change — but **label it
+as unverified rather than implying you measured it.**
+
 **Registration shape can block the fix.** `loader.RegisterFunction(ScalarFunction(...))`
 constructs a temporary, so there is no object to call `SetFallible()` on. Hoist
 it to a local (or a small `register_fallible` lambda). This compounds with change
