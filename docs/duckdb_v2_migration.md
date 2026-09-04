@@ -547,6 +547,14 @@ DuckDB does this to itself: `src/function/scalar/struct/struct_pack.cpp` calls
 an extension emitting a `struct_pack` with aliased children is relying on
 *upstream's* opt-in rather than its own.
 
+**Table-function named parameters are a different surface too.** `name := value`
+arguments to a *table* function go through `TableFunction::named_parameters`,
+which are declared and bound by the table-function path and are unaffected by
+this change. `capture_argument_aliases` governs only **scalar** functions that
+derive names from their argument *aliases* — the `struct_pack` case. A repo whose
+named options are all table-function parameters is not affected, however many of
+them it has.
+
 **COPY option keys are a different surface — do not confuse the two.** A COPY
 bind reading `input.info.options` (a map) is untouched by this change; only
 *argument aliases* on bound child expressions are. The two look similar and are
@@ -874,6 +882,23 @@ tip) rather than on the absent field; and the tip's backported
 `GetQualifiedName()` returns **by value** while v2.0 returns by reference, so
 never bind a reference to `.Name()`.
 
+The move is broad — every entry name went behind a `QualifiedName`, with the
+`Get<Entry>Name()` accessors returning `Identifier`:
+
+```
+CreateFunctionInfo::name      CreateTableInfo::table       CreateViewInfo::view_name
+CreateSequenceInfo::name      CreateTypeInfo::name         CreateIndexInfo::index_name
+CreateInfo::schema            BaseTableRef::table_name -> Table()
+ColumnRefExpression::GetColumnName() now returns Identifier
+```
+
+**`CREATE SCHEMA` is a genuine special case, not a rename.** v2.0 encodes the
+path as `[catalog, parents..., new_schema, <empty name>]`, so the schema name is
+**not** in the `Name()` slot — read it with `CreateSchemaInfo::SchemaName()`.
+
+This class only reaches extensions that parse SQL with DuckDB's own parser and
+walk the resulting statements. Most extensions never touch it.
+
 ### 17. Result and prepared-statement names are `Identifier`
 
 `BaseQueryResult::names` and `types` are **private** on v2.0
@@ -932,6 +957,10 @@ For the `SetValue` idiom, "fixing" the shim to `SetCardinalityUnsafe` leaves eve
 child vector at size 0, and the next `CheckCardinality` throws *"vector has size 0
 but expected size N"*. That is the opposite of a fix.
 
+Put positively: **for an index-writing caller the forwarding to
+`SetChildCardinality` is required, not merely safe.** Index writes never move
+`v_size`, so it is the only call that sizes the children at all.
+
 Upstream's warning — that callers who "mutate the child vectors directly ... and
 then call `SetCardinality` rely on" the non-resizing behaviour — is scoped to
 callers who **moved the size themselves**, i.e. the `Append` family. Writing at
@@ -974,6 +1003,10 @@ Vector::Resize
 `ConstantVector::GetData<T>(Vector &)` also still has a non-const overload
 returning `T*`, so writes through *it* are fine — only `FlatVector::GetData`
 went const-only (change 3).
+
+`ListVector::GetEntry` is likewise `[[deprecated]]` but forwards to
+`GetChildMutable` (`list_vector.cpp:291`), so writes through it stay correct and
+it needs no porting.
 
 Also `[[deprecated]]` but present, and noisy rather than fatal: the **templated**
 `Catalog::GetEntry<T>(context, schema, name, if_not_found)` — prefer the
@@ -1312,9 +1345,20 @@ source bug. Gate on `MemAvailable` and drop to `-j2`.
 6. Push, then dispatch the canary, then leave the branch alone until it finishes.
 7. Read the result on a **completed** run, per step, per platform. Build and Test
    are separate; a green build is not a green canary.
-8. Repeat. Expect more errors after the first batch clears — the v2.0 build stops
-   at the first failing translation unit, so every error list is a floor, not a
-   total.
+8. Repeat. Expect more errors after the first batch clears. The error list is a
+   floor in **two** ways, and the second one is nastier:
+   - the build stops at the first failing translation unit; and
+   - **a function whose out-of-class definition matches no declaration is never
+     type-checked at all.** GCC reports one `no declaration matches ...` error
+     and then discards the function, so its entire body produces *zero*
+     diagnostics. In one port a header declared a function taking
+     `const CreateStatement &` without including `create_statement.hpp` —
+     transitively available on v1.5, not on main — and that hid **seven**
+     separate v2.0 breakages inside the body.
+
+   So after fixing any `no declaration matches` or incomplete-type error,
+   **re-read that function's body by hand** rather than trusting the next build
+   to find what is in it.
 
 And one thing the canary cannot tell you: change 7 fails at **run time** with a
 green build. If your extension has functions taking `name := value` arguments,
