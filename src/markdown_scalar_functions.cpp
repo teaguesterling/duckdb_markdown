@@ -1,4 +1,5 @@
 #include "markdown_scalar_functions.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "markdown_types.hpp"
 #include "markdown_utils.hpp"
@@ -22,21 +23,30 @@ void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 	                            [](DataChunk &args, ExpressionState &state, Vector &result) {
 		                            auto &input_vector = args.data[0];
 
-		                            UnaryExecutor::ExecuteWithNulls<string_t, bool>(
-		                                input_vector, result, args.size(),
-		                                [&](string_t md_str, ValidityMask &mask, idx_t idx) {
-			                                if (!mask.RowIsValid(idx)) {
-				                                return false;
-			                                }
+		                            // Written as an explicit loop rather than through
+		                            // UnaryExecutor::ExecuteWithNulls, which DuckDB v2.0
+		                            // removed. The semantics being preserved are the
+		                            // reason it cannot be a plain Execute: md_valid maps
+		                            // a NULL input to FALSE, it does not propagate the
+		                            // null, and a plain Execute propagates.
+		                            UnifiedVectorFormat vdata;
+		                            CompatToUnifiedFormat(input_vector, args.size(), vdata);
+		                            const auto in = UnifiedVectorFormat::GetData<string_t>(vdata);
 
-			                                try {
-				                                // Basic validation - check for basic Markdown structure
-				                                const std::string content = md_str.GetString();
-				                                return !content.empty();
-			                                } catch (...) {
-				                                return false;
-			                                }
-		                                });
+		                            result.SetVectorType(VectorType::FLAT_VECTOR);
+		                            auto out = FlatVector::GetData<bool>(result);
+		                            for (idx_t i = 0; i < args.size(); i++) {
+			                            const auto idx = vdata.sel->get_index(i);
+			                            if (!vdata.validity.RowIsValid(idx)) {
+				                            out[i] = false;
+				                            continue;
+			                            }
+			                            try {
+				                            out[i] = !in[idx].GetString().empty();
+			                            } catch (...) {
+				                            out[i] = false;
+			                            }
+		                            }
 	                            });
 
 	loader.RegisterFunction(md_valid_fun);

@@ -1,4 +1,5 @@
 #include "markdown_copy.hpp"
+#include "duckdb_compat.hpp"
 #include "duck_block_vocabulary.hpp"
 #include "duck_block_functions.hpp"
 #include "markdown_types.hpp"
@@ -108,12 +109,19 @@ void MarkdownCopyFunction::CopyOptions(ClientContext &context, CopyOptionsInput 
 //===--------------------------------------------------------------------===//
 
 unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, CopyFunctionBindInput &input,
-                                                    const vector<string> &names, const vector<LogicalType> &sql_types) {
+                                                    const vector<CompatName> &names,
+                                                    const vector<LogicalType> &sql_types) {
 	auto result = make_uniq<WriteMarkdownBindData>();
 	auto &options = input.info.options;
 
-	// Store schema info
-	result->column_names = names;
+	// Store schema info. Converted element-wise rather than assigned: on DuckDB
+	// v2.0 `names` is a vector<Identifier>, and Identifier does not implicitly
+	// convert to string -- deliberately, because it carries case-insensitive
+	// comparison semantics that a silent conversion would discard.
+	result->column_names.reserve(names.size());
+	for (auto &name : names) {
+		result->column_names.push_back(CompatNameStr(name));
+	}
 	result->column_types = sql_types;
 
 	// Parse options

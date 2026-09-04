@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include "duckdb_compat.hpp"
 #include "duckdb.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -103,7 +104,8 @@ private:
 	 * @return Function data for execution
 	 */
 	static unique_ptr<FunctionData> MarkdownReadDocumentsBind(ClientContext &context, TableFunctionBindInput &input,
-	                                                          vector<LogicalType> &return_types, vector<string> &names);
+	                                                          vector<LogicalType> &return_types,
+	                                                          vector<CompatName> &names);
 
 	/**
 	 * @brief Execution function for read_markdown
@@ -127,7 +129,8 @@ private:
 	 * @return Function data for execution
 	 */
 	static unique_ptr<FunctionData> MarkdownReadSectionsBind(ClientContext &context, TableFunctionBindInput &input,
-	                                                         vector<LogicalType> &return_types, vector<string> &names);
+	                                                         vector<LogicalType> &return_types,
+	                                                         vector<CompatName> &names);
 
 	/**
 	 * @brief Execution function for read_markdown_sections
@@ -151,7 +154,8 @@ private:
 	 * @return Function data for execution
 	 */
 	static unique_ptr<FunctionData> MarkdownReadBlocksBind(ClientContext &context, TableFunctionBindInput &input,
-	                                                       vector<LogicalType> &return_types, vector<string> &names);
+	                                                       vector<LogicalType> &return_types,
+	                                                       vector<CompatName> &names);
 
 	/**
 	 * @brief Execution function for read_markdown_blocks

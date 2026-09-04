@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/common/file_system.hpp"
 #include <string>
@@ -98,7 +99,7 @@ public:
 
 	//! Bind function - parse options and set up schema info
 	static unique_ptr<FunctionData> Bind(ClientContext &context, CopyFunctionBindInput &input,
-	                                     const vector<string> &names, const vector<LogicalType> &sql_types);
+	                                     const vector<CompatName> &names, const vector<LogicalType> &sql_types);
 
 	//! Initialize global state - open file for writing
 	static unique_ptr<GlobalFunctionData> InitializeGlobal(ClientContext &context, FunctionData &bind_data,
