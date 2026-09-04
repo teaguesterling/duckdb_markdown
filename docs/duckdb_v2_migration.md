@@ -635,6 +635,16 @@ green end to end, check the arm64 leg first and report the amd64 failure as a
 separate open question rather than folding it into the port. If *both* platforms
 fail the same test, that is much more likely to be yours.
 
+**`gh pr edit --body-file` can fail silently on these repos.** It errors with a
+GraphQL *"Projects (classic) is being deprecated ... (repository.pullRequest.projectCards)"*
+and **leaves the body unchanged** — so a PR you believe you corrected still shows
+the old text. Two ports hit this independently. Use the REST endpoint instead,
+and re-read the body afterwards either way:
+
+```
+gh api -X PATCH repos/OWNER/REPO/pulls/N -F body=@body.md
+```
+
 **Reading the failure needs the REST API, not `gh run view`.** Because the canary
 job calls a *reusable* workflow, `gh run view <run> --log-failed` prints nothing
 at all — which reads exactly like a job that produced no errors. Get the job id
