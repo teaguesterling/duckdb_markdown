@@ -878,8 +878,15 @@ So the correct mapping depends entirely on the **order** at the call site:
 | write children (`SetValue`/`Append`), *then* set cardinality | `SetCardinality` | **`SetCardinalityUnsafe`** |
 
 `SetCardinality` is `[[deprecated]]` but **preserved**, and it forwards to
-`SetCardinalityUnsafe` — so the old behaviour is still reachable under a new
-name. A single blanket shim cannot be right for both orders.
+`SetCardinalityUnsafe` — it was kept *precisely so that* write-then-set callers
+keep working. A single blanket shim cannot be right for both orders.
+
+**So for a write-then-set site, the fix is to leave it alone.** That inverts the
+usual porting instinct. The deprecation warning invites you to route every call
+through a `CompatSetOutputCardinality`, and doing that to a write-then-set site
+*introduces* the data loss rather than removing it. A repo that "ported" all its
+call sites uniformly would have been strictly worse off than one that ported
+none. Only the cardinality-before-write order wants `SetChildCardinality`.
 
 This is a **silent** corruption: it compiles, and it only manifests as wrong
 column data on v2.0. Audit every call site for its order rather than shimming
@@ -1168,8 +1175,10 @@ loads. One repo's tests went red on a function name it had never heard of, with
 nothing wrong in its own tree.
 
 Note what a normal cycle does *not* do: `make test_release` never installs
-anything, because `EXTENSION_STATIC_BUILD=1` links the extension into the
-unittest binary. So routine build-and-test cannot cause this — someone installed
+anything. `extension-ci-tools/makefiles/duckdb_extension.Makefile` sets
+`EXTENSION_STATIC_BUILD ?= 1` and `ENABLE_EXTENSION_AUTOINSTALL ?= 0` (lines
+117, 119), so the extension is linked into the unittest binary and the shared
+profile is never touched. So routine build-and-test cannot cause this — someone installed
 deliberately.
 
 And do not assume contamination means *wrong*. In our case the installed binary
