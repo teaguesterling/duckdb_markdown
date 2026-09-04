@@ -902,7 +902,11 @@ grep -rn '\.Append(\|AppendValue' src/
 ```
 
 **Empty means your existing `SetChildCardinality` shim is correct and needs no
-change.** If it is non-empty, check whether you ever append *more* rows than the
+change.** Across all nine extensions audited here that grep was empty in every
+one, against 112 cardinality call sites — so the entire "fix" this section
+originally prescribed would have been pure damage. If your codebase fills chunks
+with `SetValue`, which is the idiomatic table-function shape, you are in the same
+position. If it is non-empty, check whether you ever append *more* rows than the
 final count — only then does `SetChildCardinality(N)` shrink the logical size,
 and `SetCardinality` (deprecated but preserved, forwarding to
 `SetCardinalityUnsafe`) is the zero-risk option there.
