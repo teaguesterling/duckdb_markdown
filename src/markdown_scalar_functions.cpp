@@ -34,7 +34,7 @@ void MarkdownFunctions::RegisterValidationFunction(ExtensionLoader &loader) {
 		                            const auto in = UnifiedVectorFormat::GetData<string_t>(vdata);
 
 		                            result.SetVectorType(VectorType::FLAT_VECTOR);
-		                            auto out = FlatVector::GetData<bool>(result);
+		                            auto out = CompatFlatDataMutable<bool>(result);
 		                            for (idx_t i = 0; i < args.size(); i++) {
 			                            const auto idx = vdata.sel->get_index(i);
 			                            if (!vdata.validity.RowIsValid(idx)) {

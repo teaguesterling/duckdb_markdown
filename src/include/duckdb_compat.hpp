@@ -87,4 +87,25 @@ inline void CompatToUnifiedFormat(VEC &vec, idx_t count, UnifiedVectorFormat &da
 	}
 }
 
+// --- FlatVector mutable data ---------------------------------------------------
+// v1.5: FlatVector::GetData<T>(vec)         returns T*
+// v2.0: FlatVector::GetData<T>(vec)         returns const T*
+//       FlatVector::GetDataMutable<T>(vec)  returns T*
+// Writing through the v2.0 GetData is a compile error, which is the point of the
+// split -- so the WRITE path must ask for mutability explicitly.
+template <class T, class = void>
+struct CompatHasFlatGetDataMutable : std::false_type {};
+template <class T>
+struct CompatHasFlatGetDataMutable<T, decltype(void(T::template GetDataMutable<bool>(std::declval<Vector &>())))>
+    : std::true_type {};
+
+template <class VALUE, class FV = FlatVector>
+inline VALUE *CompatFlatDataMutable(Vector &vec) {
+	if constexpr (CompatHasFlatGetDataMutable<FV>::value) {
+		return FV::template GetDataMutable<VALUE>(vec);
+	} else {
+		return FV::template GetData<VALUE>(vec);
+	}
+}
+
 } // namespace duckdb

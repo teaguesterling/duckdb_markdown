@@ -126,7 +126,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 
 	// Parse options
 	for (auto &option : options) {
-		auto loption = StringUtil::Lower(option.first);
+		auto loption = StringUtil::Lower(CompatNameStr(option.first));
 		auto &value = option.second;
 
 		if (loption == "markdown_mode") {
@@ -182,7 +182,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 	// For document mode, resolve column indices
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::DOCUMENT) {
 		for (idx_t i = 0; i < names.size(); i++) {
-			auto lower_name = StringUtil::Lower(names[i]);
+			auto lower_name = StringUtil::Lower(CompatNameStr(names[i]));
 			if (lower_name == StringUtil::Lower(result->level_column)) {
 				result->level_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->title_column)) {
@@ -205,7 +205,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 	// For blocks mode, resolve column indices (uses duck_block naming)
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::BLOCKS) {
 		for (idx_t i = 0; i < names.size(); i++) {
-			auto lower_name = StringUtil::Lower(names[i]);
+			auto lower_name = StringUtil::Lower(CompatNameStr(names[i]));
 			if (lower_name == StringUtil::Lower(result->kind_column)) {
 				result->kind_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->element_type_column)) {
