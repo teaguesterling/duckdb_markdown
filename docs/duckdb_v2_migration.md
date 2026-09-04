@@ -1153,6 +1153,14 @@ canary leg specifically gets starved while the stable leg runs — that was wron
 and it would send you hunting a workflow bug that does not exist. The two legs
 were simply caught by the same backlog at different moments.)
 
+**The canary covers fewer platforms than the stable leg.** The canary matrix
+generates only `linux_amd64` and `linux_arm64`, while a stable leg typically
+covers five (both Linux arches, both macOS arches, Windows/MSVC) plus Wasm. So
+"green on v2.0" is two-platform evidence, and anything MSVC-specific — template
+deduction it rejects that GCC and AppleClang accept, for instance — is invisible
+to it. Your MSVC coverage comes from the stable leg only, which is another reason
+not to treat that leg as merely a formality.
+
 **A green *build* is not a green canary.** The job runs Build and then Test, and
 community-extensions' `test_against_latest` runs tests too — so it gates on both.
 An extension can compile against v2.0 and still fail behaviourally.
