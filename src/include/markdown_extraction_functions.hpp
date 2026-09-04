@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/table_function.hpp"
 
 namespace duckdb {
@@ -38,28 +39,28 @@ private:
 
 	// Code blocks extraction
 	static unique_ptr<FunctionData> CodeBlocksBind(ClientContext &context, TableFunctionBindInput &input,
-	                                               vector<LogicalType> &return_types, vector<string> &names);
+	                                               vector<LogicalType> &return_types, vector<CompatName> &names);
 	static unique_ptr<LocalTableFunctionState> CodeBlocksInit(ExecutionContext &context, TableFunctionInitInput &input,
 	                                                          GlobalTableFunctionState *global_state);
 	static void CodeBlocksFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);
 
 	// Links extraction
 	static unique_ptr<FunctionData> LinksBind(ClientContext &context, TableFunctionBindInput &input,
-	                                          vector<LogicalType> &return_types, vector<string> &names);
+	                                          vector<LogicalType> &return_types, vector<CompatName> &names);
 	static unique_ptr<LocalTableFunctionState> LinksInit(ExecutionContext &context, TableFunctionInitInput &input,
 	                                                     GlobalTableFunctionState *global_state);
 	static void LinksFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);
 
 	// Images extraction
 	static unique_ptr<FunctionData> ImagesBind(ClientContext &context, TableFunctionBindInput &input,
-	                                           vector<LogicalType> &return_types, vector<string> &names);
+	                                           vector<LogicalType> &return_types, vector<CompatName> &names);
 	static unique_ptr<LocalTableFunctionState> ImagesInit(ExecutionContext &context, TableFunctionInitInput &input,
 	                                                      GlobalTableFunctionState *global_state);
 	static void ImagesFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);
 
 	// Headings extraction
 	static unique_ptr<FunctionData> HeadingsBind(ClientContext &context, TableFunctionBindInput &input,
-	                                             vector<LogicalType> &return_types, vector<string> &names);
+	                                             vector<LogicalType> &return_types, vector<CompatName> &names);
 	static unique_ptr<LocalTableFunctionState> HeadingsInit(ExecutionContext &context, TableFunctionInitInput &input,
 	                                                        GlobalTableFunctionState *global_state);
 	static void HeadingsFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output);

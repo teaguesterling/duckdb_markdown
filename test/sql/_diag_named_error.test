@@ -1,0 +1,15 @@
+# name: test/sql/_diag_named_error.test
+# description: DIAGNOSTIC — does `exact := true` raise a binder error on v2.0?
+# group: [sql]
+
+require markdown
+
+statement ok
+CREATE TEMPORARY MACRO doc() AS (E'# T\n[a](http://a)\n');
+
+# Passing here means v2.0 REJECTS the named form outright. The expected text is
+# deliberately broad: any binder error satisfies it.
+statement error
+SELECT (md_stats(doc(), exact := true)).link_count;
+----
+Error

@@ -1,4 +1,5 @@
 #include "markdown_reader.hpp"
+#include "duckdb_compat.hpp"
 #include "markdown_copy.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -302,7 +303,7 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 
 		// Set alias for non-glob patterns
 		if (!is_glob_pattern) {
-			result->alias = fs.ExtractBaseName(table_name);
+			result->alias = CompatMakeName(fs.ExtractBaseName(table_name));
 		}
 
 		return std::move(result);
