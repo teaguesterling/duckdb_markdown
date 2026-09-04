@@ -160,12 +160,11 @@ a fully green canary does not clear you of either.
 | 15 | filter pushdown reworked | compile errors — **plus silent wrong results** |
 | 16 | `CreateInfo`/`DropInfo` names → private `QualifiedName` | compile error (storage extensions only) |
 | 17 | result / prepared-statement names are `Identifier` | compile error |
-| 18 | `SetCardinality` → `SetChildCardinality` | **compiles; silently overwrites data** |
+| 18 | `SetCardinality` → `SetChildCardinality` | compiles; may throw `InternalException` at run time |
 
 Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
 Class 11 can compile and misbehave. Class 15 can return **wrong rows** with no
-error at all, if your pushdown *is* the filter rather than an optimisation, and
-class 18 can silently **overwrite column data** if shimmed uniformly.
+error at all, if your pushdown *is* the filter rather than an optimisation.
 Class 13 additionally shows up on **one CI architecture only**, because its
 enforcement is an assertion — so "green on arm64" is not evidence of anything.
 
@@ -858,43 +857,56 @@ an `Identifier`.
 answers yes on **both** versions and then fails deep inside the instantiation.
 Probe the `GetNamedParameterMap` accessor instead.
 
-### 18. `SetCardinality` → `SetChildCardinality` is NOT a rename — it can overwrite your data
+### 18. `SetCardinality` → `SetChildCardinality` is not a safe blanket rename
 
-The most dangerous shim in this ecosystem, because it looks like the safest one.
-A `CompatSetOutputCardinality` that forwards to `SetChildCardinality` on v2.0 is
-**exactly** the substitution upstream warns against, in its own words
-(`data_chunk.hpp:72-74`):
+**Corrected.** An earlier version of this section called this silent data
+corruption, on the strength of upstream's doc comment
+(`data_chunk.hpp:72-74`), which says forwarding "would resize/overwrite their
+data". That reading was **wrong**, and it was circulated as an urgent warning
+before anyone traced the implementation. The comment is real; the inference from
+it was not.
 
-> this only sets the chunk's cardinality, it does **not** resize the child
-> vectors... Callers that mutate the child vectors directly (e.g.
-> `Vector::Append`/`SetValue`) and then call `SetCardinality` rely on this —
-> **forwarding to `SetChildCardinality` would resize/overwrite their data**.
-
-So the correct mapping depends entirely on the **order** at the call site:
-
-| your order | v1.5 | correct on v2.0 |
-|---|---|---|
-| set cardinality, *then* write children | `SetCardinality` | `SetChildCardinality` |
-| write children (`SetValue`/`Append`), *then* set cardinality | `SetCardinality` | **`SetCardinalityUnsafe`** |
-
-`SetCardinality` is `[[deprecated]]` but **preserved**, and it forwards to
-`SetCardinalityUnsafe` — it was kept *precisely so that* write-then-set callers
-keep working. A single blanket shim cannot be right for both orders.
-
-**So for a write-then-set site, the fix is to leave it alone.** That inverts the
-usual porting instinct. The deprecation warning invites you to route every call
-through a `CompatSetOutputCardinality`, and doing that to a write-then-set site
-*introduces* the data loss rather than removing it. A repo that "ported" all its
-call sites uniformly would have been strictly worse off than one that ported
-none. Only the cardinality-before-write order wants `SetChildCardinality`.
-
-This is a **silent** corruption: it compiles, and it only manifests as wrong
-column data on v2.0. Audit every call site for its order rather than shimming
-them uniformly:
+What the code actually does on current `main`:
 
 ```
-grep -rn -B8 'CompatSetOutputCardinality\|SetCardinality' src/ | grep -n 'SetValue\|Append'
+DataChunk::SetChildCardinality(n)        data_chunk.cpp:155
+   flat/constant vector -> FlatVector::SetSize(v, n)
+   any other vector     -> throw InternalException if v.size() != n
+FlatVector::SetSize -> VectorBuffer::SetVectorSize   vector_buffer.cpp:36
+   same size -> return;  CONSTANT -> ok;  FLAT -> bounds-check, then v_size = n
+   anything else -> throw InternalException
+VectorStructBuffer::SetVectorSize        struct_vector.cpp:63
+   propagates the size to each child; no realloc, no zeroing, no copy
 ```
+
+Every leaf is `v_size = n` behind a bounds check. Nothing on the path touches
+element bytes, and there is no `VectorListBuffer` override, so LIST/MAP child
+entries are untouched too.
+
+**So the real hazard is a loud one.** Forwarding is unsafe as a *blanket* rename
+because `SetChildCardinality` **validates and propagates** where the old call did
+neither:
+
+- it throws if a column is neither flat nor constant and its size disagrees;
+- it throws if `n` exceeds a flat vector's capacity;
+- it pushes the size down into `STRUCT`/`ARRAY` children.
+
+An extension that leaves a column non-flat, or over-fills past capacity, gets an
+`InternalException` where it previously got silence. That is worth auditing —
+but it fails visibly, and a green canary that exercises those code paths is
+meaningful evidence that you are fine.
+
+**Do not "fix" write-then-set sites reflexively.** `SetCardinality` is
+`[[deprecated]]` but preserved *precisely* to keep them working, and
+`SetCardinalityUnsafe` is the non-deprecated spelling of the same behaviour.
+Equally, do not assume a shim to `SetChildCardinality` is wrong: at least one
+extension adopted it deliberately because DuckDB `main` wants child buffer sizes
+synchronised after `SetValue` writes, and its full suite passes against `main`
+through exactly those sites with `STRUCT`, `MAP` and `LIST` columns.
+
+The honest summary: **which call you want depends on whether your children's
+sizes are already correct when you set the cardinality**, and the deprecation
+warning alone does not tell you. It is an audit, not a mechanical substitution.
 
 ## Deprecated is not removed — check before you port
 
