@@ -1246,8 +1246,34 @@ Test-failure on `linux_amd64` while `linux_arm64` was green end to end — readi
 the rollup as "the port does not compile" would have sent the next round chasing
 an API problem that did not exist.
 
-**A `linux_amd64` Test failure with `linux_arm64` green may not be yours.** We
-have seen this shape on two unrelated extensions against DuckDB `main`:
+**A `linux_amd64` Test failure with `linux_arm64` green is not diagnostic of
+anything — it tells you to run the A/B, not what the answer is.** At least two
+completely different causes produce that identical shape:
+
+- a **new v2.0 runtime contract** (change 13) enforced by an assertion, and only
+  the amd64 image has assertions on; and
+- a **pre-existing, environment-dependent test** — one repo asserted that CI's
+  submodule checkout had a local branch named `main`, which is true on the native
+  arm64 runner and false in the amd64 docker container. Nothing to do with v2.0
+  at all.
+
+**The instrument that settles it is a canary dispatched on the unported default
+branch.** It needs no local build, costs one run, and is the only thing in this
+whole exercise that produced a *yes/no* answer rather than an inference:
+
+```
+gh workflow run MainDistributionPipeline.yml --ref main     # canary must be gated to allow this
+```
+
+Then compare per-step, per-arch, and compare the *assertion counts and failing
+file:line*, not just the conclusions. In the case above they matched byte for
+byte — same two files, same line 78, same 882/880/2 counts, same "Mismatch on row
+1, column has_main_branch" — which is proof rather than plausibility.
+
+Do not substitute "main's last CI run was green" for this. In that repo main's
+last run was two weeks old, and the test had been broken the whole time.
+
+We have seen the shape on two unrelated extensions against DuckDB `main`:
 
 | repo | ported? | amd64 | arm64 |
 |---|---|---|---|
