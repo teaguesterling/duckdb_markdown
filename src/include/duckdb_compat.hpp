@@ -83,24 +83,31 @@ inline LogicalType CompatWithAlias(TYPE type, string alias) {
 }
 
 // --- Vector::ToUnifiedFormat ---------------------------------------------------
-// v2.0 dropped the count parameter. Probed the same way.
+// v1.5: ToUnifiedFormat(count, data)  -- the only overload
+// v2.0: ToUnifiedFormat(data)         -- plus the count form kept as [[deprecated]]
+//
+// PROBE FOR THE COUNT-FREE OVERLOAD, not the count-taking one. v2.0 did not
+// remove the count form, it deprecated it, so a probe for the count form is
+// true on BOTH versions and the shim would always take the deprecated path --
+// silently never calling the new API it exists to reach. The count-free form is
+// the one that exists only on v2.0, so it is the one that discriminates.
 template <class T, class = void>
-struct CompatToUnifiedTakesCount : std::false_type {};
+struct CompatToUnifiedWithoutCount : std::false_type {};
 template <class T>
-struct CompatToUnifiedTakesCount<T, decltype(void(std::declval<T &>().ToUnifiedFormat(
-                                        idx_t(0), std::declval<UnifiedVectorFormat &>())))> : std::true_type {};
+struct CompatToUnifiedWithoutCount<T, decltype(void(std::declval<T &>().ToUnifiedFormat(
+                                          std::declval<UnifiedVectorFormat &>())))> : std::true_type {};
 
 template <class VEC>
-inline void CompatToUnifiedFormatImpl(VEC &vec, idx_t count, UnifiedVectorFormat &data, std::true_type) {
-	vec.ToUnifiedFormat(count, data);
+inline void CompatToUnifiedFormatImpl(VEC &vec, idx_t, UnifiedVectorFormat &data, std::true_type) {
+	vec.ToUnifiedFormat(data);
 }
 template <class VEC>
-inline void CompatToUnifiedFormatImpl(VEC &vec, idx_t, UnifiedVectorFormat &data, std::false_type) {
-	vec.ToUnifiedFormat(data);
+inline void CompatToUnifiedFormatImpl(VEC &vec, idx_t count, UnifiedVectorFormat &data, std::false_type) {
+	vec.ToUnifiedFormat(count, data);
 }
 template <class VEC = Vector>
 inline void CompatToUnifiedFormat(VEC &vec, idx_t count, UnifiedVectorFormat &data) {
-	CompatToUnifiedFormatImpl(vec, count, data, CompatToUnifiedTakesCount<VEC>());
+	CompatToUnifiedFormatImpl(vec, count, data, CompatToUnifiedWithoutCount<VEC>());
 }
 
 // --- FlatVector mutable data ---------------------------------------------------
