@@ -241,11 +241,33 @@ inline string CompatNameStr(const Identifier &id) { return id.GetIdentifierName(
 inline CompatName CompatMakeName(string name) { return CompatName(std::move(name)); }
 ```
 
-**Write it WITHOUT `typename`.** `std::remove_reference<decltype(...)>::type::value_type`
-is non-dependent at namespace scope, and `typename` outside a template is only
-legal from C++20. GCC tolerates it; **MSVC does not**, so it breaks the Windows
-leg and nothing else. The same applies to any
-`child_list_t<...>::value_type::first_type`.
+**Write it WITHOUT `typename` at namespace scope** — but for the right reason,
+which is simply that it buys nothing there. An earlier draft of this guide said
+`typename` outside a template is "C++20-only" and breaks MSVC. **That is wrong**,
+and it was propagated widely before anyone checked it. CWG 382 permitted
+`typename` on non-dependent qualified names from C++11 on, and
+`g++ -pedantic-errors` accepts it at `-std=c++11`, `c++14` and `c++17`:
+
+```cpp
+using T = typename std::remove_reference<std::vector<int> &>::type::value_type;  // fine
+```
+
+(Whether some MSVC version rejects it is a claim nobody in this effort actually
+tested; treat it as unverified.) Drop the keyword because it is redundant, not
+because it is illegal — and note that **inside** the template it is genuinely
+required, since `D` is dependent there:
+
+```cpp
+template <class R, class A, class B, class C, class D>
+struct CompatBindNamesOf<R (*)(A, B, C, D)> {
+	using type = typename std::remove_reference<D>::type::value_type;   // REQUIRED
+};
+using CompatName = CompatBindNamesOf<table_function_bind_t>::type;      // no typename
+```
+
+Getting the reason wrong matters more than the keyword: someone who believes
+`typename` is illegal outside C++20 will delete it from a context where it is
+mandatory.
 
 **Assert the coupling.** Deriving the type fixes one failure mode and leaves
 another: `CompatName` can resolve to `Identifier` on a DuckDB whose
