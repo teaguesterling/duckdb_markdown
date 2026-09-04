@@ -362,6 +362,13 @@ DuckDB does this to itself: `src/function/scalar/struct/struct_pack.cpp` calls
 an extension emitting a `struct_pack` with aliased children is relying on
 *upstream's* opt-in rather than its own.
 
+**COPY option keys are a different surface — do not confuse the two.** A COPY
+bind reading `input.info.options` (a map) is untouched by this change; only
+*argument aliases* on bound child expressions are. The two look similar and are
+unrelated, so a repo with COPY options and no alias reads is not affected here.
+The grep that settles it is `GetAlias` / `capture_argument_aliases`, not
+`option`.
+
 If your extension has functions taking `name := value` style arguments, assume
 you are affected and check. A green canary build does not clear you of this —
 only a test that actually passes a named argument does.
