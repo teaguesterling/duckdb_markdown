@@ -1134,11 +1134,24 @@ through the tool result rather than off disk. (Output files the tool itself
 creates for background commands are already collision-safe — they are named per
 invocation. The exposure is only scripts you write into a shared directory.)
 
-**`~/.duckdb/extensions/` is shared too.** A local `FORCE INSTALL` from one port
-replaces an extension binary that every other port on the box loads. One repo's
-tests went red on a renamed function it had never heard of, with nothing wrong in
-its own tree. If you install locally, expect to break your neighbours; if a test
-fails on a symbol from a *different* extension, suspect this before your diff.
+**`~/.duckdb/extensions/` is shared too — and a red test there may be real.** A
+local `INSTALL` from one port replaces a binary every other port on the box
+loads. One repo's tests went red on a function name it had never heard of, with
+nothing wrong in its own tree.
+
+Note what a normal cycle does *not* do: `make test_release` never installs
+anything, because `EXTENSION_STATIC_BUILD=1` links the extension into the
+unittest binary. So routine build-and-test cannot cause this — someone installed
+deliberately.
+
+And do not assume contamination means *wrong*. In our case the installed binary
+was built from a sibling extension's `main`, which carried an **unreleased
+breaking rename**. CI was green because `INSTALL` pulls the *published*
+extension; the local run was red because it had the unpublished one. Both were
+correct; they tested different upstream versions. Reinstalling the older artifact
+would have made the test pass while hiding real drift until release day. When a
+cross-extension test goes red, establish *which version* each side is testing
+before you decide anything is broken.
 
 **Wait on your own PID, not a `pgrep` pattern.** `pgrep -f 'make release'`
 matches every concurrent build, not yours. It makes a waiter block until the
