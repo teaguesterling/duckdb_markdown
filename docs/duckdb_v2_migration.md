@@ -1281,7 +1281,24 @@ dispatch on a commit you already pushed, then leave the branch alone
 Runs on *different* SHAs do **not** cancel each other, so a stale earlier run
 also sits in the queue eating runners until you cancel it explicitly. When
 porting several repos at once, that stale-run backlog is self-inflicted and
-worth clearing:
+worth clearing.
+
+**But "superseded SHA" is the wrong test — use "did `src/` change".** A canary on
+an older commit is still perfectly valid evidence if everything since was
+documentation. Cancelling on SHA alone throws away a finished or nearly-finished
+run and costs you a full round; I did exactly that to myself. The check is:
+
+```
+git diff --stat <canary-sha>..HEAD -- src/     # empty => that canary still covers your code
+```
+
+**And once a PR is open, a `workflow_dispatch` re-runs the WHOLE pipeline a
+second time on the same commit** — every stable leg, code-quality job and extra
+matrix — because the `pull_request` run is in a different concurrency group and
+neither cancels the other. That is ~10 redundant jobs to obtain one canary.
+Cheapest order: **dispatch the canary before opening the PR**, and afterwards let
+the `pull_request` run cover the stable half. If you must re-canary after the PR
+exists, accept the double cost and do it once, not per push.
 
 ```
 gh run list --workflow W.yml --branch B --limit 25 --json databaseId,status \
