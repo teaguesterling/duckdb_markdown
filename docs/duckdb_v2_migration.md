@@ -770,9 +770,17 @@ depends entirely on what your pushdown is *for*:
 A purely mechanical port cannot tell these apart. Check which shape you have.
 
 Related: v2.0's `TableFilterSet` has a **second** collection for multi-column
-filters that `begin()`/`end()` does not visit. Since DuckDB deletes a fully-pushed
-filter from the plan, an unseen filter is an *unapplied* filter. Detect it and
-refuse (`NotImplementedException`); there is no correct "ignore it".
+filters that iterating the per-column entries does not visit. Since DuckDB
+deletes a fully-pushed filter from the plan, an unseen filter is an *unapplied*
+filter. There is no correct "ignore it" — detect and refuse
+(`NotImplementedException`). Detection is a direct call, not an inference:
+`HasMultiColumnFilters()` and `GetMultiColumnFilters()` are members
+(`table_filter_set.hpp:25,34`).
+
+The same header also exposes `HasFilter`, `GetFilterByColumnIndex`,
+`TryGetFilterByColumnIndex` and their `Mutable` variants — usually cleaner than
+iterating, and `TryGet...` returns `optional_ptr`, which removes a lookup-then-
+index round trip.
 
 ### 16. `CreateInfo`/`DropInfo` names became a private `QualifiedName`
 
