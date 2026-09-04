@@ -456,6 +456,28 @@ it mixes unrelated reformatting into your port diff and makes the review
 worthless. Check that your branch adds no *new* drift relative to the default
 branch instead.
 
+## If you port several repos at once
+
+Two hazards that cost real time here, both of which produce a *false pass*
+rather than a failure — which is why they are worth stating.
+
+**Give scratch files project-unique names.** Agents sharing one scratch
+directory wrote `build.sh` and `build.log`, and one of them nohup'd a `build.sh`
+that another had overwritten between write and exec. The log came back full of a
+different repo's cmake output and ended in a clean `BUILD_EXIT=0`. It was very
+nearly recorded as "builds green locally" for a project that had never compiled
+at all. Before believing any build log, grep it for your own repo's path.
+
+**Wait on your own PID, not a `pgrep` pattern.** `pgrep -f 'make release'`
+matches every concurrent build, not yours. It makes a waiter block until the
+*last* one finishes, and — worse — can report "gone" while your own build is
+still running. Use `until ! kill -0 $PID 2>/dev/null; do ...; done`.
+
+Also expect memory, not cores, to be the binding constraint: parallel DuckDB
+builds OOM long before they run out of CPU, and an OOM-killed `g++` surfaces as
+`internal compiler error` / `Killed` / `signal 9`, which reads exactly like a
+source bug. Gate on `MemAvailable` and drop to `-j2`.
+
 ## Order of work
 
 1. Grep for every affected site first — the compiler reports only the first few.
