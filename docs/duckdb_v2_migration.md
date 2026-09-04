@@ -491,7 +491,7 @@ a full CI round:
 None is a superset. Merge, do not replace — the sources in each repo already call
 that repo's helpers by name.
 
-## You cannot test this locally
+## You cannot test the v2.0 half locally
 
 Your submodule is the stable line, so a local build only proves the v1.5 half.
 The v2.0 half is verified by CI, and the loop is ~20 minutes.
