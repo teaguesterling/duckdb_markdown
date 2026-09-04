@@ -63,6 +63,40 @@ inline LogicalType CompatWithAlias(TYPE type, string alias) {
 Probe each change **separately**. Tying several to one macro silently picks the
 wrong branch if they ever land in different releases.
 
+### Check your C++ standard before copying shims
+
+`if constexpr` is C++17. Several extensions here compile their TUs at **C++11 on
+purpose** — forcing C++17 on the extension but not on libduckdb makes
+static-const members in duckdb's headers acquire implicit inline linkage in one
+set of TUs and not the other, producing multiple-definition link errors. One line
+tells you which you are:
+
+```
+grep -o 'std=c++[0-9]*' build/release/compile_commands.json | sort -u
+```
+
+The member probe itself is fine at C++11 in the `decltype(void(expr))` form. Only
+the dispatch needs care, so write it as tag dispatch, which works at both
+standards and has the same "only the taken branch is instantiated" property:
+
+```cpp
+template <class TYPE>
+inline LogicalType CompatWithAliasImpl(TYPE t, string a, std::true_type) {
+	return t.WithAlias(std::move(a));            // v2.0
+}
+template <class TYPE>
+inline LogicalType CompatWithAliasImpl(TYPE t, string a, std::false_type) {
+	t.SetAlias(std::move(a));                    // v1.5
+	return t;
+}
+template <class TYPE = LogicalType>
+inline LogicalType CompatWithAlias(TYPE t, string a) {
+	return CompatWithAliasImpl(std::move(t), std::move(a), CompatHasWithAlias<TYPE>());
+}
+```
+
+markdown's header is written this way, so it is safe to copy into a C++11 repo.
+
 ## The changes
 
 ### 1. `LogicalType::SetAlias` → `WithAlias`
@@ -142,29 +176,68 @@ inline VALUE *CompatFlatDataMutable(Vector &vec) {
 
 ### 4. `UnaryExecutor::ExecuteWithNulls` — removed
 
-There is no drop-in shim, because the replacement has a different shape: v2.0's
-`Execute` adds nulls when the lambda returns `optional<RESULT_TYPE>`.
+Also `BinaryExecutor::` and `TernaryExecutor::ExecuteWithNulls`. This is the
+change most likely to alter behaviour quietly, and the first attempt at it in
+this repo **did** — so read this section before writing a replacement.
 
-If your function used `ExecuteWithNulls` only to map NULL to a value rather than
-to *produce* nulls, an explicit loop is simpler and version-agnostic:
+**First, find out whether your lambda's null branch is even reachable.** In
+`unary_executor.hpp`, `ExecuteWithNulls` copies the input validity into the
+result mask and then *skips the lambda entirely* for null rows:
 
 ```cpp
-UnifiedVectorFormat vdata;
-CompatToUnifiedFormat(input, count, vdata);   // v2.0 dropped the count parameter
-const auto in = UnifiedVectorFormat::GetData<string_t>(vdata);
-result.SetVectorType(VectorType::FLAT_VECTOR);
-auto out = FlatVector::GetData<bool>(result);
+result_mask.Copy(mask, count);          // result is NULL wherever input was
+...
+if (ValidityMask::RowIsValid(validity_entry, base_idx - start)) {
+    result_data[base_idx] = OP::Operation(...);   // only called for VALID rows
+}
+```
+
+So a lambda that opens with `if (!mask.RowIsValid(idx)) return X;` never runs
+that branch, and the function has always returned **NULL** for a null input. The
+`ValidityMask &` parameter is there so a function can *add* nulls on valid rows,
+not so it can observe them.
+
+**Therefore, if the branch is dead, a plain `Execute` is the exact equivalent** —
+it propagates nulls identically, exists in both v1.5 and v2.0, and needs no shim:
+
+```cpp
+UnaryExecutor::Execute<string_t, bool>(input, result, count,
+                                       [](string_t s) { return !s.GetString().empty(); });
+```
+
+Only if the lambda genuinely *produces* nulls on valid rows do you need v2.0's
+`optional<RESULT_TYPE>` form, and then a shim like duckdb_yaml's
+`CompatUnaryExecuteWithNulls` / `CompatBinaryExecuteWithNulls` is the way.
+
+#### The trap
+
+The obvious-looking "explicit loop" replacement is wrong, and it fails silently:
+
+```cpp
+// WRONG -- turns NULL into false for non-constant inputs
 for (idx_t i = 0; i < count; i++) {
     const auto idx = vdata.sel->get_index(i);
     out[i] = vdata.validity.RowIsValid(idx) && !in[idx].GetString().empty();
 }
 ```
 
-**Verify the old and new against each other**, because this is the change most
-likely to alter behaviour quietly. Comparing ours showed the original lambda's
-`RowIsValid` branch was *dead*: DuckDB's default null handling propagates above
-the function, so a null input produced NULL either way and the branch never
-decided anything.
+It writes a *value* where the original left the row NULL, and it never touches
+the result validity mask. Here is what that cost us, measured against the pinned
+v1.5 by rebuilding one file:
+
+```
+SELECT v, md_valid(v) FROM (VALUES ('x'), (NULL), ('')) t(v);
+
+pre-port    x -> true   NULL -> NULL    '' -> false
+"ported"    x -> true   NULL -> FALSE   '' -> false     <- regression
+fixed       x -> true   NULL -> NULL    '' -> false
+```
+
+**And note why it was missed.** `SELECT md_valid(NULL)` returns NULL in *all
+three* versions, because constant folding propagates the null above the function
+before it ever runs. Testing the constant makes the bug invisible. **Test a NULL
+inside a non-constant vector** — `FROM (VALUES ...)` — or you are not testing the
+code path you changed.
 
 ### 5. `FunctionSet<T>::functions` yields `shared_ptr<const T>`
 
@@ -277,6 +350,25 @@ duckdb-next-build:
 
 Then `gh workflow run <workflow>.yml --ref <your-branch>` drives the port.
 
+**A green *build* is not a green canary.** The job runs Build and then Test, and
+community-extensions' `test_against_latest` runs tests too — so it gates on both.
+An extension can compile against v2.0 and still fail behaviourally.
+
+**Read per-step results, not the job rollup**, and make sure the run is actually
+`completed` before you read any conclusion — a rollup queried mid-run reports
+`success` for jobs that later fail:
+
+```
+gh run view <run-id> --json status --jq .status        # must say "completed"
+gh run view <run-id> --json jobs \
+   --jq '.jobs[] | "=== \(.name) => \(.conclusion)", (.steps[]|"  \(.conclusion) \(.name)")'
+```
+
+This matters in both directions. One of our canary rounds was Build-success /
+Test-failure on `linux_amd64` while `linux_arm64` was green end to end — reading
+the rollup as "the port does not compile" would have sent the next round chasing
+an API problem that did not exist.
+
 **Reading the failure needs the REST API, not `gh run view`.** Because the canary
 job calls a *reusable* workflow, `gh run view <run> --log-failed` prints nothing
 at all — which reads exactly like a job that produced no errors. Get the job id
@@ -299,6 +391,20 @@ rollup includes both — so an unrestricted canary shows red on every PR. And us
 `if:` rather than `continue-on-error:`, because a job calling a **reusable
 workflow** accepts only a fixed set of keys; adding `continue-on-error` makes the
 whole workflow fail to parse, scheduling zero jobs.
+
+## Two local shortcuts
+
+**Syntax-check single TUs instead of building.** While waiting for build capacity
+(or CI), you can verify the pinned-v1.5 half of your changed files in about a
+minute: pull each file's compile command out of `build/release/compile_commands.json`
+and re-run it with `-fsyntax-only`. One process, no link, no DuckDB rebuild.
+
+**Do not run `make format` as a pre-push step.** On several of these repos
+clang-format 11.0.1 — the version `duckdb/scripts/format.py` demands — reports
+drift on a *pristine* default branch, while CI's format check is green. Running
+it mixes unrelated reformatting into your port diff and makes the review
+worthless. Check that your branch adds no *new* drift relative to the default
+branch instead.
 
 ## Order of work
 
