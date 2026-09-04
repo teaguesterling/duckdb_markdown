@@ -92,10 +92,22 @@ void MarkdownFunctions::RegisterConversionFunctions(ExtensionLoader &loader) {
 
 	// Both convert through a third-party renderer and rethrow its failures as
 	// InvalidInputException. v2.0 requires a scalar function that can throw at
-	// execution time to say so, or the throw becomes an InternalException
-	// complaining the function is not marked fallible. No-op on v1.5.
-	CompatSetFallible(md_to_html_fun);
-	CompatSetFallible(md_to_text_fun);
+	// execution time to declare it, or the throw becomes an InternalException
+	// complaining the function is not marked fallible.
+	//
+	// Called directly, NOT through a compat shim: SetFallible() is identical on
+	// v1.5 (function.hpp:211) and on main, so a probe would take the same branch
+	// on both -- feature detection that detects nothing.
+	//
+	// It is NOT inert on v1.5 either. `errors` feeds BoundFunctionExpression::
+	// CanThrow(), which gates conjunct reordering (expression_heuristics,
+	// adaptive_filter), filter pushdown (pushdown_get/_projection/_outer_join)
+	// and dictionary-expression caching (execute_function.cpp). Declaring it
+	// makes the shipped planner strictly more conservative around these two
+	// functions -- safe in direction, but a real change, and measured rather
+	// than assumed (see test/sql/markdown_fallible_planner.test).
+	md_to_html_fun.SetFallible();
+	md_to_text_fun.SetFallible();
 
 	loader.RegisterFunction(md_to_html_fun);
 	loader.RegisterFunction(md_to_text_fun);

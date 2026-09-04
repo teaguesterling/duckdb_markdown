@@ -1,7 +1,9 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/function/table_function.hpp"
 #include <type_traits>
+#include <utility>
 
 // Compatibility shims for building against BOTH the pinned stable DuckDB
 // (v1.5.x, what this extension ships against) and DuckDB main (the v2.0 line,
@@ -44,23 +46,42 @@ namespace duckdb {
 
 // --- bind-signature name type -------------------------------------------------
 // Used wherever a bind callback receives or fills a vector of column names.
-#ifdef DUCKDB_HAS_IDENTIFIER
-using CompatName = Identifier;
-inline string CompatNameStr(const Identifier &id) {
-	return id.GetIdentifierName();
-}
-inline Identifier CompatMakeName(string name) {
-	return Identifier(std::move(name));
-}
-#else
-using CompatName = string;
+//
+// DERIVED FROM DUCKDB'S OWN CONTAINER, NOT FROM A HEADER PROBE. The obvious
+// probe -- #ifdef DUCKDB_HAS_IDENTIFIER -- is a TIME BOMB, because the presence
+// of identifier.hpp and the type used in bind signatures are two different
+// facts that have already come apart upstream:
+//
+//   v1.5-variegata @ b155d6f63c (our pin)  no identifier.hpp   bind: vector<string>
+//   v1.5-variegata @ branch tip            HAS identifier.hpp  bind: vector<string>
+//   main (v2.0)                            HAS identifier.hpp  bind: vector<Identifier>
+//
+// identifier.hpp was BACKPORTED to the stable branch without changing
+// table_function_bind_t. So on the next submodule bump a header probe flips
+// CompatName to Identifier on a DuckDB that still wants strings, and every bind
+// signature in the extension stops compiling at once.
+//
+// TableFunctionBindInput::input_table_names has the same element type as the
+// bind out-parameter on both lines (verified: table_function.hpp:110/288 on the
+// pin, :123/319 on main), so asking it what the name type is cannot drift --
+// it IS the thing that changed.
+using CompatName = typename std::remove_reference<decltype(
+    std::declval<TableFunctionBindInput &>().input_table_names)>::type::value_type;
+
 inline string CompatNameStr(const string &name) {
 	return name;
 }
-inline string CompatMakeName(string name) {
-	return name;
+#ifdef DUCKDB_HAS_IDENTIFIER
+// Only declares the Identifier overload; it does NOT decide CompatName. Both
+// overloads coexist happily when CompatName is still string.
+inline string CompatNameStr(const Identifier &id) {
+	return id.GetIdentifierName();
 }
 #endif
+
+inline CompatName CompatMakeName(string name) {
+	return CompatName(std::move(name));
+}
 
 // --- LogicalType alias ---------------------------------------------------------
 // v1.5: void SetAlias(string)      -- mutates in place
@@ -163,38 +184,6 @@ inline VALUE *CompatFlatDataMutable(Vector &vec) {
 	return CompatFlatDataMutableImpl<VALUE, FV>(vec, CompatHasFlatGetDataMutable<FV>());
 }
 
-// --- scalar function fallibility ------------------------------------------------
-// v2.0 added a RUNTIME contract: a scalar function that can throw during
-// execution must declare it. Throwing from a function that has not is an
-// InternalException:
-//
-//   INTERNAL Error: Scalar function "f" threw an execution error, but the
-//   function is not marked as fallible - the function must call SetFallible().
-//
-// This is NOT a compile error and no grep finds it -- the only symptom is a test
-// that exercises an error path, and only on a build with assertions enabled, so
-// one CI arch can be green while another is red on the very same commit.
-//
-// No-op on v1.5, where the member does not exist. Must be called BEFORE the
-// function goes into a FunctionSet, since set members are no longer mutable
-// (see the FunctionSet<T>::functions change).
-template <class T, class = void>
-struct CompatHasSetFallible : std::false_type {};
-template <class T>
-struct CompatHasSetFallible<T, decltype(void(std::declval<T &>().SetFallible()))> : std::true_type {};
-
-template <class FUNC>
-inline void CompatSetFallibleImpl(FUNC &fun, std::true_type) {
-	fun.SetFallible();
-}
-template <class FUNC>
-inline void CompatSetFallibleImpl(FUNC &, std::false_type) {
-}
-template <class FUNC>
-inline void CompatSetFallible(FUNC &fun) {
-	CompatSetFallibleImpl(fun, CompatHasSetFallible<FUNC>());
-}
-
 // --- FlatVector validity mask -----------------------------------------------
 // v1.5: Validity(Vector &)              returns ValidityMask &
 // v2.0: Validity(const Vector &)        returns const ValidityMask &
@@ -214,8 +203,8 @@ inline void CompatSetFallible(FUNC &fun) {
 template <class T, class = void>
 struct CompatHasFlatValidityMutable : std::false_type {};
 template <class T>
-struct CompatHasFlatValidityMutable<T, decltype(void(T::ValidityMutable(std::declval<Vector &>())))>
-    : std::true_type {};
+struct CompatHasFlatValidityMutable<T, decltype(void(T::ValidityMutable(std::declval<Vector &>())))> : std::true_type {
+};
 
 template <class FV>
 inline ValidityMask &CompatFlatValidityMutableImpl(Vector &vec, std::true_type) {
