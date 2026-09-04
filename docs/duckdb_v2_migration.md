@@ -153,10 +153,12 @@ a fully green canary does not clear you of either.
 | 15 | filter pushdown reworked | compile errors — **plus silent wrong results** |
 | 16 | `CreateInfo`/`DropInfo` names → private `QualifiedName` | compile error (storage extensions only) |
 | 17 | result / prepared-statement names are `Identifier` | compile error |
+| 18 | `SetCardinality` → `SetChildCardinality` | **compiles; silently overwrites data** |
 
 Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
 Class 11 can compile and misbehave. Class 15 can return **wrong rows** with no
-error at all, if your pushdown *is* the filter rather than an optimisation.
+error at all, if your pushdown *is* the filter rather than an optimisation, and
+class 18 can silently **overwrite column data** if shimmed uniformly.
 Class 13 additionally shows up on **one CI architecture only**, because its
 enforcement is an assertion — so "green on arm64" is not evidence of anything.
 
@@ -826,6 +828,37 @@ an `Identifier`.
 `template <class... ARGS> Execute(ARGS...)` that swallows anything, so the probe
 answers yes on **both** versions and then fails deep inside the instantiation.
 Probe the `GetNamedParameterMap` accessor instead.
+
+### 18. `SetCardinality` → `SetChildCardinality` is NOT a rename — it can overwrite your data
+
+The most dangerous shim in this ecosystem, because it looks like the safest one.
+A `CompatSetOutputCardinality` that forwards to `SetChildCardinality` on v2.0 is
+**exactly** the substitution upstream warns against, in its own words
+(`data_chunk.hpp:72-74`):
+
+> this only sets the chunk's cardinality, it does **not** resize the child
+> vectors... Callers that mutate the child vectors directly (e.g.
+> `Vector::Append`/`SetValue`) and then call `SetCardinality` rely on this —
+> **forwarding to `SetChildCardinality` would resize/overwrite their data**.
+
+So the correct mapping depends entirely on the **order** at the call site:
+
+| your order | v1.5 | correct on v2.0 |
+|---|---|---|
+| set cardinality, *then* write children | `SetCardinality` | `SetChildCardinality` |
+| write children (`SetValue`/`Append`), *then* set cardinality | `SetCardinality` | **`SetCardinalityUnsafe`** |
+
+`SetCardinality` is `[[deprecated]]` but **preserved**, and it forwards to
+`SetCardinalityUnsafe` — so the old behaviour is still reachable under a new
+name. A single blanket shim cannot be right for both orders.
+
+This is a **silent** corruption: it compiles, and it only manifests as wrong
+column data on v2.0. Audit every call site for its order rather than shimming
+them uniformly:
+
+```
+grep -rn -B8 'CompatSetOutputCardinality\|SetCardinality' src/ | grep -n 'SetValue\|Append'
+```
 
 ## Deprecated is not removed — check before you port
 
