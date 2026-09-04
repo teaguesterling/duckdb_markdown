@@ -1,0 +1,16 @@
+# name: test/sql/_diag_named_value.test
+# description: DIAGNOSTIC — does `exact := true` bind to the 1-arg overload on v2.0?
+# group: [sql]
+
+require markdown
+
+statement ok
+CREATE TEMPORARY MACRO doc() AS (E'# Title\nInline [a](http://a) and image ![i](http://i.png).\nRef [b][ref] and auto <http://c>.\nCode span `[x](http://x)`.\n\n```md\n[y](http://y)\n[z](http://z)\n```\n\n[ref]: http://b\n');
+
+# If v2.0 drops the label and binds the 1-arg overload, link_count is the
+# SCANNER value 5 rather than the cmark value 3. Passing here means "silently
+# bound the wrong overload"; failing means it did something else.
+query I
+SELECT (md_stats(doc(), exact := true)).link_count = 5;
+----
+true
