@@ -778,8 +778,9 @@ refuse (`NotImplementedException`); there is no correct "ignore it".
 
 Hits any extension with its own `Catalog`/`SchemaCatalogEntry` — i.e. a storage
 extension with an ATTACH backend. `info.schema` and `info.name` are gone;
-`GetQualifiedName().Schema()` / `.Name()`, `CreateSchemaInfo::SchemaName()` and
-`CreateInfo::SetSchema(Identifier)` replace them.
+`GetQualifiedName().Schema()` / `.Name()` (`create_info.hpp:56`),
+`GetQualifiedNameMutable()` (`:59`), `CreateSchemaInfo::SchemaName()` and
+`CreateInfo::SetSchema(Identifier)` (`:74`) replace them.
 
 Two traps: probe on `GetQualifiedName` (present on v2.0 *and* the stable branch
 tip) rather than on the absent field; and the tip's backported
@@ -788,11 +789,17 @@ never bind a reference to `.Name()`.
 
 ### 17. Result and prepared-statement names are `Identifier`
 
-`QueryResult::names` is `vector<Identifier>` on v2.0, so any `result.names[col]`
-used as a string breaks — result formatters and DDL builders are the usual
-victims. `PreparedStatement::named_param_map` (public
-`case_insensitive_map_t<idx_t>`) became `GetNamedParameterMap()`
-(`identifier_map_t<idx_t>`), `Execute` takes
+`QueryResult::names` is `vector<Identifier>` on v2.0 (`query_result.hpp:65`), so
+any `result.names[col]` used as a string breaks — result formatters and DDL
+builders are the usual victims. There is also a `GetNames()` accessor returning
+`const vector<Identifier> &`.
+
+`PreparedStatement::named_param_map` is **still a public member** — it did not
+move behind an accessor, its *element type* changed, from
+`case_insensitive_map_t<idx_t>` to `identifier_map_t<idx_t>`
+(`prepared_statement.hpp:36`). So field access still compiles and only key-type
+assumptions break; there is a `GetNamedParameterMap()` (`:81`) but switching to
+it is not required and is easy to over-port. `Execute` and `PendingQuery` take
 `identifier_map_t<BoundParameterData>`, and `Appender`'s table-name parameter is
 an `Identifier`.
 
