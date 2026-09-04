@@ -184,7 +184,7 @@ a fully green canary does not clear you of either.
 | 10 | `Vector::Reference` gained `count_t` | compile error — **must be `#ifdef`, not `if constexpr`** |
 | 11 | `ScalarFunction` ctor dropped a positional parameter | **may still compile, silently wrong** |
 | 12 | `DefaultMacro` changed shape | compile error |
-| 13 | throwing scalar functions must `SetFallible()` | **RUNTIME, green build, one arch only** |
+| 13 | throwing scalar functions must `SetFallible()` | **RUNTIME, green build — release builds included** |
 | 14 | `FlatVector::Validity` const split | compile error, **at the mutation, not the call** |
 | 15 | filter pushdown reworked | compile errors — **plus silent wrong results** |
 | 16 | `CreateInfo`/`DropInfo` names → private `QualifiedName` | compile error (storage extensions only) |
@@ -783,22 +783,54 @@ Error: Invalid data: URI - must start with 'data:'
 ```
 
 So a `statement error` test matching on a substring of your own message still
-**passes** while the function is mis-declared. The enforcement surfaces only in
-tests that match the whole message, or downstream in whatever the internal error
-cascades into. "Our error-path tests are green, so class 13 is handled" does not
-follow.
+**passes** while the function is mis-declared. "Our error-path tests are green,
+so class 13 is handled" does not follow.
+
+**But there is a cheap way to make those tests discriminating: include the
+exception's TYPE PREFIX.** The internal error is built with
+`error.RawMessage()`, which drops the prefix. So a correctly-declared function
+emits `IO Error: Could not open file for writing`, while the mis-declared one
+emits `... not marked as fallible ... Error: Could not open file for writing` —
+containing the sentence, but never with `IO Error: ` immediately before it.
+Expecting `Invalid Input Error: Pandoc inline nesting exceeds ...` rather than
+the bare sentence therefore distinguishes the two, with no whole-message matching
+or log grepping needed.
+
+Verify such a test **in both directions** — that it fails on a string the build
+never emits, *and* that it fails when the internal-error form is substituted.
+Otherwise you have only shown it passes, not that it discriminates.
 
 **When measuring, make sure your bad input actually throws.** One port's first
 probe used a malformed-looking URL that the parser happily accepted, so the probe
 was vacuous and measured nothing. Test that your input errors before you trust a
 before/after comparison built on it.
 
-**This is the cause of the amd64/arm64 asymmetry described below.** The contract
-is violated on *both* arches; only the assertion-enabled image reports it. So the
-same commit is green on one leg and red on the other, and the failing test is
-always one that exercises an *error path*. Confirmed on two unrelated extensions,
-one of which has **no compat work at all** — which is the point: you do not have
-to port anything to violate a contract that is new.
+**Enforcement is unconditional — this is not a debug-only diagnostic.**
+`BaseScalarFunction::Execute` (`scalar_function.hpp:316`) wraps the call in a
+plain `try`/`catch` with no `#ifdef DEBUG` and no assertion macro:
+
+```cpp
+if (properties.errors != FunctionErrors::CANNOT_ERROR) { callbacks.function(...); return; }
+try { callbacks.function(...); } catch (std::exception &ex) { ThrowNonFallibleFunctionError(Name(), ex); }
+```
+
+Canary legs build `CMAKE_BUILD_TYPE=Release`, and class 13 was still caught
+there. So an undeclared throwing function is a **live defect for any v2.0 user
+who reaches the path**, not something deferrable to a debug build.
+
+*(An earlier version of this guide claimed the asymmetry below was caused by
+assertions being enabled on amd64 only. That was wrong. Whatever produces that
+asymmetry, it is not this mechanism — and see the A/B section: the shape is not
+diagnostic of anything on its own.)*
+
+Note also that only **execution** errors are converted:
+`ThrowNonFallibleFunctionError` rethrows unchanged if
+`!Exception::IsExecutionError(error.Type())`, so a `BinderException` from your
+bind is unaffected.
+
+Confirmed on two unrelated extensions, one of which has **no compat work at
+all** — which is the point: you do not have to port anything to violate a
+contract that is new.
 
 ```
 duckdb_webbed  3 of 4 amd64 failures: to_xml, xml_extract_text, xml_wrap_fragment
@@ -1250,8 +1282,8 @@ an API problem that did not exist.
 anything — it tells you to run the A/B, not what the answer is.** At least two
 completely different causes produce that identical shape:
 
-- a **new v2.0 runtime contract** (change 13) enforced by an assertion, and only
-  the amd64 image has assertions on; and
+- a **new v2.0 runtime contract** (change 13) reached on one leg and not the
+  other; and
 - a **pre-existing, environment-dependent test** — one repo asserted that CI's
   submodule checkout had a local branch named `main`, which is true on the native
   arm64 runner and false in the amd64 docker container. Nothing to do with v2.0
@@ -1322,8 +1354,10 @@ per-failure **source excerpt**, never by proximity — and treat any tidy-lookin
 printed a diff, and a thrown DuckDB exception *does* reach the log (we have an
 `INTERNAL Error: ... not marked as fallible` printed in full from another repo).
 So an empty `FAILED:` argues against both a wrong answer and a thrown error, and
-points at an assertion or crash — consistent with assertions being enabled on the
-`linux_amd64` image and not on `linux_arm64`.
+points at an assertion or a crash. Do **not** extend that to "amd64 has
+assertions on and arm64 does not" — that explanation was asserted here for
+several hours and is not supported: class 13's enforcement, the obvious
+candidate, is unconditional in release builds.
 
 **How to get the message out.** `_extension_distribution.yml` accepts a
 `post_build_command` input, which `ci_phase.py` runs at the end of `build_linux`
