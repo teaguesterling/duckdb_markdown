@@ -226,11 +226,6 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
 	ParseMarkdownOptions(input, result->options);
 
 	// Define return columns
-	if (result->options.include_filepath) {
-		names.emplace_back("file_path");
-		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
-	}
-
 	names.emplace_back("content");
 	if (result->options.content_as_varchar) {
 		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
@@ -257,6 +252,17 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext
 		stats_struct.push_back(make_pair("reading_time_minutes", LogicalType(LogicalTypeId::DOUBLE)));
 
 		return_types.emplace_back(LogicalType::STRUCT(stats_struct));
+	}
+
+	// Provenance, trailing. duck_block spec 6.4 puts `filename` after the canonical
+	// fields and consumers accept the exact 8-field struct with it LAST, so a leading
+	// field would put the path at index 0 where index-based consumers expect `kind`.
+	// DuckDB core (read_csv/read_json/read_parquet) also names it `filename` and
+	// appends it. Only the boolean form is accepted: a renamed column produces a
+	// struct no duck_block consumer accepts.
+	if (result->options.include_filepath) {
+		names.emplace_back("filename");
+		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
 	}
 
 	// Optional add-on extractor columns (extract_extensions param)
@@ -292,12 +298,6 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 
 			idx_t column_idx = 0;
 
-			// Set file path if requested
-			if (bind_data.options.include_filepath) {
-				output.data[column_idx].SetValue(output_idx, Value(file_path));
-				column_idx++;
-			}
-
 			// Set content
 			output.data[column_idx].SetValue(output_idx, Value(content));
 			column_idx++;
@@ -325,6 +325,12 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 				    std::make_pair("reading_time_minutes", Value::DOUBLE(stats.reading_time_minutes)));
 
 				output.data[column_idx].SetValue(output_idx, Value::STRUCT(struct_values));
+				column_idx++;
+			}
+
+			// Provenance, trailing -- see the bind for why.
+			if (bind_data.options.include_filepath) {
+				output.data[column_idx].SetValue(output_idx, Value(file_path));
 				column_idx++;
 			}
 
@@ -477,11 +483,6 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 	}
 
 	// Define return columns for sections
-	if (result->options.include_filepath) {
-		names.emplace_back("file_path");
-		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
-	}
-
 	names.emplace_back("section_id");
 	return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
 
@@ -509,6 +510,17 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 
 	names.emplace_back("end_line");
 	return_types.emplace_back(LogicalType(LogicalTypeId::BIGINT));
+
+	// Provenance, trailing. duck_block spec 6.4 puts `filename` after the canonical
+	// fields and consumers accept the exact 8-field struct with it LAST, so a leading
+	// field would put the path at index 0 where index-based consumers expect `kind`.
+	// DuckDB core (read_csv/read_json/read_parquet) also names it `filename` and
+	// appends it. Only the boolean form is accepted: a renamed column produces a
+	// struct no duck_block consumer accepts.
+	if (result->options.include_filepath) {
+		names.emplace_back("filename");
+		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+	}
 
 	// Optional add-on extractor columns (per-section: extracted from section.content)
 	if (result->options.extract_wikilinks) {
@@ -544,12 +556,6 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 
 		idx_t column_idx = 0;
 
-		// Set file path if requested
-		if (bind_data.options.include_filepath) {
-			output.data[column_idx].SetValue(output_idx, Value(file_path));
-			column_idx++;
-		}
-
 		output.data[column_idx].SetValue(output_idx, Value(section.id));
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, Value(section.section_path));
@@ -566,6 +572,12 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 		column_idx++;
 		output.data[column_idx].SetValue(output_idx, Value::BIGINT(static_cast<int64_t>(section.end_line)));
 		column_idx++;
+
+		// Provenance, trailing -- see the bind for why.
+		if (bind_data.options.include_filepath) {
+			output.data[column_idx].SetValue(output_idx, Value(file_path));
+			column_idx++;
+		}
 
 		// Optional add-on extractor columns (extracted from this section's content)
 		if (bind_data.options.extract_wikilinks) {
@@ -622,11 +634,6 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 
 	// Define return columns (flattened - one row per block)
 	// Uses duck_block shape: kind, element_type, content, level, encoding, attributes, element_order
-	if (result->options.include_filepath) {
-		names.emplace_back("file_path");
-		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
-	}
-
 	names.emplace_back("kind");
 	return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
 
@@ -648,6 +655,17 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 
 	names.emplace_back("element_order");
 	return_types.emplace_back(LogicalType(LogicalTypeId::INTEGER));
+
+	// Provenance, trailing. duck_block spec 6.4 puts `filename` after the canonical
+	// fields and consumers accept the exact 8-field struct with it LAST, so a leading
+	// field would put the path at index 0 where index-based consumers expect `kind`.
+	// DuckDB core (read_csv/read_json/read_parquet) also names it `filename` and
+	// appends it. Only the boolean form is accepted: a renamed column produces a
+	// struct no duck_block consumer accepts.
+	if (result->options.include_filepath) {
+		names.emplace_back("filename");
+		return_types.emplace_back(LogicalType(LogicalTypeId::VARCHAR));
+	}
 
 	// Optional add-on extractor columns (per-block: extracted from block.content)
 	if (result->options.extract_wikilinks) {
@@ -676,12 +694,6 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 		const auto &[file_path, block] = bind_data.all_blocks[bind_data.current_block_index];
 
 		idx_t column_idx = 0;
-
-		// Set file path if requested
-		if (bind_data.options.include_filepath) {
-			output.data[column_idx].SetValue(output_idx, Value(file_path));
-			column_idx++;
-		}
 
 		// kind ('block', or 'inline' for structured rich-text children)
 		output.data[column_idx].SetValue(output_idx, Value(block.kind));
@@ -719,6 +731,12 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 		// element_order (was block_order)
 		output.data[column_idx].SetValue(output_idx, Value::INTEGER(block.block_order));
 		column_idx++;
+
+		// Provenance, trailing -- see the bind for why.
+		if (bind_data.options.include_filepath) {
+			output.data[column_idx].SetValue(output_idx, Value(file_path));
+			column_idx++;
+		}
 
 		// Optional add-on extractor columns (extracted from this block's content)
 		if (bind_data.options.extract_wikilinks) {

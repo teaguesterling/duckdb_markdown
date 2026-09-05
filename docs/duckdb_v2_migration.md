@@ -246,7 +246,7 @@ Identifier(const char *str);       // IMPLICIT — literals are identifiers by i
 explicit Identifier(const string&); // EXPLICIT — promoting a runtime string is deliberate
 ```
 
-So `names.emplace_back("file_path")` compiles unchanged on both. **Only the
+So `names.emplace_back("filename")` compiles unchanged on both. **Only the
 signatures move**, plus the few places a *runtime* string crosses the boundary.
 
 Define the name type by **asking DuckDB for it**, not by probing a header (see

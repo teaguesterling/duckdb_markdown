@@ -85,7 +85,7 @@ STRUCT(
 ```sql
 read_markdown_blocks(
     path VARCHAR,                    -- File path or glob pattern
-    include_filepath := false,       -- Add file_path column (alias: filename)
+    filename := false,               -- Append trailing filename column (deprecated alias: include_filepath)
     include_raw_html := false        -- Include raw HTML blocks
 )
 ```
@@ -103,7 +103,7 @@ Returns rows with duck_block shape:
 | `encoding` | VARCHAR | `text`, `json` (tables), `yaml`/`toml` (frontmatter) |
 | `attributes` | MAP(VARCHAR, VARCHAR) | Block metadata (heading_level, language, id, etc.) |
 | `element_order` | INTEGER | Position in document (1-indexed) |
-| `file_path` | VARCHAR | Source file (when enabled) |
+| `filename` | VARCHAR | Source file (when enabled). Trailing: duck_block spec 6.4 puts it after `element_order`. |
 
 **Note on heading levels:** For headings, the actual H1-H6 level is stored in `attributes['heading_level']`, while `level` indicates document nesting depth (always 1 for top-level blocks). This matches the duck_block_utils convention.
 
@@ -125,9 +125,9 @@ FROM read_markdown_blocks('tutorial.md')
 WHERE element_type = 'code';
 
 -- Multi-file analysis
-SELECT file_path, element_type, count(*) as count
+SELECT filename, element_type, count(*) as count
 FROM read_markdown_blocks('docs/**/*.md', include_filepath := true)
-GROUP BY file_path, element_type;
+GROUP BY filename, element_type;
 ```
 
 ## Writer: COPY TO Blocks

@@ -107,21 +107,21 @@ Reads Markdown files and returns one row per file.
 
 **Parameters:**
 - `files` (required) - File path, glob pattern, directory, or list of mixed patterns
-- `include_filepath := false` - Include file_path column in output (alias: `filename`)
+- `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `content_as_varchar := false` - Return content as VARCHAR instead of MARKDOWN type
 - `maximum_file_size := 16777216` - Maximum file size in bytes (16MB default)
 - `extract_metadata := true` - Extract frontmatter into the `metadata` column. This uses the same **line-split key/value** reader as [`md_extract_metadata`](#content-extraction-functions) — each line split on the first `:` (or the first `=` inside a `+++` TOML block), typed as `MAP(VARCHAR, VARCHAR)` — **not** a full YAML parser (nested maps, lists, and multiline `|`/`>` scalars are not interpreted). For real YAML, use the `yaml` extension's `read_yaml_frontmatter` — see [Frontmatter Handling](#frontmatter-handling).
 - `normalize_content := true` - Normalize Markdown content
 - `extract_extensions := NULL` - Opt-in add-on extractors (comma-separated VARCHAR; see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds `wikilinks` and/or `tags` `LIST<STRUCT>` columns to the output
 
-**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(file_path VARCHAR, content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` with `include_filepath := true`. With `extract_extensions`, the requested add-on columns are appended.
+**Returns:** `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR))` or `(content MARKDOWN, metadata MAP(VARCHAR, VARCHAR), filename VARCHAR)` with `filename := true` -- provenance is appended, never prepended. With `extract_extensions`, the requested add-on columns are appended.
 
 #### `read_markdown_blocks(files, [parameters...])`
 Reads Markdown files and parses them into block-level elements (headings, paragraphs, code blocks, lists, tables, etc.).
 
 **Parameters:**
 - `files` (required) - File path, glob pattern, or list of patterns
-- `include_filepath := false` - Include file_path column in output (alias: `filename`)
+- `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-block `wikilinks` and/or `tags` columns extracted from each block's content.
 
 **Returns:** `(kind VARCHAR, element_type VARCHAR, content VARCHAR, level INTEGER, encoding VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)`. `level` is structural **depth**, minimum 1 — a heading's rank is `attributes['heading_level']`, not `level`. A heading carries both a flattened plain-text title in `content` (what `section_id` and the sections API read) and its formatted text as inline children, so `# **Bold** t` keeps its emphasis instead of collapsing to `# Bold t`. (`read_markdown_sections` has a `level` column too, but that one is heading rank, 0-6.) With `extract_extensions`, the requested add-on columns are appended.
@@ -166,7 +166,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - `max_depth := 6` - Maximum depth relative to min_level (e.g., `max_depth := 2` with `min_level := 1` includes h1 and h2 only)
 - `max_content_length := 0` - Maximum content length for 'smart' mode (0 = auto, uses 2000 chars)
 - `include_empty_sections := false` - Include sections without content
-- `include_filepath := false` - Include file_path column in output (alias: `filename`)
+- `filename := false` - Append a trailing `filename` column naming the source file (deprecated alias: `include_filepath`). Boolean only: the string form that renames the column is deliberately not accepted, because a renamed column produces a struct no duck_block consumer accepts.
 - `extract_metadata := true` - Include frontmatter as a special section (level=0)
 - `extract_extensions := NULL` - Opt-in add-on extractors (see [Optional Add-On Extractors](#optional-add-on-extractors-extract_extensions)). When set, adds per-section `wikilinks` and/or `tags` columns extracted from each section's content.
 - Plus all `read_markdown` parameters
@@ -176,7 +176,7 @@ Reads Markdown files and parses them into hierarchical sections.
 - `'full'` - Content includes all subsections until next same-or-higher level heading. Use this for complete section extraction.
 - `'smart'` - Adaptive mode: includes small subsections fully, truncates large ones with references like `"... (see #subsection-id)"`.
 
-**Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `include_filepath := true` adds `file_path VARCHAR` column.
+**Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `filename := true` appends a trailing `filename VARCHAR` column.
 
 **Notes:**
 - When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` (or `+++`) delimiters as the content. This `level` is heading **rank** (0 for frontmatter, 1-6 for headings) and is a different measurement from `read_markdown_blocks`' `level`, which is structural **depth** and is 1 for every top-level element including frontmatter. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
@@ -326,7 +326,7 @@ The two extensions compose in both directions:
 -- markdown extension finds the documents and the body; yaml extension types the frontmatter
 SELECT y.title, y.tags, md_stats(m.content).word_count
 FROM read_yaml_frontmatter('posts/*.md', filename := true) y
-JOIN read_markdown('posts/*.md', include_filepath := true) m ON m.file_path = y.filename;
+JOIN read_markdown('posts/*.md', filename := true) m ON m.filename = y.filename;
 
 -- or hand a single raw block to the YAML parser yourself
 SELECT yaml(md_extract_frontmatter(content)) FROM read_markdown('posts/*.md');
@@ -696,7 +696,7 @@ A vault is just a folder of `.md` files. With `extract_extensions := 'obsidian'`
 ```sql
 -- Backlink edges across a vault: (source_file, target_note)
 WITH wl AS (
-  SELECT file_path AS source, unnest(wikilinks) AS w
+  SELECT filename AS source, unnest(wikilinks) AS w
   FROM read_markdown('vault/**/*.md', include_filepath := true, extract_extensions := 'wikilinks')
 )
 SELECT source, w.target AS target_note, w.is_embed, w.line_number
@@ -704,7 +704,7 @@ FROM wl;
 
 -- Orphan notes (no incoming wikilinks)
 WITH edges AS (
-  SELECT regexp_extract(file_path, '([^/]+)\.md$', 1) AS note,
+  SELECT regexp_extract(filename, '([^/]+)\.md$', 1) AS note,
          unnest(wikilinks).target AS target
   FROM read_markdown('vault/**/*.md', include_filepath := true, extract_extensions := 'wikilinks')
 )
