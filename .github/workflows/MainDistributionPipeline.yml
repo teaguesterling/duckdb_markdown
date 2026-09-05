@@ -8,7 +8,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
+  # github.event_name is part of the key on purpose. Without it a push to a
+  # branch and a workflow_dispatch on that same branch collide: same ref, same
+  # sha, both with empty head_ref/base_ref. cancel-in-progress then kills the
+  # push run every time the canary is dispatched by hand, and a cancelled run
+  # reads as a failed one on the checks dashboard.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -28,23 +33,24 @@ jobs:
   # WORKFLOW accepts only name/needs/if/permissions/uses/with/secrets/strategy/
   # concurrency -- `continue-on-error` is not among them, and adding it makes the whole
   # workflow fail to PARSE (zero jobs scheduled, run marked failed).
-  # PARKED 2026-09-03: DuckDB main is the v2.0 line (v2.0-cyanoptera), and a MAJOR
-  # release breaks API by definition. The canary is for advance warning of drift
-  # worth reacting to; against a major bump it reports the same known breakage on
-  # every push, which is noise rather than warning -- and it turns main's own CI
-  # red for a reason that has nothing to do with this extension's health.
+  # UNPARKED 2026-09-04. It was parked on 2026-09-03 because DuckDB main had become
+  # the v2.0 line (v2.0-cyanoptera): against a major bump the canary reported the
+  # same known breakage on every push, which is noise rather than warning. All three
+  # breaks it was reporting, from run 33717059343, are now fixed -- see
+  # src/include/duckdb_compat.hpp:
+  #   LogicalType::SetAlias                 removed -> CompatWithAlias
+  #   UnaryExecutor::ExecuteWithNulls       removed -> explicit validity loop
+  #   vector<string> -> vector<Identifier>  in copy_to_bind_t and
+  #                                         table_function_bind_t -> CompatName
+  # Run 33926873489 is green against main: 49 passed, 0 failed.
   #
-  # Currently outstanding against v2.0, from run 33717059343:
-  #   LogicalType::SetAlias                 removed
-  #   UnaryExecutor::ExecuteWithNulls       removed
-  #   vector<string> -> vector<Identifier>  in copy_to_bind_t and table_function_bind_t
-  #
-  # Still runnable ON DEMAND (Actions -> this workflow -> Run workflow), so the
-  # v2.0 port can be driven from it when that work is picked up. Unparking is
-  # deleting one condition.
+  # Expect it to go red again, and treat that as signal rather than breakage here.
+  # `main` is a moving target: it built two different DuckDB commits within one day
+  # during this port, and the second rejected a named argument on a scalar function
+  # that the first had accepted. That is exactly the advance warning this job is for.
   duckdb-next-build:
     name: Canary — build against DuckDB main (advisory)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       duckdb_version: main

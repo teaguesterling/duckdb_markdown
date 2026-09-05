@@ -1,4 +1,5 @@
 #include "markdown_types.hpp"
+#include "duckdb_compat.hpp"
 #include "markdown_utils.hpp"
 #include "duck_block_functions.hpp"
 
@@ -9,10 +10,12 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 
 LogicalType MarkdownTypes::MarkdownType() {
-	auto markdown_type = LogicalType(LogicalTypeId::VARCHAR);
-	markdown_type.SetAlias("markdown");
-	markdown_type.SetAlias("md"); // Also support 'md'
-	return markdown_type;
+	// One alias per type: the second call REPLACED the first, so this type's alias
+	// has always been "md" rather than "markdown" (verified: typeof('x'::markdown)
+	// returns md). Both names still resolve, because each is registered as a type
+	// name separately -- the alias only decides what typeof() prints. Kept as `md`
+	// to preserve that observable behaviour; changing it is a separate decision.
+	return CompatWithAlias(LogicalType::VARCHAR, "md");
 }
 
 //===--------------------------------------------------------------------===//

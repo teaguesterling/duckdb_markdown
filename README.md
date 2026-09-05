@@ -230,16 +230,16 @@ Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unkno
 - **`md_to_html(markdown)`** - Convert markdown content to HTML
 - **`md_to_text(markdown)`** - Convert markdown to plain text (useful for full-text search)
 - **`md_valid(markdown)`** - Validate markdown content and return boolean
-- **`md_stats(markdown, [exact])`** - Get document statistics (word count, reading time, etc.). By default `heading_count`, `code_block_count` and `link_count` come from line/character scanners, which count a `[text](target)` match anywhere — including images, code spans and fenced code — and miss reference links, autolinks, setext headings, indented code blocks and `~~~` fences. Pass `exact := true` to take those three counts from cmark's AST instead, so they agree with `md_extract_links` and `md_extract_code_blocks`. The default is unchanged for compatibility; `word_count`, `char_count`, `line_count` and `reading_time_minutes` are textual and identical either way.
+- **`md_stats(markdown, [exact])`** - Get document statistics (word count, reading time, etc.). By default `heading_count`, `code_block_count` and `link_count` come from line/character scanners, which count a `[text](target)` match anywhere — including images, code spans and fenced code — and miss reference links, autolinks, setext headings, indented code blocks and `~~~` fences. Pass `true` as the second argument to take those three counts from cmark's AST instead, so they agree with `md_extract_links` and `md_extract_code_blocks`. The default is unchanged for compatibility; `word_count`, `char_count`, `line_count` and `reading_time_minutes` are textual and identical either way.
 
   ```sql
   SELECT (md_stats(content)).link_count,                 -- scanner: counts images and code samples
-         (md_stats(content, exact := true)).link_count   -- cmark: real links only, references and autolinks included
+         (md_stats(content, true)).link_count   -- cmark: real links only, references and autolinks included
   FROM read_markdown('docs/*.md');
   ```
 - **`md_extract_metadata(markdown)`** - Extract frontmatter as `MAP(VARCHAR, VARCHAR)`. This is a lightweight **line-split key/value** reader (each line split on the first `:`, or the first `=` inside a `+++` TOML block), *not* a full YAML or TOML parser — nested maps, lists, and multiline scalars are not interpreted. For real YAML — nested maps, lists, `|`/`>` blocks — use the `yaml` extension's `read_yaml_frontmatter`; see [Frontmatter Handling](#frontmatter-handling).
 - **`md_extract_frontmatter(markdown)`** - Extract the **raw** frontmatter block (the text between the `---` or `+++` fences) as `VARCHAR`, or `NULL` when there is no frontmatter. Composes with `duckdb_yaml` for real YAML parsing without this extension carrying a YAML parser: e.g. `SELECT yaml(md_extract_frontmatter(content))`.
-- **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. With `include_subsections := true`, includes all nested content (full mode); default is minimal mode.
+- **`md_extract_section(markdown, section_id, [include_subsections])`** - Extract specific section by ID. Pass `true` as the third argument to include all nested content (full mode); default is minimal mode.
 - **`md_extract_sections(markdown, [min_level, max_level, content_mode])`** - Extract all sections as a list. Supports optional level filtering and content_mode ('minimal', 'full', 'smart').
 - **`md_section_breadcrumb(markdown, section_id)`** - Generate breadcrumb path for a section (returns "Title1 > Title2 > Title3" format)
 - **`value_to_md(value)`** - Convert any value to markdown representation

@@ -1,4 +1,5 @@
 #include "markdown_reader.hpp"
+#include "duckdb_compat.hpp"
 #include "markdown_types.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
@@ -210,7 +211,7 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 unique_ptr<FunctionData> MarkdownReader::MarkdownReadDocumentsBind(ClientContext &context,
                                                                    TableFunctionBindInput &input,
                                                                    vector<LogicalType> &return_types,
-                                                                   vector<string> &names) {
+                                                                   vector<CompatName> &names) {
 	auto result = make_uniq<MarkdownReadDocumentBindData>();
 
 	// Parse the file path parameter
@@ -385,7 +386,7 @@ static bool SectionMatchesFilter(const string &section_id, const string &section
 
 unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext &context, TableFunctionBindInput &input,
                                                                   vector<LogicalType> &return_types,
-                                                                  vector<string> &names) {
+                                                                  vector<CompatName> &names) {
 	auto result = make_uniq<MarkdownReadSectionBindData>();
 
 	// Parse the file path parameter
@@ -589,7 +590,7 @@ void MarkdownReader::MarkdownReadSectionsFunction(ClientContext &context, TableF
 
 unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &context, TableFunctionBindInput &input,
                                                                 vector<LogicalType> &return_types,
-                                                                vector<string> &names) {
+                                                                vector<CompatName> &names) {
 	auto result = make_uniq<MarkdownReadBlocksBindData>();
 
 	// Parse the file path parameter

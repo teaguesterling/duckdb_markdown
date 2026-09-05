@@ -1811,6 +1811,12 @@ void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) 
 		    }
 	    });
 
+	// Reaches a throwing depth guard, so v2.0 requires it to declare fallibility
+	// or the clean InvalidInputException becomes an InternalException -- which
+	// would defeat the guard, whose whole purpose is to turn unbounded recursion
+	// into a readable message. Found by following the throwing HELPERS, not the
+	// literal throws: the guard is two files away from every one of these.
+	duck_block_to_md.SetFallible();
 	loader.RegisterFunction(duck_block_to_md);
 }
 
@@ -1841,6 +1847,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader)
 		                                 }
 	                                 });
 
+	duck_blocks_to_md.SetFallible();
 	loader.RegisterFunction(duck_blocks_to_md);
 }
 
@@ -2024,6 +2031,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 		    }
 	    });
 
+	duck_blocks_to_sections.SetFallible();
 	loader.RegisterFunction(duck_blocks_to_sections);
 }
 
@@ -2076,6 +2084,7 @@ static void RegisterParseMarkdownToDuckBlocks(ExtensionLoader &loader) {
 			                  result.SetValue(i, Value::LIST(dtype, vals));
 		                  }
 	                  });
+	fn.SetFallible();
 	loader.RegisterFunction(fn);
 }
 

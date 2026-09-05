@@ -1,4 +1,5 @@
 #include "markdown_copy.hpp"
+#include "duckdb_compat.hpp"
 #include "duck_block_vocabulary.hpp"
 #include "duck_block_functions.hpp"
 #include "markdown_types.hpp"
@@ -108,17 +109,24 @@ void MarkdownCopyFunction::CopyOptions(ClientContext &context, CopyOptionsInput 
 //===--------------------------------------------------------------------===//
 
 unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, CopyFunctionBindInput &input,
-                                                    const vector<string> &names, const vector<LogicalType> &sql_types) {
+                                                    const vector<CompatName> &names,
+                                                    const vector<LogicalType> &sql_types) {
 	auto result = make_uniq<WriteMarkdownBindData>();
 	auto &options = input.info.options;
 
-	// Store schema info
-	result->column_names = names;
+	// Store schema info. Converted element-wise rather than assigned: on DuckDB
+	// v2.0 `names` is a vector<Identifier>, and Identifier does not implicitly
+	// convert to string -- deliberately, because it carries case-insensitive
+	// comparison semantics that a silent conversion would discard.
+	result->column_names.reserve(names.size());
+	for (auto &name : names) {
+		result->column_names.push_back(CompatNameStr(name));
+	}
 	result->column_types = sql_types;
 
 	// Parse options
 	for (auto &option : options) {
-		auto loption = StringUtil::Lower(option.first);
+		auto loption = StringUtil::Lower(CompatNameStr(option.first));
 		auto &value = option.second;
 
 		if (loption == "markdown_mode") {
@@ -174,7 +182,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 	// For document mode, resolve column indices
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::DOCUMENT) {
 		for (idx_t i = 0; i < names.size(); i++) {
-			auto lower_name = StringUtil::Lower(names[i]);
+			auto lower_name = StringUtil::Lower(CompatNameStr(names[i]));
 			if (lower_name == StringUtil::Lower(result->level_column)) {
 				result->level_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->title_column)) {
@@ -197,7 +205,7 @@ unique_ptr<FunctionData> MarkdownCopyFunction::Bind(ClientContext &context, Copy
 	// For blocks mode, resolve column indices (uses duck_block naming)
 	if (result->markdown_mode == WriteMarkdownBindData::MarkdownMode::BLOCKS) {
 		for (idx_t i = 0; i < names.size(); i++) {
-			auto lower_name = StringUtil::Lower(names[i]);
+			auto lower_name = StringUtil::Lower(CompatNameStr(names[i]));
 			if (lower_name == StringUtil::Lower(result->kind_column)) {
 				result->kind_col_idx = i;
 			} else if (lower_name == StringUtil::Lower(result->element_type_column)) {
