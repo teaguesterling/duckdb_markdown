@@ -12,7 +12,7 @@ require markdown
 statement ok
 CREATE TEMPORARY TABLE original_docs AS
 SELECT
-    replace(file_path, '\', '/') as file_path,
+    replace(filename, '\', '/') as filename,
     content as md_content
 FROM read_markdown('docs/*.md', filename := true);
 
@@ -22,11 +22,11 @@ SELECT count(*) >= 1 FROM original_docs;
 ----
 true
 
-# Create blocks from original docs (excluding file_path from block struct)
+# Create blocks from original docs (excluding filename from block struct)
 statement ok
 CREATE TEMPORARY TABLE doc_blocks AS
 SELECT
-    replace(file_path, '\', '/') as file_path,
+    replace(filename, '\', '/') as filename,
     list({
         kind: b.kind,
         element_type: b.element_type,
@@ -37,7 +37,7 @@ SELECT
         element_order: b.element_order
     } ORDER BY b.element_order) as blocks
 FROM read_markdown_blocks('docs/*.md', filename := true) b
-GROUP BY replace(file_path, '\', '/');
+GROUP BY replace(filename, '\', '/');
 
 # Verify blocks were created for all docs (same count as original_docs)
 query I
@@ -58,7 +58,7 @@ true
 statement ok
 CREATE TEMPORARY TABLE regenerated_docs AS
 SELECT
-    file_path,
+    filename,
     duck_blocks_to_md(blocks) as md_content
 FROM doc_blocks;
 
@@ -85,19 +85,19 @@ true
 # =============================================================================
 
 statement ok
-COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/doc_block_spec.md')
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE filename = 'docs/doc_block_spec.md')
 TO '__TEST_DIR__/regen_doc_block_spec.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 statement ok
-COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/ecosystem.md')
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE filename = 'docs/ecosystem.md')
 TO '__TEST_DIR__/regen_ecosystem.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 statement ok
-COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/index.md')
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE filename = 'docs/index.md')
 TO '__TEST_DIR__/regen_index.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 statement ok
-COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE file_path = 'docs/markdown_doc_block.md')
+COPY (SELECT md_content::VARCHAR FROM regenerated_docs WHERE filename = 'docs/markdown_doc_block.md')
 TO '__TEST_DIR__/regen_markdown_doc_block.md' (FORMAT CSV, HEADER false, QUOTE '');
 
 # =============================================================================
@@ -107,7 +107,7 @@ TO '__TEST_DIR__/regen_markdown_doc_block.md' (FORMAT CSV, HEADER false, QUOTE '
 # Create section comparison tables
 statement ok
 CREATE TEMPORARY TABLE original_sections AS
-SELECT 'docs/doc_block_spec.md' as file_path, section_id, title, level
+SELECT 'docs/doc_block_spec.md' as filename, section_id, title, level
 FROM read_markdown_sections('docs/doc_block_spec.md')
 UNION ALL
 SELECT 'docs/ecosystem.md', section_id, title, level
@@ -121,7 +121,7 @@ FROM read_markdown_sections('docs/markdown_doc_block.md');
 
 statement ok
 CREATE TEMPORARY TABLE regen_sections AS
-SELECT 'docs/doc_block_spec.md' as file_path, section_id, title, level
+SELECT 'docs/doc_block_spec.md' as filename, section_id, title, level
 FROM read_markdown_sections('__TEST_DIR__/regen_doc_block_spec.md')
 UNION ALL
 SELECT 'docs/ecosystem.md', section_id, title, level
@@ -145,12 +145,12 @@ SELECT count(*) >= 10 FROM original_sections;
 ----
 true
 
-# All sections should match by file_path, section_id, title, and level
+# All sections should match by filename, section_id, title, and level
 query I
 SELECT count(*) = 0
 FROM original_sections o
 FULL OUTER JOIN regen_sections r
-    ON o.file_path = r.file_path
+    ON o.filename = r.filename
     AND o.section_id = r.section_id
 WHERE o.section_id IS NULL OR r.section_id IS NULL;
 ----
@@ -161,7 +161,7 @@ query I
 SELECT count(*) = 0
 FROM original_sections o
 JOIN regen_sections r
-    ON o.file_path = r.file_path
+    ON o.filename = r.filename
     AND o.section_id = r.section_id
 WHERE o.title != r.title;
 ----
@@ -172,7 +172,7 @@ query I
 SELECT count(*) = 0
 FROM original_sections o
 JOIN regen_sections r
-    ON o.file_path = r.file_path
+    ON o.filename = r.filename
     AND o.section_id = r.section_id
 WHERE o.level != r.level;
 ----
@@ -186,12 +186,12 @@ true
 statement ok
 CREATE TEMPORARY TABLE original_headings AS
 SELECT
-    replace(file_path, '\', '/') as file_path,
+    replace(filename, '\', '/') as filename,
     content,
     attributes['heading_level'] as heading_level
 FROM read_markdown_blocks('docs/*.md', filename := true)
 WHERE element_type = 'heading'
-  AND replace(file_path, '\', '/') IN (
+  AND replace(filename, '\', '/') IN (
       'docs/doc_block_spec.md',
       'docs/ecosystem.md',
       'docs/index.md',
@@ -202,7 +202,7 @@ WHERE element_type = 'heading'
 statement ok
 CREATE TEMPORARY TABLE regen_headings AS
 SELECT
-    'docs/doc_block_spec.md' as file_path,
+    'docs/doc_block_spec.md' as filename,
     content,
     attributes['heading_level'] as heading_level
 FROM read_markdown_blocks('__TEST_DIR__/regen_doc_block_spec.md')
@@ -231,7 +231,7 @@ query I
 SELECT count(*) = 0
 FROM original_headings o
 JOIN regen_headings r
-    ON o.file_path = r.file_path
+    ON o.filename = r.filename
     AND o.content = r.content
 WHERE o.heading_level != r.heading_level;
 ----
@@ -244,16 +244,16 @@ true
 statement ok
 CREATE TEMPORARY TABLE original_block_counts AS
 SELECT
-    replace(file_path, '\', '/') as file_path,
+    replace(filename, '\', '/') as filename,
     element_type,
     count(*) as cnt
 FROM read_markdown_blocks('docs/*.md', filename := true)
-GROUP BY replace(file_path, '\', '/'), element_type;
+GROUP BY replace(filename, '\', '/'), element_type;
 
 statement ok
 CREATE TEMPORARY TABLE regen_block_counts AS
 SELECT
-    'docs/doc_block_spec.md' as file_path,
+    'docs/doc_block_spec.md' as filename,
     element_type,
     count(*) as cnt
 FROM read_markdown_blocks('__TEST_DIR__/regen_doc_block_spec.md')
@@ -275,11 +275,11 @@ GROUP BY element_type;
 query I
 SELECT count(*) = 0
 FROM (
-    SELECT file_path, sum(cnt) as cnt FROM original_block_counts WHERE element_type = 'heading' GROUP BY file_path
+    SELECT filename, sum(cnt) as cnt FROM original_block_counts WHERE element_type = 'heading' GROUP BY filename
 ) o
 JOIN (
-    SELECT file_path, sum(cnt) as cnt FROM regen_block_counts WHERE element_type = 'heading' GROUP BY file_path
-) r ON o.file_path = r.file_path
+    SELECT filename, sum(cnt) as cnt FROM regen_block_counts WHERE element_type = 'heading' GROUP BY filename
+) r ON o.filename = r.filename
 WHERE o.cnt != r.cnt;
 ----
 true
@@ -288,11 +288,11 @@ true
 query I
 SELECT count(*) = 0
 FROM (
-    SELECT file_path, sum(cnt) as cnt FROM original_block_counts WHERE element_type = 'code' GROUP BY file_path
+    SELECT filename, sum(cnt) as cnt FROM original_block_counts WHERE element_type = 'code' GROUP BY filename
 ) o
 JOIN (
-    SELECT file_path, sum(cnt) as cnt FROM regen_block_counts WHERE element_type = 'code' GROUP BY file_path
-) r ON o.file_path = r.file_path
+    SELECT filename, sum(cnt) as cnt FROM regen_block_counts WHERE element_type = 'code' GROUP BY filename
+) r ON o.filename = r.filename
 WHERE o.cnt != r.cnt;
 ----
 true

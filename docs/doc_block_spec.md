@@ -62,7 +62,7 @@ All compliant extensions MUST produce rows with these columns:
 Optional columns:
 | Column | Type | Description |
 |--------|------|-------------|
-| `file_path` | VARCHAR | Source file path (when reading multiple files) |
+| `filename` | VARCHAR | Source file path (when reading multiple files). Trailing field, after `element_order`. |
 
 ### Column Semantics
 

@@ -165,7 +165,34 @@ SELECT string_agg(element_order::VARCHAR, ',' ORDER BY element_order) FROM read_
 # =============================================================================
 
 query I
-SELECT file_path LIKE '%blocks_basic.md' FROM read_markdown_blocks('test/data/blocks_basic.md', include_filepath := true) LIMIT 1;
+SELECT filename LIKE '%blocks_basic.md' FROM read_markdown_blocks('test/data/blocks_basic.md', include_filepath := true) LIMIT 1;
+----
+true
+
+# Provenance is TRAILING, and that is load-bearing rather than cosmetic.
+# duck_block spec 6.4 keys acceptance on the exact 8-field struct with
+# `filename` LAST. Consumers read struct children BY INDEX, so a leading field
+# puts the file path at index 0 where every consumer expects `kind` -- shifting
+# every canonical field by one. Asserted as an exact type string so a
+# reordering fails here rather than downstream.
+query I
+SELECT typeof(list(b)) = 'STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "encoding" VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER, filename VARCHAR)[]'
+FROM read_markdown_blocks('test/data/blocks_basic.md', filename := true) b;
+----
+true
+
+# The deprecated alias produces the identical shape -- the parameter name never
+# reaches the data, only the column name and position do.
+query I
+SELECT typeof(list(b)) = 'STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "encoding" VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER, filename VARCHAR)[]'
+FROM read_markdown_blocks('test/data/blocks_basic.md', include_filepath := true) b;
+----
+true
+
+# Without provenance the shape is the canonical 7-field duck_block.
+query I
+SELECT typeof(list(b)) = 'STRUCT(kind VARCHAR, element_type VARCHAR, "content" VARCHAR, "level" INTEGER, "encoding" VARCHAR, attributes MAP(VARCHAR, VARCHAR), element_order INTEGER)[]'
+FROM read_markdown_blocks('test/data/blocks_basic.md') b;
 ----
 true
 
@@ -250,7 +277,7 @@ SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md') WHERE kind = 
 58
 
 query I
-SELECT count(DISTINCT file_path) FROM read_markdown_blocks('test/data/blocks_*.md', include_filepath := true);
+SELECT count(DISTINCT filename) FROM read_markdown_blocks('test/data/blocks_*.md', include_filepath := true);
 ----
 9
 

@@ -25,7 +25,7 @@ true
 
 # Named parameters work identically for the list form
 query I
-SELECT count(DISTINCT file_path) FROM read_markdown(['test/docs/*.md', 'test/markdown/*.md'], include_filepath := true);
+SELECT count(DISTINCT filename) FROM read_markdown(['test/docs/*.md', 'test/markdown/*.md'], include_filepath := true);
 ----
 13
 
@@ -67,7 +67,7 @@ SELECT (SELECT count(*) FROM read_markdown_blocks(['test/docs/*.md', 'test/markd
 true
 
 query I
-SELECT count(DISTINCT file_path) FROM read_markdown_blocks(['test/docs/*.md', 'test/markdown/*.md'], include_filepath := true);
+SELECT count(DISTINCT filename) FROM read_markdown_blocks(['test/docs/*.md', 'test/markdown/*.md'], include_filepath := true);
 ----
 13
 
