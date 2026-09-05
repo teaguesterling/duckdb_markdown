@@ -1,0 +1,109 @@
+# name: test/sql/duck_block_filename_field.test
+# description: duck_block 6.4 -- accepting the widened shape with a trailing filename
+# group: [sql]
+
+require markdown
+
+# The fleet ordering is acceptance everywhere BEFORE anything emits. markdown
+# emits the trailing `filename` (see markdown_blocks.test), so it must also
+# accept it wherever a duck_block is taken.
+#
+# Acceptance is via two registered implicit casts, cost 10. The cast is DuckDB's
+# own name-based struct cast, which matches children by name and skips a source
+# child the target lacks -- so `filename` is DROPPED and consumers do not widen
+# to read it. The registration is duck_block_utils'; markdown copies it rather
+# than approximating it.
+
+# ---------------------------------------------------------------------------
+# Positive: the widened shape binds wherever the canonical one does
+# ---------------------------------------------------------------------------
+
+# LIST(duck_block) parameter, from the real reader
+query I
+SELECT length(duck_blocks_to_md(list(b))) > 0
+FROM read_markdown_blocks('test/data/blocks_basic.md', filename := true) b;
+----
+true
+
+query I
+SELECT length(duck_blocks_to_sections(list(b))) > 0
+FROM read_markdown_blocks('test/data/blocks_basic.md', filename := true) b;
+----
+true
+
+# A bare block parameter, not a list
+query I
+SELECT rtrim(duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                              'level': NULL::INTEGER, 'encoding': 'text',
+                              'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+                              'element_order': 0, 'filename': 'a.md'}), chr(10)) = 'hi';
+----
+true
+
+# The canonical 7-field shape is untouched by the widening
+query I
+SELECT rtrim(duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                              'level': NULL::INTEGER, 'encoding': 'text',
+                              'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+                              'element_order': 0}), chr(10)) = 'hi';
+----
+true
+
+query I
+SELECT length(duck_blocks_to_md(list(b))) > 0
+FROM read_markdown_blocks('test/data/blocks_basic.md') b;
+----
+true
+
+# Emitters still emit the canonical 7-field shape; accepting the 8th does not
+# widen what markdown produces from a plain parse.
+query I
+SELECT typeof(parse_markdown_to_duck_blocks('# H')) LIKE '%element_order INTEGER)[]';
+----
+true
+
+# An untyped NULL stays unambiguous rather than becoming a doubly-matching call
+query I
+SELECT duck_blocks_to_md(NULL) IS NULL;
+----
+true
+
+# ---------------------------------------------------------------------------
+# Negative: acceptance is ONE exact shape. These prove the widening did not
+# turn into "any struct with the right first seven children".
+# ---------------------------------------------------------------------------
+
+# filename present but NOT trailing -- the whole point of the 6.4 change
+statement error
+SELECT duck_block_to_md({'filename': 'a.md', 'kind': 'block', 'element_type': 'paragraph',
+                         'content': 'hi', 'level': NULL::INTEGER, 'encoding': 'text',
+                         'attributes': MAP{}::MAP(VARCHAR, VARCHAR), 'element_order': 0});
+----
+No function matches
+
+# an eighth field under a different name
+statement error
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                         'level': NULL::INTEGER, 'encoding': 'text',
+                         'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+                         'element_order': 0, 'src_path': 'a.md'});
+----
+No function matches
+
+# a ninth field
+statement error
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                         'level': NULL::INTEGER, 'encoding': 'text',
+                         'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+                         'element_order': 0, 'filename': 'a.md', 'extra': 1});
+----
+No function matches
+
+# filename with a non-VARCHAR type
+statement error
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                         'level': NULL::INTEGER, 'encoding': 'text',
+                         'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+                         'element_order': 0, 'filename': 7});
+----
+No function matches
