@@ -69,6 +69,37 @@ SELECT duck_blocks_to_md(NULL) IS NULL;
 true
 
 # ---------------------------------------------------------------------------
+# Hand-written literals: the widened shape needs its MAP child typed
+#
+# Acceptance is keyed on an EXACT source type, so an untyped `MAP{}` -- which
+# infers MAP("NULL", "NULL"), not MAP(VARCHAR, VARCHAR) -- is not the registered
+# source type and no registered cast matches; the child-count rule then refuses.
+# The canonical 7-field shape does not go through a registered cast at all, so
+# DuckDB's ordinary implicit struct cast coerces the MAP child and it binds
+# either way. That asymmetry is invisible until you hand-write an 8-field
+# literal, and it looks exactly like the cast being broken.
+query I
+SELECT rtrim(duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                               'level': NULL::INTEGER, 'encoding': 'text',
+                               'attributes': MAP{}, 'element_order': 0}), chr(10)) = 'hi';
+----
+true
+
+statement error
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                         'level': NULL::INTEGER, 'encoding': 'text',
+                         'attributes': MAP{}, 'element_order': 0, 'filename': 'a.md'});
+----
+No function matches
+
+statement error
+SELECT duck_blocks_to_md([{'kind': 'block', 'element_type': 'paragraph', 'content': 'hi',
+                           'level': NULL::INTEGER, 'encoding': 'text',
+                           'attributes': MAP{}, 'element_order': 0, 'filename': 'a.md'}]);
+----
+No function matches
+
+# ---------------------------------------------------------------------------
 # Negative: acceptance is ONE exact shape. These prove the widening did not
 # turn into "any struct with the right first seven children".
 # ---------------------------------------------------------------------------

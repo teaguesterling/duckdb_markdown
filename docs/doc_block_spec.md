@@ -359,3 +359,20 @@ The DuckDB Markdown extension (`duckdb_markdown`) serves as the reference implem
 - Reader: `read_markdown_blocks()`
 - Writer: `COPY TO ... (FORMAT MARKDOWN, markdown_mode 'blocks')`
 - Converters: `duck_block_to_md()`, `duck_blocks_to_md()`, `duck_blocks_to_sections()`
+
+#### Two things that surprise people writing blocks by hand
+
+**The converters emit trailing newlines.** A paragraph with content `hi` renders as `hi\n\n`, not `hi`. DuckDB's `trim()` strips spaces only, so `trim(duck_block_to_md(...)) = 'hi'` is false; use `rtrim(x, chr(10))`.
+
+**The widened 8-field shape needs its `attributes` child typed.** Acceptance of the optional trailing `filename` is keyed on an exact source type, so an untyped `MAP{}` -- which infers `MAP("NULL", "NULL")` -- is not that type, no registered cast matches, and the call is refused:
+
+```sql
+-- refused: MAP{} is MAP("NULL", "NULL")
+SELECT duck_block_to_md({..., element_order: 0, filename: 'a.md'});
+
+-- binds
+SELECT duck_block_to_md({..., attributes: MAP{}::MAP(VARCHAR, VARCHAR),
+                         element_order: 0, filename: 'a.md'});
+```
+
+The canonical 7-field shape does not go through a registered cast, so DuckDB's ordinary implicit struct cast coerces the MAP child and it binds either way. Blocks that come from a reader are already correctly typed; this only bites hand-written literals.
