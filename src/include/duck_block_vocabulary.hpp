@@ -158,9 +158,16 @@ struct DuckBlockVocabulary {
 	static constexpr uint64_t ATTRIBUTES_IDX = 5;
 	static constexpr uint64_t ELEMENT_ORDER_IDX = 6;
 
-	// Additional field indices for duck_block_ext
-	static constexpr uint64_t SOURCE_FORMAT_IDX = 7;
-	static constexpr uint64_t FILE_PATH_IDX = 8;
+	// The one OPTIONAL trailing field. A reader that emits a `filename` column makes
+	// `list(b)` an 8-field struct; consumers accept exactly that shape -- the seven
+	// canonical fields, then this -- and nothing else. Optional fields append in
+	// ADOPTION order: a later one takes index 8. Reserving slots ahead of adoption is
+	// what put `source_format` at 7 and `file_path` at 8 for a type nothing ever
+	// produced, and that reservation is why the first real optional field could not
+	// simply take the next index. Those two constants are gone; `duck_block_ext`
+	// itself stays registered, deprecated, for one release.
+	static constexpr uint64_t FILENAME_IDX = 7;
+	static constexpr const char *FIELD_FILENAME = "filename";
 
 	// Kind values
 	static constexpr const char *KIND_BLOCK = "block";
@@ -288,8 +295,71 @@ struct DuckBlockVocabulary {
 	//
 	//               Nothing renamed, nothing removed; a consumer on 6.1 is unaffected.
 	//
+	//   6.3 -> 6.4  ADDITIVE for the shape, with ONE REMOVAL and ONE DEPRECATION.
+	//               duck_block gains an optional trailing 8th field, `filename VARCHAR`,
+	//               so a reader can say which file each row came from without breaking
+	//               the `list(b)` idiom. Consumers MUST accept both the 7-field and the
+	//               8-field shape; producers MAY emit the 8th, opt-in behind
+	//               `filename := true`, DuckDB core's own convention. It is TRAILING
+	//               ONLY and the widened shape is exactly one type: a differently
+	//               named or differently placed extra field stays a binder error.
+	//               Functions that RETURN blocks return the 7-field shape: provenance
+	//               lives on the reader's rows and survives GROUP BY filename, not
+	//               duck_blocks_merge.
+	//
+	//               ROLLOUT ORDER, which is why the rule is stated: land acceptance in
+	//               every consumer BEFORE any reader emits, or every
+	//               `duck_blocks_toc(list(b))` in the field breaks with the binder
+	//               error the day the reader ships.
+	//
+	//               REMOVED: SOURCE_FORMAT_IDX (7) and FILE_PATH_IDX (8), the offsets
+	//               of a `duck_block_ext` type no function ever produced or consumed.
+	//               `filename` at 7 would otherwise contradict a published constant.
+	//               DEPRECATED: the `duck_block_ext` catalog type stays registered
+	//               for one release because a user's own `CAST(x AS duck_block_ext)`
+	//               is invisible to any grep of ours; it goes in 6.5.
+	//
+	//               A consumer on 6.3 that never referenced the two offsets is
+	//               unaffected until a reader it depends on starts emitting.
+	//
+	//   6.4 -> 6.5  BREAKING on the FUNCTION SURFACE, nothing in the struct shape.
+	//               Retrieval returns blocks, and a suffix names what the ORIGINAL
+	//               returned, so nobody is stranded:
+	//
+	//               * duck_blocks_get_section and duck_blocks_get_pages return
+	//                 LIST(duck_block) instead of VARCHAR; duck_blocks_sections_like's
+	//                 third column is `blocks` LIST(duck_block) instead of `content`
+	//                 VARCHAR, rows unchanged; named parameters removed entirely
+	//                 (output_format was the only one, on all three); page_rows gains
+	//                 a `blocks` column beside its existing four. The originals live
+	//                 on as duck_blocks_get_section_text, duck_blocks_get_pages_text,
+	//                 duck_blocks_sections_like_text -- defined as duck_blocks_to_text
+	//                 over the blocks form, which is byte-identical to the old default
+	//                 because that is literally what the old default computed.
+	//               * duck_blocks_headings, _toc, _code_blocks, _links return
+	//                 LIST(duck_block); today's projections live on, byte-for-byte and
+	//                 permanently, as duck_blocks_headings_structs, _toc_structs,
+	//                 _code_blocks_structs, _links_structs. toc_rows and page_rows keep
+	//                 their row shapes.
+	//               * ATTR_OUTLINE and ATTR_INDENT: the first attributes a function here
+	//                 COMPUTES rather than copies. Only on the output of the heading
+	//                 constructions.
+	//               * RECOVERY CONTRACT, now normative: element_order is dense from 0
+	//                 over the list a reader EMITS, synthetic markers included. Every
+	//                 projection or construction FROM a document carries it through
+	//                 unrenumbered, with gaps -- it is the join key back to the source
+	//                 and between the blocks and _structs forms. Only functions that
+	//                 build a standalone document (assemble, merge, reorder) renumber.
+	//               * Restated, because producers asked: `level` is never NULL (a flat
+	//                 format emits 1 everywhere); `filename` is opt-in and boolean-only.
+	//
+	//               Migration: a caller reading a projection field off duck_blocks_toc
+	//               (panduck's doc_toc) renames to duck_blocks_toc_structs; a caller
+	//               wanting text renames to the _text sibling. Failure to migrate is a
+	//               binder error, never a wrong answer.
+	//
 	// The rule above is what will be followed from here.
-	static constexpr const char *SPEC_VERSION = "6.3";
+	static constexpr const char *SPEC_VERSION = "6.5";
 
 	// ========================================================================
 	// Block type names
@@ -416,6 +486,13 @@ struct DuckBlockVocabulary {
 	static constexpr const char *ATTR_LIST_TYPE = "list_type";
 	static constexpr const char *ATTR_SOURCE_TYPE = "source_type";
 	static constexpr const char *ATTR_PANDOC_AST = "pandoc_ast";
+	// COMPUTED attributes -- set only by duck_block_utils' heading constructions
+	// (duck_blocks_headings / duck_blocks_toc), never emitted by a reader as if
+	// sourced. `outline` is the heading's position in the outline ("1.2.1"):
+	// positions, not the heading's own digit, so h1 -> h3 -> h2 reads 1, 1.1, 1.2.
+	// `indent` is heading level minus the document's minimum heading level.
+	static constexpr const char *ATTR_OUTLINE = "outline";
+	static constexpr const char *ATTR_INDENT = "indent";
 
 	// ========================================================================
 	// Role values, per the type that carries them
