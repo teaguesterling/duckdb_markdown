@@ -7,7 +7,7 @@ The canonical vocabulary is the vendored header at `src/include/duck_block_vocab
 
 **Extension**: duckdb_markdown
 **Namespace**: `md`
-**Spec Version**: 6.3
+**Spec Version**: 6.5
 
 ## Overview
 

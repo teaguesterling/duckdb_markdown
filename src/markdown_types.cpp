@@ -2,9 +2,12 @@
 #include "duckdb_compat.hpp"
 #include "markdown_utils.hpp"
 #include "duck_block_functions.hpp"
+#include "duck_block_vocabulary.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 
 namespace duckdb {
+
+using Vocab = DuckBlockVocabulary;
 
 //===--------------------------------------------------------------------===//
 // Markdown Type Definition
@@ -124,13 +127,9 @@ static bool DuckBlockListToMarkdownCast(Vector &source, Vector &result, idx_t co
 
 // The one accepted widened shape: duck_block plus a trailing `filename VARCHAR`,
 // exactly. Registration and shape supplied by duck_block_utils, who own the spec.
-//
-// The literal "filename" becomes Vocab FIELD_FILENAME once 6.4 is vendored here;
-// markdown's drift check still reports upstream 6.3, so the constant does not
-// exist locally yet.
 static LogicalType DuckBlockWithFilenameType() {
 	auto children = StructType::GetChildTypes(MarkdownTypes::DuckBlockType());
-	children.push_back(make_pair("filename", LogicalType::VARCHAR));
+	children.push_back(make_pair(Vocab::FIELD_FILENAME, LogicalType::VARCHAR));
 	return LogicalType::STRUCT(std::move(children));
 }
 

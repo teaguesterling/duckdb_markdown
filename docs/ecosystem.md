@@ -85,31 +85,32 @@ SELECT duck_blocks_to_md(
 
 The `duck_block_utils` extension will provide format-agnostic block manipulation:
 
-### Planned Functions
+### Consuming markdown's blocks from duck_block_utils
 
-| Function | Description |
-|----------|-------------|
-| `duck_blocks_filter(blocks, types[])` | Keep only specified element types |
-| `duck_blocks_exclude(blocks, types[])` | Remove specified element types |
-| `duck_blocks_to_text(blocks)` | Extract plain text content |
-| `duck_blocks_toc(blocks)` | Generate table of contents |
-| `duck_blocks_validate(blocks)` | Check schema compliance |
-| `duck_blocks_stats(blocks)` | Block type statistics |
+These are no longer planned — `duck_blocks_filter`, `_exclude`, `_to_text`,
+`_toc`, `_validate` and `_stats` all ship in `duck_block_utils` today, and
+markdown's blocks feed them directly.
 
-### Example Usage (Planned)
+**This document does not reproduce their signatures.** They live in another
+repository, on its own release cadence, and a copy here goes stale silently:
+spec 6.5 reshaped four extractors so that `duck_blocks_headings`, `_links`,
+`_code_blocks` and `_toc` return **duck_blocks** rather than bespoke projection
+structs, with the previous shapes preserved as `_structs` siblings
+(`duck_blocks_toc_structs` and so on). An example pinned here would have been
+wrong the day that landed, and this one was.
+
+For the current surface, read `duck_block_utils`' own documentation — it is the
+authority, and `make check-vocabulary` in this repo verifies only the vendored
+*vocabulary constants*, not the function signatures.
 
 ```sql
 LOAD markdown;
 LOAD duck_block_utils;
 
--- Generate table of contents
-SELECT * FROM duck_blocks_toc(
+-- markdown produces blocks; duck_block_utils consumes them. Whatever the
+-- consuming function's current return shape is, this is the handoff:
+SELECT duck_blocks_to_text(
     (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('README.md') b)
-);
-
--- Get block type distribution
-SELECT * FROM duck_blocks_stats(
-    (SELECT list(b ORDER BY element_order) FROM read_markdown_blocks('docs/**/*.md') b)
 );
 ```
 
