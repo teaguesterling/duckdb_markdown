@@ -189,13 +189,17 @@ a fully green canary does not clear you of either.
 | 15 | filter pushdown reworked | compile errors — **plus silent wrong results** |
 | 16 | `CreateInfo`/`DropInfo` names → private `QualifiedName` | compile error (storage extensions only) |
 | 17 | result / prepared-statement names are `Identifier` | compile error |
-| 18 | `SetCardinality` → `SetChildCardinality` | compiles; may throw `InternalException` at run time |
+| 18 | `SetCardinality` → `SetChildCardinality` | compiles; throws at run time **if a shim calls it — silently wrong if none does** |
 | 19 | single-arrow lambdas rejected by the binder | **SQL, not C++ — no compile signal at all** |
 | 20 | `CopyInfo::options` rekeyed to `identifier_map_t` | compile error — **second form has nothing to grep** |
+| 21 | COPY option NAMES lowercased by the v2.0 parser | **compiles on both lines; only a test pinning the string catches it** |
 
-Classes 7 and 13 break at run time on a build that compiles cleanly everywhere.
-Class 11 can compile and misbehave. Class 15 can return **wrong rows** with no
-error at all, if your pushdown *is* the filter rather than an optimisation.
+Classes 7, 13 and 21 break at run time on a build that compiles cleanly
+everywhere. Class 11 can compile and misbehave. Classes 15 and 18 can return
+**wrong rows** with no error at all — 15 if your pushdown *is* the filter rather
+than an optimisation, 18 if your extension calls `SetCardinality` directly with
+no shim, where a column can print `NULL` while `IS NULL` on it returns `false`
+in the same result set.
 Class 13 additionally shows up on **one CI architecture only**, because its
 enforcement is an assertion — so "green on arm64" is not evidence of anything.
 
@@ -1031,6 +1035,51 @@ size disagrees, or if the count exceeds a flat vector's capacity, where the old
 call was silent. That fails loudly, so a canary whose Test step exercises those
 paths is real evidence.
 
+**It does not always fail loudly. A third version of this entry was needed.**
+
+The paragraph above says the validation "fails loudly, so a canary whose Test step
+exercises those paths is real evidence." That is true when `SetChildCardinality`
+is *called*. The case it does not cover is the one an extension with **no shim at
+all** lands in — a codebase that calls `SetCardinality` directly, has never
+needed a compat header for it, and finds nothing to fix because there is nothing
+to grep for. Everything above is written for adjusting a shim you already have.
+
+zim was in that position, and the failure was **silent**:
+
+| what you observe | value |
+|---|---|
+| `SELECT mimetype FROM ...` | prints `NULL` |
+| `SELECT mimetype IS NULL FROM ...` | returns **`false`** |
+
+In the same result set. No exception, no `CheckCardinality` throw, a clean
+compile and a green build.
+
+The mechanism is the one this section already documents, taken one step further.
+v2.0 gives every `Vector` its own size; `SetCardinality` no longer sets it; and
+`Vector::SetValue` writes at an index without advancing `v_size`. So the children
+sit at 0. Readers that go through the **chunk** count — the printer, scalar
+functions, aggregates — are correct, which is why casual testing passes.
+`IS NULL` / `IS NOT NULL` iterate the **vector's** size, find zero rows, write
+nothing, and the result buffer keeps its default `false`.
+
+So the audit is not only "grep for `Append`". It is also:
+
+```
+grep -rn 'SetCardinality' src/     # any direct call, with no shim in sight
+```
+
+A non-empty result in a repo with no `Compat*Cardinality` helper means this
+section applies to you and the symptom may never throw.
+
+**Write the test as an UNFILTERED scan.** zim's first regression test used
+`WHERE is_redirect` and **passed with the bug still present**: a pushed-down
+filter routes through `SelectFilteredRows`, whose `Reference`/`Slice` sizes the
+vectors correctly on the way out. The guard guarded nothing. Verified by
+rebuilding DuckDB main with the fix reverted and measuring both forms — the
+filtered query passed, the unfiltered one reported *"Mismatch on row 3, column
+(mimetype IS NULL)"*. Assert the value path and the validity path in the same
+row, on a scan with no `WHERE`.
+
 ### 19. Single-arrow lambdas are a binder ERROR — and it is not C++ at all
 
 The only class here that lives in **SQL**, not in your source. No shim can reach
@@ -1628,3 +1677,30 @@ source bug. Gate on `MemAvailable` and drop to `-j2`.
 And one thing the canary cannot tell you: change 7 fails at **run time** with a
 green build. If your extension has functions taking `name := value` arguments,
 add a test that passes one, or you will ship a break that CI never saw.
+
+### 21. COPY option NAMES are lowercased by the v2.0 parser
+
+Section 20 covers `CopyInfo::options` being rekeyed from
+`case_insensitive_map_t` to `identifier_map_t` — a type change the compiler
+finds for you. The casing change beside it is not a type change and the compiler
+says nothing.
+
+v2.0 parses COPY options through a PEG grammar, and `BuildGenericCopyOption`
+**lowercases the option name** before it reaches your bind. On the pinned line
+the name arrived as the user typed it.
+
+The symptom is a test that asserts on an error message:
+
+```
+v1.5:  unknown option 'FLUGELHORN'
+v2.0:  unknown option 'flugelhorn'
+```
+
+Anything that round-trips an unrecognised option name into a message, or
+compares an option key against a mixed-case literal, changes behaviour here. It
+compiles clean on both lines and only a test that pins the exact string will
+catch it.
+
+If your extension echoes option names back to the user, decide deliberately
+whether to normalise on both lines rather than letting the two versions disagree.
+
