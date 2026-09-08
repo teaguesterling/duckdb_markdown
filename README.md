@@ -246,6 +246,19 @@ Available tokens: `wikilinks`, `tags`, and the `obsidian` flavor (= both). Unkno
 
 ### Frontmatter Handling
 
+**Where the block starts and stops.** The opening fence must be a line containing exactly
+`---` (YAML) or `+++` (Hugo's TOML), trailing spaces or tabs allowed, as the very first line
+of the document; a leading UTF-8 BOM is skipped. A line that merely *starts* with three
+delimiter characters — `----`, `---foo` — is not a fence at either end, so a document opening
+with a thematic break is read as having no frontmatter rather than swallowing the text after
+it, and a `----` rule further down does not close a block early and splice its surplus `-`
+into the body. A `---` block is closed by the next `---` or `...` line at column 0 (`...` is
+YAML's document-end marker: it closes, it never opens); a `+++` block only by `+++`. An
+empty block — `---` immediately followed by `---`, Jekyll's idiom — is recognised and yields
+no metadata rather than two thematic breaks. These are the same rules the `yaml` extension's
+`read_yaml_frontmatter` applies, so the two extensions agree about where a given document's
+frontmatter begins and ends.
+
 **This extension does not parse YAML.** Frontmatter — the block between the leading `---`
 delimiters — is read as **flat `key: value` pairs**: each line is split on its *first* `:`,
 both halves are whitespace-trimmed, and a pair of surrounding double quotes is stripped from

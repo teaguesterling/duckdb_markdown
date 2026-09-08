@@ -55,10 +55,67 @@ static size_t SkipBOM(const std::string &s) {
 	return 0;
 }
 
-// Faithful linear replacement for R"(^(---|\+\+\+)\r?\n([\s\S]*?)\r?\n\1)".
-// Requires the string to begin with the delimiter then \r?\n, then finds the
-// earliest following "\r?\n" + delimiter. Returns the body between them. O(n),
-// no recursion.
+// True when s[line, line_end) is a frontmatter fence line: exactly three of the
+// delimiter character, then nothing but spaces or tabs. `line_end` excludes the
+// line's own '\n' and any '\r' before it.
+//
+// BOTH ends of the block go through this one predicate, which is the point. They
+// used to be written separately and disagreed in both directions (#21):
+//
+//   The CLOSE was a three-character prefix compare on the bytes after a '\n',
+//   with nothing checked after it, so any line merely BEGINNING with the fence
+//   closed the block. `----` -- a four-dash rule, or the setext underline that
+//   makes the line above it an <h2> -- closed a `---` block, and because the
+//   scan then resumed three bytes in, the surplus '-' was spliced onto the front
+//   of the body, where cmark read it as a list bullet and manufactured an empty
+//   list and list_item out of nothing.
+//
+//   The OPEN demanded a bare fence and rejected a trailing space, which Jekyll
+//   (`\A---\s*\n`), gray-matter and python-frontmatter all accept. An invisible
+//   space after the opening `---` therefore turned the whole block into body
+//   content: `--- \ntitle: x\n---` came back as a thematic break followed by a
+//   setext heading whose text is "title: x". The metadata was not merely
+//   unparsed, it was silently reclassified as prose.
+//
+// Exactly three is deliberate, and follows Jekyll, whose
+// `\A(---\s*\n.*?\n?)^((---|\.\.\.)\s*$\n?)`m rejects a four-dash line at BOTH
+// ends. The other readers were MEASURED rather than assumed (2026-09-07) and
+// they do not agree with each other, so "what everyone does" was not available
+// as a rule: gray-matter rejects `----` at the open with an explicit guard but
+// closes on a bare `str.indexOf('\n---')`, so there `----` DOES close a block
+// and leaves the surplus '-' at the head of the content -- precisely the bug
+// fixed here. python-frontmatter's boundary is `^-{3,}\s*$`, which takes `----`
+// at both ends. Strict-three is the only one of the three that cannot silently
+// mangle a body, and it is what duckdb_yaml's read_yaml_frontmatter enforces,
+// so the two extensions answer the same about the same file.
+static bool IsFenceRun(const std::string &s, size_t line, size_t line_end, char d) {
+	if (line_end - line < 3 || s[line] != d || s[line + 1] != d || s[line + 2] != d) {
+		return false;
+	}
+	size_t q = line + 3;
+	while (q < line_end && (s[q] == ' ' || s[q] == '\t')) {
+		q++;
+	}
+	return q == line_end;
+}
+
+// `...` is YAML's document-END marker. Jekyll closes a `---` block on it
+// (`(---|\.\.\.)` above) and so does duckdb_yaml's ExtractFrontmatter, which
+// has accepted it all along. This reader did not, so a file closed that way was
+// frontmatter to one extension and prose to the other -- and the README points
+// users at both over the same file (`read_yaml_frontmatter`, and
+// `yaml(md_extract_frontmatter(content))` for the in-process seam). It never
+// OPENS a block, and it has no meaning in a `+++` TOML block, hence the flag
+// and the `d == '-'` guard.
+static bool IsFrontmatterFenceLine(const std::string &s, size_t line, size_t line_end, char d,
+                                   bool allow_document_end) {
+	return IsFenceRun(s, line, line_end, d) || (allow_document_end && d == '-' && IsFenceRun(s, line, line_end, '.'));
+}
+
+// Linear replacement for R"(^(---|\+\+\+)[ \t]*\r?\n([\s\S]*?)\r?\n?(\1|\.\.\.)[ \t]*$)",
+// with the `...` alternative live only for the `---` dialect. Requires the
+// document to open with a fence line, then finds the earliest following fence
+// line. Returns the body between them. O(n), no recursion.
 //
 // `+++` is TOML frontmatter, which Hugo emits by default. It was not recognised
 // until 2026-09-01, and the failure was not a missing feature -- it was silent
@@ -70,36 +127,67 @@ static size_t SkipBOM(const std::string &s) {
 static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
 	FrontmatterMatch m;
 	m.delimiter = d;
-	// Opening delimiter: an optional BOM, then the fence then \r?\n
-	const size_t b = SkipBOM(s);
-	if (s.size() < b + 4 || s[b] != d || s[b + 1] != d || s[b + 2] != d) {
-		return m;
-	}
-	size_t p = b + 3;
-	if (p < s.size() && s[p] == '\r') {
-		p++;
-	}
-	if (p >= s.size() || s[p] != '\n') {
-		return m;
-	}
-	p++; // start of body
-	size_t body_start = p;
 
-	// Closing delimiter: earliest '\n' immediately followed by the same fence.
-	while (p < s.size()) {
-		if (s[p] == '\n' && p + 4 <= s.size() && s[p + 1] == d && s[p + 2] == d && s[p + 3] == d) {
-			size_t body_end = p; // at the '\n'
-			// The delimiter is \r?\n, so drop a trailing '\r' from the body.
-			if (body_end > body_start && s[body_end - 1] == '\r') {
-				body_end--;
+	// Opening fence: an optional BOM, then a line that is exactly the fence.
+	const size_t b = SkipBOM(s);
+	const size_t open_eol = s.find('\n', b);
+	if (open_eol == std::string::npos) {
+		return m; // a single unterminated line cannot open a block
+	}
+	size_t open_end = open_eol;
+	if (open_end > b && s[open_end - 1] == '\r') {
+		open_end--;
+	}
+	if (!IsFrontmatterFenceLine(s, b, open_end, d, /*allow_document_end=*/false)) {
+		return m;
+	}
+	const size_t body_start = open_eol + 1;
+
+	// Closing fence: the first following line that is exactly the fence. The scan
+	// steps line by line from body_start, so the FIRST body line is itself a
+	// candidate -- and that is what makes an EMPTY block match.
+	//
+	// The previous scan looked for a '\n' immediately followed by the fence,
+	// starting at body_start. For `---\n---` the '\n' that precedes the closing
+	// fence IS the one that terminated the OPENING fence, one byte before
+	// body_start, so it was never examined and the block was reported as absent.
+	// Jekyll requires exactly that block at the head of a file for the file to be
+	// processed at all, and Hugo's `+++\n+++` has the same shape. Reported absent,
+	// both fences fell through to cmark: `---\n---` became two thematic breaks and
+	// `+++\n+++` became a paragraph of literal plus signs, so the fences leaked
+	// into the document body and no metadata block was ever emitted (#21).
+	size_t line = body_start;
+	while (line <= s.size()) {
+		const size_t eol = s.find('\n', line);
+		const size_t line_end = (eol == std::string::npos) ? s.size() : eol;
+		size_t content_end = line_end;
+		if (content_end > line && s[content_end - 1] == '\r') {
+			content_end--;
+		}
+		if (IsFrontmatterFenceLine(s, line, content_end, d, /*allow_document_end=*/true)) {
+			// The body ends before the newline separating it from this fence line.
+			// When the fence IS the first body line the body is empty, and the two
+			// offsets coincide -- do not step back past body_start.
+			size_t body_end = line;
+			if (body_end > body_start) {
+				body_end--; // the '\n' that ended the last body line
+				if (body_end > body_start && s[body_end - 1] == '\r') {
+					body_end--;
+				}
 			}
 			m.found = true;
 			m.body_start = body_start;
 			m.body_len = body_end - body_start;
-			m.after_close = p + 4; // just past the closing fence
+			// Past the whole closing fence LINE, trailing whitespace included, so a
+			// fence written `--- ` does not leave that space behind as the body's
+			// first line.
+			m.after_close = line_end;
 			return m;
 		}
-		p++;
+		if (eol == std::string::npos) {
+			break;
+		}
+		line = eol + 1;
 	}
 	return m;
 }

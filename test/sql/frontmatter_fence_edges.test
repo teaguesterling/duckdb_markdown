@@ -1,0 +1,287 @@
+# name: test/sql/frontmatter_fence_edges.test
+# description: frontmatter fence lines are matched the same way at both ends (#21)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# The opening and closing frontmatter fences used to be recognised by two
+# separately written pieces of code, and they disagreed in both directions.
+# Every failure below is a silently wrong document body, never an error.
+#
+#   1. An EMPTY block was never found. The close was located by scanning from
+#      the first byte of the BODY for a '\n' followed by the fence -- but for
+#      `---\n---` the '\n' before the closing fence is the one that terminated
+#      the OPENING fence, one byte earlier, so it was never examined. Jekyll
+#      requires exactly this block at the head of a file for the file to be
+#      processed at all. Reported absent, both fences fell through to cmark:
+#      `---\n---` became two thematic breaks and Hugo's `+++\n+++` became a
+#      paragraph of literal plus signs.
+#
+#   2. The close was a three-character PREFIX compare, so `----` -- a four-dash
+#      rule, or a setext underline -- closed a `---` block, and the scan resumed
+#      three bytes in, splicing the surplus '-' onto the front of the body where
+#      cmark read it as a bullet and manufactured an empty list out of nothing.
+#
+#   3. The open rejected a trailing space that Jekyll (`\A---\s*\n`),
+#      gray-matter and python-frontmatter all accept, so one invisible character
+#      reclassified the entire block as prose: `--- \ntitle: x\n---` came back
+#      as a thematic break plus a setext heading reading "title: x".
+#
+# Both ends now go through one IsFrontmatterFenceLine predicate: exactly three
+# delimiter characters, then nothing but spaces or tabs. Section 6 adds the one
+# asymmetry that is real -- `...`, YAML's document-END marker, closes a `---`
+# block but never opens one -- and it exists so that this reader and
+# duckdb_yaml's read_yaml_frontmatter give the same answer about the same file.
+# =============================================================================
+
+# =============================================================================
+# 1. The empty block
+# =============================================================================
+
+statement ok
+COPY (SELECT E'---\n---\n# Body\n') TO '__TEST_DIR__/fm_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Was: hr, hr, heading -- two thematic breaks conjured from the fences.
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_empty.md') ORDER BY element_order;
+----
+heading	Body
+
+statement ok
+COPY (SELECT E'+++\n+++\n# Body\n') TO '__TEST_DIR__/fm_empty_toml.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Was: a paragraph whose inline text was "+++", "", "+++" -- Hugo's empty block
+# rendered as literal prose.
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_empty_toml.md') ORDER BY element_order;
+----
+heading	Body
+
+statement ok
+COPY (SELECT E'---\r\n---\r\n# Body\r\n') TO '__TEST_DIR__/fm_empty_crlf.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Same block under CRLF line endings.
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_empty_crlf.md') ORDER BY element_order;
+----
+heading	Body
+
+# An empty block and nothing else is an empty document, not two rules.
+statement ok
+COPY (SELECT E'---\n---\n') TO '__TEST_DIR__/fm_empty_only.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query I
+SELECT count(*) FROM read_markdown_blocks('__TEST_DIR__/fm_empty_only.md');
+----
+0
+
+# md_extract_metadata over an empty block is an empty map either way, but it
+# must not report the fences as content.
+query I
+SELECT cardinality(md_extract_metadata(E'---\n---\n# Body'));
+----
+0
+
+# =============================================================================
+# 2. The closing fence must be the whole line
+# =============================================================================
+
+statement ok
+COPY (SELECT E'---\ntitle: x\n----\n# Body\n') TO '__TEST_DIR__/fm_fourdash.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# `----` does not close a `---` block, so this block is unterminated and there is
+# no frontmatter -- `title: x` and its underline are a setext heading, which is
+# what cmark and Jekyll both make of it.
+#
+# Was: metadata "title: x", then an empty `list` and `list_item` built out of the
+# surplus '-' that the prefix match left behind, then the heading.
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_fourdash.md') ORDER BY element_order;
+----
+hr	NULL
+heading	title: x
+heading	Body
+
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n----\n# Body') IS NULL;
+----
+true
+
+# A fence followed by text is not a fence.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n--- nope\n# Body') IS NULL;
+----
+true
+
+# Trailing whitespace after the closing fence is accepted, and does not survive
+# into the body as a stray blank first line.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n--- \n# Body') = 'title: x';
+----
+true
+
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n---\t\n# Body') = 'title: x';
+----
+true
+
+statement ok
+COPY (SELECT E'---\ntitle: x\n--- \n# Body\n') TO '__TEST_DIR__/fm_close_ws.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_close_ws.md') ORDER BY element_order;
+----
+metadata	title: x
+heading	Body
+
+# =============================================================================
+# 3. The opening fence tolerates trailing whitespace
+# =============================================================================
+
+statement ok
+COPY (SELECT E'--- \ntitle: x\n---\n# Body\n') TO '__TEST_DIR__/fm_open_ws.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# Was: hr, heading "title: x", heading "Body" -- the metadata silently became a
+# setext heading in the body.
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_open_ws.md') ORDER BY element_order;
+----
+metadata	title: x
+heading	Body
+
+query I
+SELECT md_extract_metadata(E'--- \ntitle: x\n---\n# Body')['title'];
+----
+x
+
+# =============================================================================
+# 4. What must NOT become frontmatter
+# =============================================================================
+
+statement ok
+COPY (SELECT E'----\nintro text\n---\nafter\n') TO '__TEST_DIR__/fm_loose_open.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+# A document that merely OPENS with a four-dash rule is not a frontmatter block.
+# Accepting it would swallow everything up to the next `---` as unparsed
+# metadata and silently truncate the document to whatever followed.
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_loose_open.md') ORDER BY element_order;
+----
+hr	NULL
+heading	intro text
+paragraph	after
+
+query I
+SELECT md_extract_frontmatter(E'---foo\nbar\n---\nBody') IS NULL;
+----
+true
+
+# A `---` that is not at the head of the document is a thematic break.
+query I
+SELECT md_extract_frontmatter(E'Body\n---\nmore') IS NULL;
+----
+true
+
+# An unterminated opening fence yields no frontmatter.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n') IS NULL;
+----
+true
+
+# =============================================================================
+# 5. Unchanged behaviour
+# =============================================================================
+
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n---\n# Body') = 'title: x';
+----
+true
+
+query I
+SELECT md_extract_frontmatter(E'---\na: 1\nb: 2\n---\nBody') = E'a: 1\nb: 2';
+----
+true
+
+# A leading BOM does not defeat the opening fence (already true; guard it).
+query I
+SELECT md_extract_frontmatter(chr(65279) || E'---\ntitle: x\n---\nBody') = 'title: x';
+----
+true
+
+# An indented `---` inside a block scalar is not a fence line, so it does not
+# truncate the block early.
+query I
+SELECT md_extract_frontmatter(E'---\ns: |\n  ---\nt: 2\n---\nBody') = E's: |\n  ---\nt: 2';
+----
+true
+
+# =============================================================================
+# 6. `...` closes a `---` block
+#
+# `...` is YAML's document-END marker. Jekyll closes on it -- its regexp is
+# `^((---|\.\.\.)\s*$\n?)` -- and so does duckdb_yaml's read_yaml_frontmatter,
+# which has accepted it since before this reader existed. This reader did not,
+# so the same file was frontmatter to one extension and prose to the other,
+# while the README sends users to BOTH over the same file (read_yaml_frontmatter
+# for real YAML, `yaml(md_extract_frontmatter(content))` for the in-process
+# seam). Neither reader raised; they just disagreed.
+#
+# Was: NULL from md_extract_frontmatter, and the fences plus the metadata
+# rendered into the body as an hr and a setext heading.
+# =============================================================================
+
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n...\n# Body') = 'title: x';
+----
+true
+
+statement ok
+COPY (SELECT E'---\ntitle: x\n...\n# Body\n') TO '__TEST_DIR__/fm_dots.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_dots.md') ORDER BY element_order;
+----
+metadata	title: x
+heading	Body
+
+# Still the YAML dialect: `...` is a YAML marker, not a third fence style, so
+# the block must not be relabelled.
+query I
+SELECT encoding FROM read_markdown_blocks('__TEST_DIR__/fm_dots.md') WHERE element_type = 'metadata';
+----
+yaml
+
+# Trailing whitespace after `...` is accepted, exactly as after `---`.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n... \n# Body') = 'title: x';
+----
+true
+
+# Four dots is a rule, not a fence, the same way four dashes is.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n....\n# Body') IS NULL;
+----
+true
+
+# `...` is a document END marker: it never OPENS a block.
+query I
+SELECT md_extract_frontmatter(E'...\ntitle: x\n---\n# Body') IS NULL;
+----
+true
+
+# It has no meaning inside a `+++` TOML block either -- only `+++` closes `+++`,
+# so the `...` line stays in the block where Hugo would leave it.
+query I
+SELECT md_extract_frontmatter(E'+++\ntitle = "x"\n...\n+++\nBody') = E'title = "x"\n...';
+----
+true
+
+# An empty block closed with `...` is still an empty block, not two rules.
+statement ok
+COPY (SELECT E'---\n...\n# Body\n') TO '__TEST_DIR__/fm_dots_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_dots_empty.md') ORDER BY element_order;
+----
+heading	Body
