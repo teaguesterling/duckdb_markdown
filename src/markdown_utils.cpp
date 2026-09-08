@@ -77,9 +77,18 @@ static size_t SkipBOM(const std::string &s) {
 //   setext heading whose text is "title: x". The metadata was not merely
 //   unparsed, it was silently reclassified as prose.
 //
-// Exactly three is deliberate, and matches Jekyll and gray-matter: `----` is a
-// rule, not a fence, at either end.
-static bool IsFrontmatterFenceLine(const std::string &s, size_t line, size_t line_end, char d) {
+// Exactly three is deliberate, and follows Jekyll, whose
+// `\A(---\s*\n.*?\n?)^((---|\.\.\.)\s*$\n?)`m rejects a four-dash line at BOTH
+// ends. The other readers were MEASURED rather than assumed (2026-09-07) and
+// they do not agree with each other, so "what everyone does" was not available
+// as a rule: gray-matter rejects `----` at the open with an explicit guard but
+// closes on a bare `str.indexOf('\n---')`, so there `----` DOES close a block
+// and leaves the surplus '-' at the head of the content -- precisely the bug
+// fixed here. python-frontmatter's boundary is `^-{3,}\s*$`, which takes `----`
+// at both ends. Strict-three is the only one of the three that cannot silently
+// mangle a body, and it is what duckdb_yaml's read_yaml_frontmatter enforces,
+// so the two extensions answer the same about the same file.
+static bool IsFenceRun(const std::string &s, size_t line, size_t line_end, char d) {
 	if (line_end - line < 3 || s[line] != d || s[line + 1] != d || s[line + 2] != d) {
 		return false;
 	}
@@ -90,9 +99,23 @@ static bool IsFrontmatterFenceLine(const std::string &s, size_t line, size_t lin
 	return q == line_end;
 }
 
-// Linear replacement for R"(^(---|\+\+\+)[ \t]*\r?\n([\s\S]*?)\r?\n?\1[ \t]*$)".
-// Requires the document to open with a fence line, then finds the earliest
-// following fence line. Returns the body between them. O(n), no recursion.
+// `...` is YAML's document-END marker. Jekyll closes a `---` block on it
+// (`(---|\.\.\.)` above) and so does duckdb_yaml's ExtractFrontmatter, which
+// has accepted it all along. This reader did not, so a file closed that way was
+// frontmatter to one extension and prose to the other -- and the README points
+// users at both over the same file (`read_yaml_frontmatter`, and
+// `yaml(md_extract_frontmatter(content))` for the in-process seam). It never
+// OPENS a block, and it has no meaning in a `+++` TOML block, hence the flag
+// and the `d == '-'` guard.
+static bool IsFrontmatterFenceLine(const std::string &s, size_t line, size_t line_end, char d,
+                                   bool allow_document_end) {
+	return IsFenceRun(s, line, line_end, d) || (allow_document_end && d == '-' && IsFenceRun(s, line, line_end, '.'));
+}
+
+// Linear replacement for R"(^(---|\+\+\+)[ \t]*\r?\n([\s\S]*?)\r?\n?(\1|\.\.\.)[ \t]*$)",
+// with the `...` alternative live only for the `---` dialect. Requires the
+// document to open with a fence line, then finds the earliest following fence
+// line. Returns the body between them. O(n), no recursion.
 //
 // `+++` is TOML frontmatter, which Hugo emits by default. It was not recognised
 // until 2026-09-01, and the failure was not a missing feature -- it was silent
@@ -115,7 +138,7 @@ static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
 	if (open_end > b && s[open_end - 1] == '\r') {
 		open_end--;
 	}
-	if (!IsFrontmatterFenceLine(s, b, open_end, d)) {
+	if (!IsFrontmatterFenceLine(s, b, open_end, d, /*allow_document_end=*/false)) {
 		return m;
 	}
 	const size_t body_start = open_eol + 1;
@@ -141,7 +164,7 @@ static FrontmatterMatch FindFrontmatterDelimited(const std::string &s, char d) {
 		if (content_end > line && s[content_end - 1] == '\r') {
 			content_end--;
 		}
-		if (IsFrontmatterFenceLine(s, line, content_end, d)) {
+		if (IsFrontmatterFenceLine(s, line, content_end, d, /*allow_document_end=*/true)) {
 			// The body ends before the newline separating it from this fence line.
 			// When the fence IS the first body line the body is empty, and the two
 			// offsets coincide -- do not step back past body_start.

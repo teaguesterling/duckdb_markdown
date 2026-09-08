@@ -29,7 +29,10 @@ require markdown
 #      as a thematic break plus a setext heading reading "title: x".
 #
 # Both ends now go through one IsFrontmatterFenceLine predicate: exactly three
-# delimiter characters, then nothing but spaces or tabs.
+# delimiter characters, then nothing but spaces or tabs. Section 6 adds the one
+# asymmetry that is real -- `...`, YAML's document-END marker, closes a `---`
+# block but never opens one -- and it exists so that this reader and
+# duckdb_yaml's read_yaml_frontmatter give the same answer about the same file.
 # =============================================================================
 
 # =============================================================================
@@ -212,3 +215,73 @@ query I
 SELECT md_extract_frontmatter(E'---\ns: |\n  ---\nt: 2\n---\nBody') = E's: |\n  ---\nt: 2';
 ----
 true
+
+# =============================================================================
+# 6. `...` closes a `---` block
+#
+# `...` is YAML's document-END marker. Jekyll closes on it -- its regexp is
+# `^((---|\.\.\.)\s*$\n?)` -- and so does duckdb_yaml's read_yaml_frontmatter,
+# which has accepted it since before this reader existed. This reader did not,
+# so the same file was frontmatter to one extension and prose to the other,
+# while the README sends users to BOTH over the same file (read_yaml_frontmatter
+# for real YAML, `yaml(md_extract_frontmatter(content))` for the in-process
+# seam). Neither reader raised; they just disagreed.
+#
+# Was: NULL from md_extract_frontmatter, and the fences plus the metadata
+# rendered into the body as an hr and a setext heading.
+# =============================================================================
+
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n...\n# Body') = 'title: x';
+----
+true
+
+statement ok
+COPY (SELECT E'---\ntitle: x\n...\n# Body\n') TO '__TEST_DIR__/fm_dots.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_dots.md') ORDER BY element_order;
+----
+metadata	title: x
+heading	Body
+
+# Still the YAML dialect: `...` is a YAML marker, not a third fence style, so
+# the block must not be relabelled.
+query I
+SELECT encoding FROM read_markdown_blocks('__TEST_DIR__/fm_dots.md') WHERE element_type = 'metadata';
+----
+yaml
+
+# Trailing whitespace after `...` is accepted, exactly as after `---`.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n... \n# Body') = 'title: x';
+----
+true
+
+# Four dots is a rule, not a fence, the same way four dashes is.
+query I
+SELECT md_extract_frontmatter(E'---\ntitle: x\n....\n# Body') IS NULL;
+----
+true
+
+# `...` is a document END marker: it never OPENS a block.
+query I
+SELECT md_extract_frontmatter(E'...\ntitle: x\n---\n# Body') IS NULL;
+----
+true
+
+# It has no meaning inside a `+++` TOML block either -- only `+++` closes `+++`,
+# so the `...` line stays in the block where Hugo would leave it.
+query I
+SELECT md_extract_frontmatter(E'+++\ntitle = "x"\n...\n+++\nBody') = E'title = "x"\n...';
+----
+true
+
+# An empty block closed with `...` is still an empty block, not two rules.
+statement ok
+COPY (SELECT E'---\n...\n# Body\n') TO '__TEST_DIR__/fm_dots_empty.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query II
+SELECT element_type, content FROM read_markdown_blocks('__TEST_DIR__/fm_dots_empty.md') ORDER BY element_order;
+----
+heading	Body
