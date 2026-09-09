@@ -1,0 +1,332 @@
+# name: test/sql/frontmatter_md_to_text.test
+# description: md_to_text and md_to_html strip leading frontmatter instead of rendering it (#56)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# md_to_text fed the raw document straight to cmark. cmark has never heard of
+# frontmatter, so it read the block as CommonMark: the opening `---` became a
+# thematic break, the keys became a paragraph, and the closing `---` underlined
+# that paragraph into a setext heading. Rendered to plain text the fences
+# vanish and the KEYS SURVIVE, so
+#
+#     ---
+#     title: T
+#     viewport: "width=device-width"
+#     ---
+#
+#     Body text.
+#
+# came back as `title: T viewport: "width=device-width"` followed by the body.
+# Nothing errored; the metadata simply reappeared as prose.
+#
+# It matters because it reintroduces metadata into extracted text through a
+# chain in which every individual step is correct:
+#
+#   html_to_duck_blocks  -> emits kind='value' metadata, correctly separated
+#   duck_blocks_to_md    -> correctly serialises kind='value' as frontmatter
+#   md_to_text           -> reads the frontmatter back as body prose   <- leak
+#
+# duck_blocks_to_sections already drops kind='value' (8a63a45, v1.7.1), so
+# `blocks -> sections -> text` was clean while `blocks -> md -> text` was not:
+# two routes that look equivalent gave different text. For an embedding
+# workload the cost is the SHAPE of the noise, not its size -- the injected
+# string is byte-identical across every document sharing a frontmatter key, so
+# it contributes the same component to every affected vector.
+#
+# Both renderers now call StripFrontmatter, which is the same FindFrontmatter
+# scanner that ExtractMetadata, ExtractRawFrontmatter, read_markdown and
+# markdown sections already use. That is the point: the fix is not a new
+# opinion about what frontmatter is, it is md_to_text finally sharing the one
+# the rest of the extension already holds. Section 4 pins that agreement.
+#
+# Results are flattened -- trim, then newline runs to " | " -- because these
+# assertions are about which TEXT survives, not about blank-line layout.
+# =============================================================================
+
+# =============================================================================
+# 1. The leak itself
+# =============================================================================
+
+# Was: title: T | viewport: "width=device-width" | Body text.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\ntitle: T\nviewport: "width=device-width"\n---\n\nBody text.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body text.
+
+# The full chain from the issue: parse -> md -> text. This is the route a
+# caller reaching for md_to_text on rendered markdown actually takes.
+query I
+SELECT regexp_replace(trim(md_to_text(duck_blocks_to_md(parse_markdown_to_duck_blocks(E'---\ntitle: T\nviewport: "width=device-width"\n---\n\nBody text.\n'))), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body text.
+
+# TOML leaked with a different shape: `+++` is not CommonMark punctuation, so
+# the whole block -- fences included -- came through as one literal paragraph.
+# Was: +++ | title = "T" | +++ | Body text.
+query I
+SELECT regexp_replace(trim(md_to_text(E'+++\ntitle = "T"\n+++\n\nBody text.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body text.
+
+# `...` is YAML's document-end marker and closes a `---` block (#55, section 6).
+# Was: title: T | ... | Body.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\ntitle: T\n...\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body.
+
+# The empty Jekyll block. This one already read correctly -- both fences are
+# thematic breaks and thematic breaks render as nothing -- so it is a guard,
+# not a repro: stripping must not eat the body along with the block.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\n---\n# Body\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body
+
+# =============================================================================
+# 2. The negative half: content that LOOKS like frontmatter must be KEPT
+#
+# Asserting only that frontmatter is dropped would pass just as well for a
+# renderer that drops any leading `---` and everything after it. Each case
+# below is a document that opens with, or contains, fence-shaped bytes that
+# are NOT a LEADING frontmatter block, and whose text must survive untouched.
+#
+# "Leading" is doing real work in that sentence and the qualifier is not
+# decoration. A document that DOES open with a well-formed block loses that
+# block even when its content renders as something a reader would want --
+# including a heading. Section 4 owns that case explicitly rather than
+# leaving this header to imply it cannot happen.
+# =============================================================================
+
+# A leading thematic break with no closing fence anywhere. FindFrontmatter
+# reports no block, so the prose is body and stays body.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\n\nJust a rule and then prose.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Just a rule and then prose.
+
+# md_extract_frontmatter must agree that there is nothing here to extract.
+query I
+SELECT md_extract_frontmatter(E'---\n\nJust a rule and then prose.\n') IS NULL;
+----
+true
+
+# A code fence at byte 0 whose CONTENT is a perfectly well-formed frontmatter
+# block. The document does not open with a fence line, so nothing is stripped
+# and the code block renders in full, delimiters included.
+query I
+SELECT regexp_replace(trim(md_to_text(E'```\n---\ntitle: not frontmatter\n---\n```\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+--- | title: not frontmatter | --- | Body.
+
+# A setext heading. The `---` underlines "Title"; it is not an opening fence
+# because it is not the first line.
+query I
+SELECT regexp_replace(trim(md_to_text(E'Title\n---\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Title | Body.
+
+# Fence-shaped lines in the middle of a document, including a line that reads
+# exactly like a frontmatter key. Frontmatter is a LEADING construct only.
+query I
+SELECT regexp_replace(trim(md_to_text(E'Intro.\n\n---\n\ntitle: T\n\nOutro.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Intro. | title: T | Outro.
+
+# A four-dash rule does not open a block (#55, section 2): the fence predicate
+# is exactly three delimiter characters then nothing but spaces or tabs.
+query I
+SELECT regexp_replace(trim(md_to_text(E'----\ntitle: T\n----\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+title: T | Body.
+
+# An INDENTED fence opens nothing. CommonMark allows a thematic break up to
+# three spaces in, but frontmatter is a column-0 construct everywhere it is
+# implemented -- Jekyll, Hugo and gray-matter all require byte 0 -- so the
+# scanner requires it too. The metadata therefore still renders as prose here.
+# Pinned deliberately: this is the one shape where the leak survives on
+# purpose, and it should not be "fixed" without deciding that question first.
+query I
+SELECT regexp_replace(trim(md_to_text(E'   ---\ntitle: T\n   ---\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+title: T | Body.
+
+# MISMATCHED fences: `+++` opened, `---` closed. The `-` pass rejects the
+# `+++` opener and the `+` pass never accepts `---` as a close, so this is not
+# a block in either dialect -- which is also Hugo's answer. It leaks as prose,
+# and that is correct. Pinned so nobody later relaxes the scanner into
+# cross-dialect matching by accident.
+query I
+SELECT regexp_replace(trim(md_to_text(E'+++\ntitle = "T"\n---\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
++++ title = "T" | Body.
+
+# =============================================================================
+# 2b. Fence shapes that DO strip
+#
+# The mirror of 2: byte-level variations that are still well-formed blocks and
+# must be recognised as such. Every "was" below was measured before the fix.
+# =============================================================================
+
+# CRLF throughout. Was: title: T | Body.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\r\ntitle: T\r\n---\r\n\r\nBody.\r\n'), E' \r\n\t'), E'[\r\n]+', ' | ', 'g');
+----
+Body.
+
+# A BOM before the opening fence. Was: title: T | Body.
+query I
+SELECT regexp_replace(trim(md_to_text(chr(65279) || E'---\ntitle: T\n---\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body.
+
+# A fence terminated by a tab (#55: three delimiters then spaces or tabs).
+# Was: title: T | Body.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\t\ntitle: T\n---\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body.
+
+# A document that is nothing but a block, with no trailing newline at EOF.
+# Was: title: T -- the whole document was its own metadata, rendered.
+query I
+SELECT md_to_text(E'---\ntitle: T\n---') = '';
+----
+true
+
+# A document that is nothing but an empty block. Unchanged: both fences were
+# already thematic breaks, which render as nothing.
+query I
+SELECT md_to_text(E'---\n---\n') = '';
+----
+true
+
+# =============================================================================
+# 3. md_to_html had the same defect with a worse consequence
+#
+# In HTML the fences do not vanish -- they render. The block came out as
+# `<hr />` plus an `<h2>` holding the metadata, so the leak was not merely
+# text: it FABRICATED A HEADING out of document metadata, and that heading is
+# structure. Fed back through html_to_duck_blocks it returns as a heading
+# block, promoting kind='value' metadata into kind='block' content. No
+# mainstream renderer does this -- Jekyll and Hugo consume the block, GitHub
+# renders it as a table -- and no test asserted the old shape.
+# =============================================================================
+
+# Was: <hr /> | <h2>title: T | viewport: &quot;width=device-width&quot;</h2> | <p>Body text.</p>
+query I
+SELECT regexp_replace(trim(md_to_html(E'---\ntitle: T\nviewport: "width=device-width"\n---\n\nBody text.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+<p>Body text.</p>
+
+query I
+SELECT regexp_replace(trim(md_to_html(E'+++\ntitle = "T"\n+++\n\nBody text.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+<p>Body text.</p>
+
+# The negative half again: a leading rule with no closing fence is still an
+# `<hr />` and the prose is still a paragraph.
+query I
+SELECT regexp_replace(trim(md_to_html(E'---\n\nJust a rule and then prose.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+<hr /> | <p>Just a rule and then prose.</p>
+
+# A setext heading stays a heading.
+query I
+SELECT regexp_replace(trim(md_to_html(E'Title\n---\n\nBody.\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+<h2>Title</h2> | <p>Body.</p>
+
+# =============================================================================
+# 4. The ambiguous document, and why it is settled by agreement
+#
+#     ---
+#
+#     Prose between two rules.
+#
+#     ---
+#
+#     After.
+#
+# Read as CommonMark this is a rule, a paragraph and a rule. Read as Jekyll --
+# `---` on line 1, everything to the next `---` is YAML -- the paragraph is
+# frontmatter. The extension has already chosen: md_extract_frontmatter
+# returns "Prose between two rules." for this document, and read_markdown and
+# sections drop it, because all of them go through FindFrontmatter.
+#
+# So md_to_text stripping it is not new content loss; it is md_to_text
+# stopping being the one function that disagreed.
+#
+# The three assertions below pin that shared verdict DELIBERATELY. They do not
+# "move with" the scanner -- if FindFrontmatter ever changes its mind here,
+# they fail, loudly, which is the point: a silent re-split between md_to_text
+# and the rest of the extension is exactly the bug this file exists to prevent,
+# and it should cost someone a red test to reintroduce.
+#
+# They are three separate queries rather than one conjunction so that a failure
+# says WHICH claim broke -- the scanner's verdict, the strip, or the survival
+# of the body -- instead of only `expected true, got false`.
+# =============================================================================
+
+# The extension's existing verdict: this document HAS frontmatter.
+query I
+SELECT md_extract_frontmatter(E'---\n\nProse between two rules.\n\n---\n\nAfter.\n') IS NOT NULL;
+----
+true
+
+# md_to_text now honours that verdict.
+query I
+SELECT md_to_text(E'---\n\nProse between two rules.\n\n---\n\nAfter.\n') NOT LIKE '%Prose between two rules%';
+----
+true
+
+# ...without over-stripping: the body after the block survives.
+query I
+SELECT md_to_text(E'---\n\nProse between two rules.\n\n---\n\nAfter.\n') LIKE '%After.%';
+----
+true
+
+# The sharpest form of the same shape, and the reason section 2's header says
+# "leading". Here the block's content is a single word, so CommonMark renders
+# it as a thematic break plus a setext H2 -- a real heading, which the fix now
+# deletes.
+#
+#   was: Title | Body
+#   now: Body
+#
+# This is the same argument the fix makes against md_to_html FABRICATING an
+# <h2> from metadata, run in reverse: the <h2> here is fabricated too, by the
+# same coincidence of punctuation. md_extract_frontmatter returns "Title" for
+# this document and read_markdown drops it, so md_to_text agreeing is
+# consistency -- but a heading disappearing is a big enough consequence that it
+# is written down rather than left to be discovered.
+query I
+SELECT regexp_replace(trim(md_to_text(E'---\nTitle\n---\n\nBody\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Body
+
+query I
+SELECT md_extract_frontmatter(E'---\nTitle\n---\n\nBody\n');
+----
+Title
+
+# =============================================================================
+# 5. Documents with no frontmatter at all are byte-identical to before
+# =============================================================================
+
+query I
+SELECT regexp_replace(trim(md_to_text(E'# Heading\n\nA paragraph with *emphasis* and a [link](http://example.com).\n'), E' \n\t'), E'\n+', ' | ', 'g');
+----
+Heading | A paragraph with emphasis and a link.
+
+query I
+SELECT md_to_text('') = '';
+----
+true
+
+query I
+SELECT md_to_text(NULL) IS NULL;
+----
+true

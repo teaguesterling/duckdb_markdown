@@ -276,6 +276,19 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 		return "";
 	}
 
+	// Same defect as MarkdownToText (#56), with a worse consequence: in HTML the
+	// fences do not vanish, they render. The block came out as `<hr />` plus an
+	// `<h2>` holding the metadata -- so this did not merely leak text, it
+	// FABRICATED A HEADING out of document metadata, and a heading is structure.
+	// Fed back through html_to_duck_blocks that heading returns as a block,
+	// promoting kind='value' metadata into kind='block' content. No mainstream
+	// renderer does this: Jekyll and Hugo consume the block, GitHub renders it
+	// as a table; none of them underline it into a heading.
+	const std::string content = StripFrontmatter(markdown_str);
+	if (content.empty()) {
+		return "";
+	}
+
 	// Initialize cmark-gfm
 	EnsureCmarkExtensionsRegistered();
 
@@ -309,7 +322,7 @@ std::string MarkdownToHTML(const std::string &markdown_str, MarkdownFlavor flavo
 	}
 
 	// Feed the input to the parser
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_parser_feed(parser, content.c_str(), content.length());
 
 	// Parse and render
 	cmark_node *doc = cmark_parser_finish(parser);
@@ -332,9 +345,21 @@ std::string MarkdownToText(const std::string &markdown_str) {
 		return "";
 	}
 
+	// Strip frontmatter before parsing. cmark has never heard of frontmatter, so
+	// it reads the block as CommonMark -- thematic break, paragraph, setext
+	// underline -- and rendering to plain text then drops the fences and KEEPS
+	// the keys, reintroducing document metadata as body prose (#56). Sharing
+	// StripFrontmatter is the point: this function now agrees with
+	// ExtractMetadata, read_markdown and sections about what a block is, rather
+	// than holding the only dissenting opinion in the extension.
+	const std::string content = StripFrontmatter(markdown_str);
+	if (content.empty()) {
+		return "";
+	}
+
 	// Parse the markdown document
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
-	cmark_parser_feed(parser, markdown_str.c_str(), markdown_str.length());
+	cmark_parser_feed(parser, content.c_str(), content.length());
 	cmark_node *doc = cmark_parser_finish(parser);
 
 	// Render as plain text
