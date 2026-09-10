@@ -1,0 +1,149 @@
+# name: test/sql/duck_block_element_order_origin.test
+# description: element_order is dense from 0 over the list a reader emits (#59)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# This reader emitted element_order starting at 1. Two normative statements,
+# both vendored in this repository, require 0:
+#
+#   docs/doc_block_spec.md:60
+#     | element_order | INTEGER | Yes | Sequential position in document (0-indexed) |
+#
+#   src/include/duck_block_vocabulary.hpp:347
+#     RECOVERY CONTRACT, now normative: element_order is dense from 0 over the
+#     list a reader EMITS, synthetic markers included.
+#
+# The cause was a single initializer, `int32_t block_order = 1`, from which
+# every other counter in ParseBlocks derived. It carried no comment, in a file
+# that documents its decisions heavily -- including, sixty lines below it, the
+# cost of frontmatter shifting body order, which was written down as "accepted
+# rather than hidden". An intentional departure from a normative rule would have
+# been recorded the same way.
+#
+# WHY NO VALIDATOR CAUGHT IT, which is the more useful half. Block Validation
+# rule 3 is "element_order is non-negative integer", and 1 satisfies it.
+# "Starts at 0" is a property of a LIST, while every validation predicate in the
+# spec is about a SINGLE duck_block -- so duck_blocks_validate() returned
+# valid:true for this output and always would. Not a check that was skipped: a
+# rule that is unenforceable as the spec is structured. That is the argument of
+# duck_block_utils#29, and this was its first worked example.
+#
+# So the assertions below are deliberately LIST-shaped -- min, density,
+# uniqueness over the whole emitted list -- because a per-block predicate
+# cannot express the rule that was broken.
+#
+# Reported by the duckeye session, measured on the installed build 75e9d0b and
+# reproduced here on main.
+# =============================================================================
+
+# =============================================================================
+# 1. The origin, across every shape
+# =============================================================================
+
+query I
+SELECT min(b.element_order) FROM unnest(parse_markdown_to_duck_blocks('just a paragraph')) AS t(b);
+----
+0
+
+query I
+SELECT min(b.element_order) FROM unnest(parse_markdown_to_duck_blocks(E'# H\n\nbody')) AS t(b);
+----
+0
+
+query I
+SELECT min(b.element_order) FROM unnest(parse_markdown_to_duck_blocks(E'- a\n- b')) AS t(b);
+----
+0
+
+query I
+SELECT min(b.element_order) FROM unnest(parse_markdown_to_duck_blocks(E'```sh\nls\n```')) AS t(b);
+----
+0
+
+query I
+SELECT min(b.element_order) FROM unnest(parse_markdown_to_duck_blocks(E'> quoted\n')) AS t(b);
+----
+0
+
+# =============================================================================
+# 2. Dense, and unique -- the two halves of "dense from 0"
+#
+# min=0 alone would be satisfied by 0,1,1,5. Density (count = max+1) and
+# uniqueness together pin the list to exactly 0..n-1.
+# =============================================================================
+
+query III
+SELECT min(b.element_order), max(b.element_order) - count(*) + 1, count(*) - count(DISTINCT b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'# H\n\npara\n\n- a\n- b\n\n> q\n\n```sh\nls\n```\n')) AS t(b);
+----
+0	0	0
+
+# Deeply nested: list inside list inside quote. Every counter in the walk has to
+# share the origin, not just the top-level one.
+query III
+SELECT min(b.element_order), max(b.element_order) - count(*) + 1, count(*) - count(DISTINCT b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'> - a\n>   - b\n>     - c\n>\n> after\n')) AS t(b);
+----
+0	0	0
+
+# =============================================================================
+# 3. Synthetic markers are included, not exempt
+#
+# The recovery contract says "synthetic markers included". The frontmatter block
+# is one: it has no cmark node behind it, this reader manufactures it. It takes
+# element_order 0 and the body follows from 1. (metadata is a BLOCK type in the
+# vocabulary -- TYPE_METADATA sits beside TYPE_CODE and TYPE_HR -- distinct from
+# the kind='value' MetaValue tree that models Pandoc's decomposed metadata.) -- which is also why a document
+# gaining frontmatter shifts every body order, a cost markdown_utils.cpp:1497
+# records as accepted.
+# =============================================================================
+
+query II
+SELECT b.element_order, b.kind || '/' || b.element_type
+FROM unnest(parse_markdown_to_duck_blocks(E'---\ntitle: T\n---\n\n# H\n\nbody\n')) AS t(b)
+ORDER BY b.element_order;
+----
+0	block/metadata
+1	block/heading
+2	block/paragraph
+
+# =============================================================================
+# 4. The table function agrees with the scalar
+#
+# read_markdown_blocks and parse_markdown_to_duck_blocks are separate emit
+# paths. Both are readers, so the contract binds both, and they must not
+# disagree with each other either.
+# =============================================================================
+
+statement ok
+COPY (SELECT E'# H\n\npara\n\n- a\n- b\n') TO '__TEST_DIR__/eo.md' (FORMAT CSV, HEADER false, QUOTE '');
+
+query III
+SELECT min(element_order), max(element_order) - count(*) + 1, count(*) - count(DISTINCT element_order)
+FROM read_markdown_blocks('__TEST_DIR__/eo.md');
+----
+0	0	0
+
+# =============================================================================
+# 5. The negative half: `level` is 1-origin and must NOT move
+#
+# `level` is the confusable neighbour -- an adjacent integer field on the same
+# struct, set in the same functions, incremented in the same walks. A fix that
+# shifted the origin of the wrong counter would still make section 1 pass.
+# Nothing in the spec makes level 0-based, and a top-level block is level 1.
+# =============================================================================
+
+query II
+SELECT min(b.level), max(b.level)
+FROM unnest(parse_markdown_to_duck_blocks(E'# H\n\npara\n')) AS t(b);
+----
+1	1
+
+# A list nests: list at 1, list_item at 2, the item's paragraph at 3.
+query I
+SELECT string_agg(b.level::VARCHAR, ',' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- a')) AS t(b);
+----
+1,2,3

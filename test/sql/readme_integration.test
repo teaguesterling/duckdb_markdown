@@ -103,11 +103,12 @@ FROM read_markdown_blocks('README.md') WHERE kind = 'block';
 ----
 true
 
-# Block order should be sequential starting from 1
+# Block order is dense from 0 (#59) -- the recovery contract's origin, shared
+# with webbed and panduck's native readers.
 query I
 SELECT min(element_order) FROM read_markdown_blocks('README.md');
 ----
-1
+0
 
 # THIS READER emits only these two kinds -- a property of read_markdown_blocks,
 # NOT a statement of which kinds are valid. The vocabulary also has `value`,

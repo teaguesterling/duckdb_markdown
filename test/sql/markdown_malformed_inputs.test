@@ -104,7 +104,7 @@ query I
 SELECT b.content
 FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
   'para' || chr(13) || chr(10) || chr(13) || chr(10) || 'para2')) b)
-WHERE b.element_order = 1;
+WHERE b.element_order = 0;
 ----
 para
 

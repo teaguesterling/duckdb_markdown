@@ -1434,7 +1434,19 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		return blocks;
 	}
 
-	int32_t block_order = 1;
+	// 0, not 1. The recovery contract is normative: "element_order is dense from
+	// 0 over the list a reader EMITS, synthetic markers included" (see
+	// duck_block_vocabulary.hpp) and docs/doc_block_spec.md calls the column
+	// 0-indexed. This initializer is the only origin -- every ++ below and the
+	// counters threaded into EmitBlockChildren and EmitListStructural derive from
+	// it -- so it was the whole of the bug (#59).
+	//
+	// No validator could have caught this and none ever will: Block Validation
+	// rule 3 says "element_order is non-negative integer", which 1 satisfies.
+	// "Dense from 0" is a property of the LIST, and every validation predicate in
+	// the spec is about a single duck_block. webbed and panduck's native readers
+	// already emitted 0, so this reader was the outlier.
+	int32_t block_order = 0;
 
 	// Check for frontmatter first. The MATCH is used rather than the extracted
 	// string because the fence determines the encoding: `---` is YAML, `+++` is
