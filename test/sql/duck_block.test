@@ -383,7 +383,10 @@ SELECT element_type FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md')
 ----
 heading
 
-# element_order is 1-indexed from the markdown parser
+# element_order is dense from 0 (#59). Note this assertion is self-referential --
+# it selects the column it filters on, so it returns 1 under either origin and
+# never tested the origin at all. Kept as a smoke check that the column binds;
+# duck_block_element_order_origin.test is what actually pins the contract.
 query I
 SELECT element_order FROM read_markdown_blocks('__TEST_DIR__/duck_block_test.md') WHERE element_order = 1 LIMIT 1;
 ----

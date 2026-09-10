@@ -12,7 +12,7 @@ require markdown
 query III
 SELECT kind, element_type, element_order FROM read_markdown_blocks('test/data/blocks_basic.md') LIMIT 1;
 ----
-block	heading	1
+block	heading	0
 
 # =============================================================================
 # Test: Basic read_markdown_blocks from file (flattened output)
@@ -158,7 +158,7 @@ true
 query I
 SELECT string_agg(element_order::VARCHAR, ',' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_basic.md');
 ----
-1,2,3,4
+0,1,2,3
 
 # =============================================================================
 # Test: include_filepath option
@@ -203,7 +203,7 @@ true
 query IIIIIII
 SELECT kind, element_type, content IS NOT NULL, level, encoding, attributes IS NOT NULL, element_order FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'heading';
 ----
-block	heading	true	1	text	true	1
+block	heading	true	1	text	true	0
 
 # =============================================================================
 # Test: Complex document with multiple block types

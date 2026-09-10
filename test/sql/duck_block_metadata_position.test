@@ -21,9 +21,9 @@ SELECT e.element_type, e.element_order, e.attributes['role']
 FROM (SELECT unnest(parse_markdown_to_duck_blocks(e'---\ntitle: T\n---\n\n# H\n\nBody.\n')) AS e)
 WHERE e.kind = 'block' ORDER BY e.element_order;
 ----
-metadata	1	frontmatter
-heading	2	NULL
-paragraph	3	NULL
+metadata	0	frontmatter
+heading	1	NULL
+paragraph	2	NULL
 
 # WRITER: metadata is found by TYPE, wherever it sits.
 #
@@ -112,7 +112,7 @@ true	true
 query I
 SELECT bool_and(is_first) FROM (
   SELECT (SELECT min(e.element_order) FROM (SELECT unnest(parse_markdown_to_duck_blocks(md)) AS e)
-          WHERE e.attributes['role'] = 'frontmatter') = 1 AS is_first
+          WHERE e.attributes['role'] = 'frontmatter') = 0 AS is_first
   FROM (VALUES (e'---\ntitle: T\n---\n\n# H\n\nBody.\n'),
                (e'---\ntitle: T\n---\n'),
                (e'+++\nt = 1\n+++\n\nB.\n'),

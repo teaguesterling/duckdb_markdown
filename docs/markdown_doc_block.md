@@ -102,7 +102,7 @@ Returns rows with duck_block shape:
 | `level` | INTEGER | Structural DEPTH, minimum 1 — including frontmatter. A heading's rank is `attributes['heading_level']`, not this. (`read_markdown_sections` also has a `level` column, but that one is heading rank 0-6: a different measurement) |
 | `encoding` | VARCHAR | `text`, `json` (tables), `yaml`/`toml` (frontmatter) |
 | `attributes` | MAP(VARCHAR, VARCHAR) | Block metadata (heading_level, language, id, etc.) |
-| `element_order` | INTEGER | Position in document (1-indexed) |
+| `element_order` | INTEGER | Position in document (0-indexed, dense) |
 | `filename` | VARCHAR | Source file (when enabled). Trailing: duck_block spec 6.4 puts it after `element_order`. |
 
 **Note on heading levels:** For headings, the actual H1-H6 level is stored in `attributes['heading_level']`, while `level` indicates document nesting depth (always 1 for top-level blocks). This matches the duck_block_utils convention.
