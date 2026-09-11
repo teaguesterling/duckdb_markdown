@@ -1,5 +1,16 @@
 #pragma once
 
+// VENDORED COPY -- do not edit by hand without re-syncing from upstream.
+//
+// Source: teaguesterling/duckdb_duck_block_utils, src/include/duck_block_vocabulary.hpp
+// Vendored at upstream commit: 1c5f2a6 (SPEC_VERSION 1.2)
+//
+// Replace that line on every re-vendor. Provenance has to travel WITH the file:
+// a fork, a copy, a grep or a squash sees this header and not the commit that
+// introduced it, so a sha recorded only in a commit message is a sha the next
+// reader cannot reach. This is step 1 of the re-vendoring guidance below, which
+// this copy had not been following.
+//
 // ============================================================================
 // The duck_block vocabulary -- PUBLISHED INTERFACE.
 //
