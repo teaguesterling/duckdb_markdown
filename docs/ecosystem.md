@@ -93,7 +93,8 @@ markdown's blocks feed them directly.
 
 **This document does not reproduce their signatures.** They live in another
 repository, on its own release cadence, and a copy here goes stale silently:
-spec 6.5 reshaped four extractors so that `duck_blocks_headings`, `_links`,
+internal spec 6.5 (retired; the line was later renumbered, and public 1.2
+supersedes internal 6.6) reshaped four extractors so that `duck_blocks_headings`, `_links`,
 `_code_blocks` and `_toc` return **duck_blocks** rather than bespoke projection
 structs, with the previous shapes preserved as `_structs` siblings
 (`duck_blocks_toc_structs` and so on). An example pinned here would have been
