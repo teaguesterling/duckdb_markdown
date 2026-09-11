@@ -114,9 +114,19 @@ def compare_spec_version(local, upstream):
     check that cries wolf gets muted.
 
     Returns (breaking, note). Note that upstream's own recorded history has one
-    counterexample: 1.1 -> 1.2 was breaking and shipped as a minor, and it is
-    what broke this writer in three places. The contract holds from 2.0 onward,
-    so a minor bump is reported loudly rather than silently, but not failed.
+    counterexample: INTERNAL 1.1 -> INTERNAL 1.2 was breaking and shipped as a
+    minor, and it is what broke this writer in three places. The contract holds
+    from internal 2.0 onward, so a minor bump is reported loudly rather than
+    silently, but not failed.
+
+    THE WORD "INTERNAL" IS LOAD-BEARING IN THAT PARAGRAPH. duck_block_utils
+    retired the 6.x internal numbering and published 6.6 as "1.2" -- the same
+    shape under a public label -- so the string "1.2" now names two different
+    specs: the mis-numbered internal release above, and the current public one.
+    Every version literal in this file that discusses a breaking release or the
+    pre-contract era means the INTERNAL line. A future reader who reads them as
+    the public 1.2 would conclude the current spec is a known-breaking release
+    sitting in the pre-contract era, which is the opposite of true.
     """
     lo, up = parse_version(local), parse_version(upstream)
     if lo == (None, None) or up == (None, None):
@@ -131,6 +141,40 @@ def compare_spec_version(local, upstream):
         return True, (f"MINOR behind {local} -> {upstream}: this copy claims a newer "
                       f"spec than upstream publishes")
     return False, None
+
+
+def spec_superseded(local, upstream, supersedes):
+    """Is the MAJOR difference a RENUMBERING rather than a break?
+
+    compare_spec_version CANNOT TELL THE TWO APART, and that is not a flaw in it:
+    a major change IS breaking by the contract, and a renumber changes the major.
+    Measured on that rule, 6.5 -> 1.2 reads exactly like a real 2.0.
+
+    So the renumber has to carry evidence a check can see. duck_block_utils
+    publishes SPEC_VERSION_SUPERSEDES alongside SPEC_VERSION for the one release
+    it takes consumers to re-vendor: public 1.2 supersedes internal 6.6, same
+    shape, no constant removed (verified against their PR #30 diff -- the only
+    deletion in the header is the SPEC_VERSION line itself).
+
+    ACCEPTED ONLY WHEN THE SUPERSEDED VALUE IS AT OR AHEAD OF OURS. A copy pinned
+    at 6.5 or 6.6 is looking at the same vocabulary renamed and is fine; one
+    pinned at 6.7 -- were there such a thing -- is looking at something the
+    renumber did not cover and gets the breaking verdict it deserves.
+
+    THIS IS A DISCRIMINATOR, NOT AN EXEMPTION. An escape hatch that accepts
+    everything is not a hatch, it is a hole. Four of the seven cases pinned in
+    the self-test must be REFUSED, including the one that matters most: a
+    renumber CLAIMED by a major mismatch but not EVIDENCED by a supersedes value.
+    Ported from panduck, which reasoned it out first.
+    """
+    lo, up, sup = parse_version(local), parse_version(upstream), parse_version(supersedes)
+    if (None, None) in (lo, up, sup):
+        return False
+    if lo[0] == up[0]:
+        return False  # not a renumber; the ordinary rule applies
+    if lo[0] != sup[0]:
+        return False  # we are not on the line being retired
+    return sup[1] >= lo[1]
 
 
 
@@ -288,6 +332,23 @@ def self_test():
         if got != want_breaking:
             failures.append(f"spec {lo} -> {up}: expected breaking={want_breaking}, got {got}")
 
+    # THE RENUMBERING ESCAPE HATCH, pinned in both directions. FOUR OF THESE SEVEN
+    # MUST BE REFUSED -- a hatch that accepts everything is a hole. It exists because
+    # the ordinary rule cannot tell a renumber from a break: duck_block_utils
+    # renumbered internal 6.6 to public 1.2 with no shape change (their PR #30,
+    # c233f18) and published SPEC_VERSION_SUPERSEDES so a check could see it.
+    for lo, up, sup, want, why in (
+        ("6.5", "1.2", "6.6", True,  "the renumber itself: this copy is on the retired 6.x line"),
+        ("6.6", "1.2", "6.6", True,  "pinned exactly at the superseded value"),
+        ("6.5", "2.0", None,  False, "a real major break, with no supersedes published"),
+        ("6.5", "1.2", None,  False, "a renumber CLAIMED but not evidenced"),
+        ("6.7", "1.2", "6.6", False, "ahead of what the renumber covered"),
+        ("6.5", "1.2", "5.0", False, "supersedes a line this copy is not on"),
+        ("1.2", "1.3", "6.6", False, "majors already equal -- the ordinary rule applies"),
+    ):
+        if spec_superseded(lo, up, sup) != want:
+            failures.append(f"spec_superseded({lo!r}, {up!r}, {sup!r}) expected {want} -- {why}")
+
     # Field offsets are not vocabulary.
     if "KIND_IDX" in vocabulary_of(base):
         failures.append("KIND_IDX selected as an element type")
@@ -410,6 +471,18 @@ def main():
     changed = [k for k in changed if k != "SPEC_VERSION"]
     spec_breaking, spec_note = compare_spec_version(
         local.get("SPEC_VERSION", ""), upstream.get("SPEC_VERSION", ""))
+    # SPEC_VERSION_SUPERSEDES, when upstream publishes one, distinguishes a
+    # RENUMBERING from a break. The major-equality rule above cannot, because a
+    # renumber changes the major. Absent the constant this is a no-op.
+    if spec_breaking and spec_superseded(local.get("SPEC_VERSION", ""),
+                                         upstream.get("SPEC_VERSION", ""),
+                                         upstream.get("SPEC_VERSION_SUPERSEDES")):
+        spec_breaking = False
+        spec_note = (
+            f"SPEC_VERSION {local.get('SPEC_VERSION')} -> {upstream.get('SPEC_VERSION')} is a "
+            f"RENUMBERING, not a break: upstream records SPEC_VERSION_SUPERSEDES = "
+            f"{upstream.get('SPEC_VERSION_SUPERSEDES')}, the line this copy is on. Same shape, "
+            f"no constant removed -- re-vendor the header when convenient")
 
     breaking = spec_breaking
     if spec_note:
