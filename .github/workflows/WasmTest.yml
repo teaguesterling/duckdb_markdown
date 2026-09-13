@@ -14,7 +14,7 @@ on:
 # Keep in step with duckdb-stable-build in MainDistributionPipeline.yml -- the
 # artifact name is derived from it, and it decides which duckdb-wasm can load it.
 env:
-  EXTENSION_DUCKDB_VERSION: v1.5.4
+  EXTENSION_DUCKDB_VERSION: v1.5.5
 
 jobs:
   test-wasm-browser:
@@ -30,9 +30,11 @@ jobs:
       #   duckdb-wasm 1.32.0 / 1.33.0  -> duckdb d1dc88f950 (v1.4.x)
       #   duckdb-wasm 1.33.1-dev*      -> duckdb d8cdaa33fd (v1.5.5), built from main
       #
-      # There is currently NO published duckdb-wasm carrying v1.5.4, so this job
-      # skips rather than failing. Add the pairing below when one ships, or pass
-      # duckdb_wasm_version on a manual run to override.
+      # v1.5.5 IS carried by a published duckdb-wasm -- 1.33.1-dev*, per the
+      # pairing above -- so this job can now run rather than skip. It skipped for
+      # the whole life of the v1.5.4 pin, which is one of the costs of pinning at
+      # a tag nothing else ships: the WASM leg had no instrument at all.
+      # The skip path is kept for the next version that outruns duckdb-wasm.
       - name: Resolve a compatible duckdb-wasm
         id: pair
         run: |
