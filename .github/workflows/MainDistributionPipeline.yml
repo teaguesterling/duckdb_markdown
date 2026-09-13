@@ -17,17 +17,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Forward-compatibility canary: builds against DuckDB main to give advance warning
-  # of upstream API changes. It is EXPECTED to go red whenever DuckDB main breaks an
-  # API this extension uses -- the extension targets the stable release below, and
-  # outstanding breaks are tracked as a checklist in the "DuckDB main API breaks"
-  # issue.
+  # THE NEXT-LINE BUILD. No longer advisory, and no longer gated to main: it runs on
+  # every pull request, because the thing it checks is a property of the CHANGE, not
+  # of upstream drift (Teague, 2026-09-13; duck_block_utils' dual-line design spec).
   #
-  # It runs ONLY on pushes to main (and on demand). Skipping `pull_request` alone was
-  # not enough: pushing to a branch fires a push run AND a pull_request run against the
-  # same commit, and a PR's check rollup includes both -- so the canary still showed as
-  # a red check on every PR. Upstream drift is a property of main, not of a branch, so
-  # main is where it belongs.
+  # WHY IT WAS PROMOTED. markdown's community descriptor carried no ref_next, so the
+  # registry's prerelease leg printed "Skipping prerelease validation" and every
+  # release passed green having built nothing against v2.0. Adding ref_next in
+  # community-extensions#2690 ran it for the first time, and it failed immediately on
+  # a constructor DuckDB had deleted -- meaning this extension had been broken on the
+  # v2.0 line for an unknown number of releases with nothing anywhere saying so. A
+  # gated canary could not have caught it: the break arrived in a PR and the canary
+  # does not run on PRs. That is the gap this closes.
+  #
+  # A RED RUN HERE IS NOW A BUG TO FIX, not noise to note. That is the change in
+  # standing, and it is only defensible because v2.0 support is the target rather
+  # than a someday: the three breaks this job used to report on every push are fixed
+  # (see duckdb_compat.hpp), and the fourth -- ConstantExpression -- is fixed in this
+  # same branch.
+  #
+  # THE `if` IS NARROWER THAN "always", and deliberately. Pushing to a branch fires a
+  # push run AND a pull_request run against the same commit, and a PR's rollup
+  # includes both -- so an unconditional job builds the whole matrix TWICE per push
+  # and shows two rows per check. Running on pull_request plus pushes to main gives
+  # one run per PR and one per merge, which is the coverage without the duplication.
   #
   # `if` is used rather than `continue-on-error` because a job calling a REUSABLE
   # WORKFLOW accepts only name/needs/if/permissions/uses/with/secrets/strategy/
@@ -49,8 +62,8 @@ jobs:
   # during this port, and the second rejected a named argument on a scalar function
   # that the first had accepted. That is exactly the advance warning this job is for.
   duckdb-next-build:
-    name: Canary — build against DuckDB main (advisory)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    name: Next-line build — DuckDB v2.0
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
       # The 2.0 RELEASE branch, not `main`: one canary line for the whole fleet
