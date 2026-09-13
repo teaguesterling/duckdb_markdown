@@ -3,7 +3,15 @@
 #
 name: Main Extension Distribution Pipeline
 on:
+  # Pushes build only on main. A push to a PR branch fires a push run AND a
+  # pull_request run for the same commit, so every ungated job here (the whole
+  # stable matrix, 9 builds) used to build twice per push. The pull_request run
+  # covers PR branches. The cost: a branch with no PR open gets no CI until the
+  # PR opens, and tag pushes no longer start a run of their own. Nothing here
+  # deploys on tags, since the community registry builds releases. Dispatch
+  # still runs on any branch.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
