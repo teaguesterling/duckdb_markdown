@@ -1306,7 +1306,7 @@ static void WalkInlines(cmark_node *container, int level, int32_t &order, std::v
 static constexpr int MAX_LIST_NESTING = 1000;
 
 static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
-                              bool structured_inlines, int depth);
+                              bool structured_inlines, int depth, bool tight_runs = false);
 
 static void EmitListStructural(cmark_node *list_node, int level, int32_t &order, std::vector<MarkdownBlock> &out,
                                bool structured_inlines, int depth = 0) {
@@ -1329,6 +1329,13 @@ static void EmitListStructural(cmark_node *list_node, int level, int32_t &order,
 	}
 	out.push_back(lb);
 
+	// TIGHTNESS IS A PROPERTY OF THE LIST, not of an item -- cmark carries it on
+	// the list node, beside the list type read above. This reader never asked for
+	// it, which is the whole of #60: with no way to distinguish a Plain from a
+	// Para, every run was labelled `paragraph` and `- a\n- b` came back identical
+	// to `- a\n\n- b`.
+	const bool is_tight = cmark_node_get_list_tight(list_node) != 0;
+
 	for (cmark_node *item = cmark_node_first_child(list_node); item; item = cmark_node_next(item)) {
 		if (cmark_node_get_type(item) != CMARK_NODE_ITEM) {
 			continue;
@@ -1339,9 +1346,50 @@ static void EmitListStructural(cmark_node *list_node, int level, int32_t &order,
 		ib.encoding = Vocab::ENCODING_TEXT;
 		ib.content = "";
 		ib.block_order = order++;
+
+		// 6.0's content rule: a container with a SINGLE TEXT child holds it in its
+		// own content, so `<li>alpha</li>` is list_item(content='alpha') and not
+		// list_item > plain('alpha'). It applies only to a TIGHT item -- a Para is a
+		// BLOCK child and is never folded, which is the half the blockquote path got
+		// wrong by applying this one level too deep.
+		//
+		// FOLDING ALONE IS NOT SUFFICIENT and that is why `plain` still has to exist
+		// as a block: `- a\n  - b` is tight, and its item has TWO children (a run and
+		// a sublist), so the container cannot hold the run. A reader that only folded
+		// would collapse a nested tight list back onto loose -- the same defect in a
+		// narrower case, and worse for looking fixed.
+		cmark_node *only = cmark_node_first_child(item);
+		const bool lone_para =
+		    only && cmark_node_next(only) == nullptr && cmark_node_get_type(only) == CMARK_NODE_PARAGRAPH;
+		std::string folded;
+		if (is_tight && lone_para && SingleTextChild(only, folded)) {
+			ib.content = folded;
+			out.push_back(ib);
+			continue;
+		}
+
+		// A `plain` MUST NOT BE THE ONLY CHILD of a content-empty container. That is
+		// upstream's advisory rule, and it is universal -- figure, section, div,
+		// blockquote, caption and list_item alike -- "decided by what sits BESIDE the
+		// run, never by which element_type is above it".
+		//
+		// So a tight item whose single run cannot be folded (its inlines are not one
+		// text child, e.g. `- **bold** text`) attaches those inlines DIRECTLY to the
+		// item. Emitting `plain` here instead would satisfy the block-shape tests and
+		// fail the conformance corpus, which is how this was caught: the cmark HTML
+		// says what the BLOCKS are and says nothing about where a run with no block
+		// sibling belongs.
+		//
+		// `plain` survives exactly where 6.0 says it is required -- beside block
+		// siblings, as in `- a\n  - b`, where the item holds a run AND a sublist.
+		if (is_tight && lone_para) {
+			out.push_back(ib);
+			WalkInlines(only, ib.level + 1, order, out);
+			continue;
+		}
 		out.push_back(ib);
 
-		EmitBlockChildren(item, level + 2, order, out, structured_inlines, depth + 1);
+		EmitBlockChildren(item, level + 2, order, out, structured_inlines, depth + 1, is_tight);
 	}
 }
 
@@ -1360,7 +1408,7 @@ static void EmitListStructural(cmark_node *list_node, int level, int32_t &order,
 // Shared with list items so a list inside a quote and a quote inside a list are
 // handled by the same code rather than by two walks that can disagree.
 static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, std::vector<MarkdownBlock> &out,
-                              bool structured_inlines, int depth) {
+                              bool structured_inlines, int depth, bool tight_runs) {
 	if (depth > MAX_LIST_NESTING) {
 		throw InvalidInputException("Markdown block nesting exceeds maximum supported depth (%d)", MAX_LIST_NESTING);
 	}
@@ -1378,6 +1426,9 @@ static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, 
 			qb.content = "";
 			qb.block_order = order++;
 			out.push_back(qb);
+			// tight_runs deliberately NOT propagated: tightness is a property of the
+			// list whose items we are walking, and a blockquote nested in a tight item
+			// contains Paras of its own.
 			EmitBlockChildren(c, level + 1, order, out, structured_inlines, depth + 1);
 			continue;
 		}
@@ -1409,7 +1460,14 @@ static void EmitBlockChildren(cmark_node *container, int level, int32_t &order, 
 			b.content = "";
 		} else {
 			// Paragraph, and anything else that carries inline content.
-			b.block_type = Vocab::TYPE_PARAGRAPH;
+			//
+			// tight_runs says cmark rendered this item WITHOUT a <p>, so the run is
+			// Pandoc's Plain rather than a Para (#60). The distinction is carried by
+			// the type, exactly as spec 4.0 added `plain` for -- this reader had been
+			// labelling every run `paragraph`, which is how tight and loose lists came
+			// back byte-identical. Only the item's DIRECT children are affected: a
+			// blockquote or a nested list inside a tight item gets its own answer.
+			b.block_type = (tight_runs && t == CMARK_NODE_PARAGRAPH) ? Vocab::TYPE_PLAIN : Vocab::TYPE_PARAGRAPH;
 			std::string simple;
 			if (structured_inlines && t == CMARK_NODE_PARAGRAPH && !SingleTextChild(c, simple)) {
 				b.content = "";
@@ -1628,24 +1686,22 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 		case CMARK_NODE_BLOCK_QUOTE: {
 			block.block_type = "blockquote";
 			block.level = 1; // Could calculate nesting depth
-			cmark_node *first = cmark_node_first_child(child);
-			bool single_para =
-			    first && cmark_node_get_type(first) == CMARK_NODE_PARAGRAPH && cmark_node_next(first) == nullptr;
-			if (structured_inlines && single_para) {
-				// Common case: a single paragraph -> emit its inlines structurally.
-				inline_container = first;
-				std::string simple;
-				if (SingleTextChild(first, simple)) {
-					block.content = simple;
-				} else {
-					block.content = "";
-					emit_inlines = true;
-				}
-			} else if (structured_inlines) {
-				// More than one block child, or a child that is not a paragraph:
-				// emit them as BLOCKS. Flattening with GetInlineText concatenated
-				// them with no separator ("quoted para" + "second para" came back
-				// as "quoted parasecond para") and destroyed a nested list outright.
+			// A SINGLE-PARAGRAPH BLOCKQUOTE USED TO FOLD ITS PARAGRAPH AWAY (#60).
+			// `> quoted` became blockquote(content='quoted') with no child, so
+			// BlockQuote[Para[Str]] and BlockQuote[Plain[Str]] were indistinguishable
+			// and the export was Plain. cmark's own answer is
+			// <blockquote><p>quoted</p></blockquote> -- there IS a paragraph.
+			//
+			// The fold was 6.0's content rule applied one level too deep: it called
+			// SingleTextChild on the PARAGRAPH and then wrote onto the BLOCKQUOTE,
+			// skipping the paragraph node. The rule says a single TEXT child, and a
+			// Para is a BLOCK child. Every blockquote now takes the block path, which
+			// was already correct for every other shape.
+			if (structured_inlines) {
+				// Emit the children as BLOCKS. Flattening with GetInlineText
+				// concatenated them with no separator ("quoted para" + "second para"
+				// came back as "quoted parasecond para") and destroyed a nested list
+				// outright.
 				block.content = "";
 				block_order = block.block_order;
 				MarkdownBlock qb;

@@ -1,0 +1,200 @@
+# name: test/sql/duck_block_tight_loose.test
+# description: tight and loose lists are distinguishable on read and on write (#60)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# This reader emitted the LOOSE encoding unconditionally, so `- a\n- b` and
+# `- a\n\n- b` came back byte-identical and the distinction did not survive the
+# read. The writer had the opposite defect: it rendered the loose encoding as a
+# TIGHT list. The two cancelled for tight input, which is why the round-trip
+# suite was green throughout while both halves were broken.
+#
+# ROOT CAUSE: `plain` -- Pandoc's Plain, a text run with no paragraph
+# semantics -- was added to the vocabulary at spec 4.0 EXPLICITLY to stop this
+# collapse, and this reader never implemented it. Without a way to say "a text
+# run that is not a paragraph", every run was labelled `paragraph` and the
+# folding decision was taken by counting children instead of reading their
+# type. It guessed wrong in both directions: it declined to fold a tight list
+# item, and it folded a single-paragraph blockquote that it must not.
+#
+# With `plain` present the rule needs no heuristic:
+#
+#     plain folds into its container's content; paragraph never does.
+#
+# EVERY EXPECTED VALUE BELOW IS DERIVED FROM CMARK'S OWN HTML, not from what
+# this binary emits. That distinction is the point: a round-trip assertion
+# cannot tell "both halves correct" from "both halves wrong in opposite
+# directions", so the authority has to sit outside the reader/writer pair.
+#
+#     - alpha\n- beta      ->  <ul><li>alpha</li>...        TIGHT, no <p>
+#     - alpha\n\n- beta    ->  <ul><li><p>alpha</p></li>... LOOSE
+#     - a\n  - b           ->  <ul><li>a<ul><li>b</li>...   TIGHT, two children
+#     - **bold** text      ->  <li><strong>bold</strong>... TIGHT, many inlines
+#     - a\n\n  second      ->  <li><p>a</p><p>second</p>    LOOSE
+#     > quoted             ->  <blockquote><p>quoted</p>    a Para, always
+#
+# Shape is dumped as `order:kind/type:content` with ~ for NULL, so a single
+# assertion pins the whole emitted list rather than one property of it.
+# =============================================================================
+
+# =============================================================================
+# 1. Tight vs loose must differ, and each must be right
+# =============================================================================
+
+# TIGHT: cmark emits <li>alpha</li> with no <p>, so the item's child is a text
+# run, and 6.0's content rule folds a single text child onto the container.
+query I
+SELECT string_agg(b.element_order || ':' || b.kind || '/' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- alpha\n- beta')) AS t(b);
+----
+0:block/list:~ | 1:block/list_item:alpha | 2:block/list_item:beta
+
+# LOOSE: cmark emits <li><p>alpha</p></li>. A Para is a BLOCK child, so it is
+# never folded -- the paragraph survives as an explicit child.
+query I
+SELECT string_agg(b.element_order || ':' || b.kind || '/' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- alpha\n\n- beta')) AS t(b);
+----
+0:block/list:~ | 1:block/list_item:~ | 2:block/paragraph:alpha | 3:block/list_item:~ | 4:block/paragraph:beta
+
+# The whole point, stated directly.
+query I
+SELECT parse_markdown_to_duck_blocks(E'- alpha\n- beta')::VARCHAR
+     = parse_markdown_to_duck_blocks(E'- alpha\n\n- beta')::VARCHAR;
+----
+false
+
+# Ordered lists take the same rule; the fix is not bullet-specific.
+query I
+SELECT string_agg(b.element_order || ':' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'1. a\n2. b')) AS t(b);
+----
+0:list:~ | 1:list_item:a | 2:list_item:b
+
+# =============================================================================
+# 2. Where `plain` is REQUIRED as a block, and why folding alone is not enough
+#
+# A tight item is not always foldable. `- a\n  - b` is TIGHT by cmark
+# (<li>a<ul>...), and the item has TWO children -- a text run and a sublist --
+# so 6.0's rule (content iff a SINGLE text child) cannot express it. If the
+# reader only ever folded, a nested tight list would collapse back onto loose:
+# the same bug in a narrower case, and worse for looking fixed.
+# =============================================================================
+
+query I
+SELECT string_agg(b.element_order || ':' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- a\n  - b')) AS t(b);
+----
+0:list:~ | 1:list_item:~ | 2:plain:a | 3:list:~ | 4:list_item:b
+
+# A tight item whose run has several inline children, so content cannot hold it
+# -- the run is not a single TEXT child. The inlines attach DIRECTLY to the item.
+#
+# There is deliberately no `plain` here, and this expectation is one I got wrong
+# first time. cmark's HTML says what the BLOCKS are and says nothing about where
+# a run with no block sibling belongs; upstream's advisory rule does, and it is
+# universal: "a plain that is the only child of a content-empty container --
+# its text belongs in that container's own content ... decided by what sits
+# BESIDE the run, never by which element_type is above it". The conformance
+# corpus caught it, on seven real documents in this repo.
+query I
+SELECT string_agg(b.element_order || ':' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- **bold** text')) AS t(b);
+----
+0:list:~ | 1:list_item:~ | 2:bold:bold | 3:text: text
+
+# =============================================================================
+# 3. The blockquote, which had the SAME defect in the other direction
+#
+# cmark gives <blockquote><p>quoted</p></blockquote> -- there IS a paragraph.
+# The reader deleted it, folding the Para's text onto the blockquote, so
+# BlockQuote[Para[Str]] and BlockQuote[Plain[Str]] came out identical and the
+# export was Plain. The 6.0 content rule says a single TEXT child, and a Para
+# is a BLOCK child: it was the rule applied one level too deep.
+# =============================================================================
+
+query I
+SELECT string_agg(b.element_order || ':' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'> quoted')) AS t(b);
+----
+0:blockquote:~ | 1:paragraph:quoted
+
+# Unchanged: more than one block child was never folded.
+query I
+SELECT string_agg(b.element_order || ':' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'> one\n>\n> two')) AS t(b);
+----
+0:blockquote:~ | 1:paragraph:one | 2:paragraph:two
+
+# =============================================================================
+# 4. The negative half: shapes that are LOOSE and must stay loose
+#
+# A fix that folded everything would pass section 1's tight case. These are
+# documents cmark calls loose, whose paragraphs must survive as paragraphs.
+# =============================================================================
+
+# An item with two block children is loose, and the fix is a no-op here.
+query I
+SELECT string_agg(b.element_order || ':' || b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- a\n\n  second')) AS t(b);
+----
+0:list:~ | 1:list_item:~ | 2:paragraph:a | 3:paragraph:second
+
+# A top-level paragraph is a Para and never becomes a plain.
+query I
+SELECT string_agg(b.element_type || ':' || coalesce(b.content,'~'), ' | ' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'just a paragraph')) AS t(b);
+----
+paragraph:just a paragraph
+
+# =============================================================================
+# 5. The WRITER half
+#
+# The reader collapsed tight onto loose; the writer collapsed loose onto tight.
+# They cancelled for tight input, so duck_block_roundtrip.test was green while
+# both were broken. Fixing only one turns that file red, and the red is
+# CORRECT -- it is the two errors ceasing to agree.
+# =============================================================================
+
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(E'- alpha\n- beta'))::VARCHAR = E'- alpha\n- beta\n\n';
+----
+true
+
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(E'- alpha\n\n- beta'))::VARCHAR = E'- alpha\n\n- beta\n\n';
+----
+true
+
+# Round-trip through the blocks must preserve which list it was.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(E'- alpha\n- beta'))::VARCHAR
+     = duck_blocks_to_md(parse_markdown_to_duck_blocks(E'- alpha\n\n- beta'))::VARCHAR;
+----
+false
+
+# A hand-built TIGHT item (content on the item) renders tight.
+query I
+SELECT duck_blocks_to_md([
+  {kind:'block', element_type:'list', content:NULL, level:1, encoding:'text', attributes:MAP{'list_type':'bullet'}, element_order:0},
+  {kind:'block', element_type:'list_item', content:'alpha', level:2, encoding:'text', attributes:MAP{}, element_order:1},
+  {kind:'block', element_type:'list_item', content:'beta', level:2, encoding:'text', attributes:MAP{}, element_order:2}
+])::VARCHAR = E'- alpha\n- beta\n\n';
+----
+true
+
+# The nested TIGHT list renders tight on the way out as well -- cmark's
+# <li>a<ul><li>b</li></ul></li> has no blank line, and a `plain` child is what
+# lets the writer know that.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(E'- a\n  - b'))::VARCHAR = E'- a\n  - b\n\n';
+----
+true
+
+# A loose item holding two blocks keeps both, with the blank line between them.
+query I
+SELECT duck_blocks_to_md(parse_markdown_to_duck_blocks(E'- a\n\n  second'))::VARCHAR = E'- a\n\n  second\n\n';
+----
+true

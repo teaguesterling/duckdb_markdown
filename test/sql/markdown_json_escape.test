@@ -76,14 +76,19 @@ WHERE b.element_type = 'table';
 # here, which is why the escaping above is pinned on it alone.
 #
 # Rendered visible below only because sqllogictest splits result columns on tab.
+# The CARRIER changed with #60, the property did not. cmark renders this as
+# <li>x	y</li><li>zw</li> -- tight, no <p> -- so 6.0's content rule folds each
+# run onto its list_item and there is no paragraph left to filter on. What is
+# being pinned here is that the control characters survive VERBATIM, and they do,
+# one level up.
 query II
 SELECT b.element_type, replace(replace(b.content, chr(9), '<TAB>'), chr(1), '<SOH>')
 FROM (SELECT UNNEST(parse_markdown_to_duck_blocks(
         '- x' || chr(9) || 'y' || chr(10) || '- z' || chr(1) || 'w')) b)
-WHERE b.element_type = 'paragraph';
+WHERE b.content IS NOT NULL AND b.element_type <> 'list';
 ----
-paragraph	x<TAB>y
-paragraph	z<SOH>w
+list_item	x<TAB>y
+list_item	z<SOH>w
 
 # =============================================================================
 # UNESCAPE side: the mirror-image gap. duck_blocks_to_md has to read those

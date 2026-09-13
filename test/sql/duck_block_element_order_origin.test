@@ -141,9 +141,17 @@ FROM unnest(parse_markdown_to_duck_blocks(E'# H\n\npara\n')) AS t(b);
 ----
 1	1
 
-# A list nests: list at 1, list_item at 2, the item's paragraph at 3.
+# A list nests: list at 1, list_item at 2. There is no third level -- cmark
+# renders `- a` as <li>a</li> with no <p>, so the item is TIGHT and 6.0's content
+# rule folds the run onto the item itself (#60). A loose list still has three.
 query I
 SELECT string_agg(b.level::VARCHAR, ',' ORDER BY b.element_order)
 FROM unnest(parse_markdown_to_duck_blocks(E'- a')) AS t(b);
 ----
-1,2,3
+1,2
+
+query I
+SELECT string_agg(b.level::VARCHAR, ',' ORDER BY b.element_order)
+FROM unnest(parse_markdown_to_duck_blocks(E'- a\n\n- b')) AS t(b);
+----
+1,2,3,2,3
