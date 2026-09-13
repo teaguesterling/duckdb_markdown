@@ -21,7 +21,7 @@ block	heading	0
 query I
 SELECT count(*) FROM read_markdown_blocks('test/data/blocks_basic.md');
 ----
-4
+5
 
 # =============================================================================
 # Test: Block types are correctly identified
@@ -34,6 +34,7 @@ heading	1
 paragraph	1
 code	1
 blockquote	1
+paragraph	2
 
 # =============================================================================
 # Test: Heading content extraction
@@ -90,17 +91,20 @@ SELECT element_type, encoding FROM read_markdown_blocks('test/data/blocks_list.m
 ----
 list	text
 
-# list -> list_item -> paragraph, descending one level at a time
+# A TIGHT list: cmark renders this as <ul><li>Item 1</li>... with no <p>, so
+# each item's run is a Plain and 6.0's content rule folds it onto the item (#60).
+# There is no paragraph level at all. This file previously expected
+# list -> list_item -> paragraph for every item, which was the collapse: the
+# reader labelled every run `paragraph` and a tight list was indistinguishable
+# from a loose one. The loose form still descends three levels -- see
+# duck_block_tight_loose.test.
 query III
 SELECT element_type, level, content FROM read_markdown_blocks('test/data/blocks_list.md') ORDER BY element_order;
 ----
 list	1	NULL
-list_item	2	NULL
-paragraph	3	Item 1
-list_item	2	NULL
-paragraph	3	Item 2
-list_item	2	NULL
-paragraph	3	Item 3
+list_item	2	Item 1
+list_item	2	Item 2
+list_item	2	Item 3
 
 query I
 SELECT attributes['ordered'] FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list';
@@ -158,7 +162,7 @@ true
 query I
 SELECT string_agg(element_order::VARCHAR, ',' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_basic.md');
 ----
-0,1,2,3
+0,1,2,3,4
 
 # =============================================================================
 # Test: include_filepath option
@@ -210,22 +214,42 @@ block	heading	true	1	text	true	0
 # =============================================================================
 
 # 11 until lists became structural: a list was one block with its items packed
-# into a JSON string. Each item is now list_item + paragraph.
+# into a JSON string. 18 once each item became list_item + paragraph.
+#
+# 17 since #60, and the two changes pull in opposite directions. Derived from
+# cmark's own HTML for this file rather than read off the binary:
+#
+#   <blockquote><p>...</p></blockquote>   +1  the paragraph is no longer folded
+#                                             away into the blockquote
+#   <li>Item 1 <ul>...</ul></li>          =   list_item > plain + list, where it
+#                                             was list_item > paragraph + list
+#   <li>Nested item</li>, <li>Item 2</li> -2  tight items with a single text
+#                                             child fold onto the item
+#
+# Expected sequence, which the binary reproduces exactly:
+#   heading paragraph heading blockquote paragraph heading
+#   list list_item plain list list_item list_item
+#   code code table hr paragraph
 query I
 SELECT count(*) FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE kind = 'block';
 ----
-18
+17
 
 # Verify all expected block types are present
 query I
 SELECT count(DISTINCT element_type) FROM read_markdown_blocks('test/data/blocks_nested.md') WHERE kind = 'block';
 ----
-8
+9
 
-# Rich text is emitted as structured kind='inline' children at level 2 (not
-# markdown syntax inside content); the blockquote decomposes into inline rows
+# Rich text is emitted as structured kind='inline' children (not markdown syntax
+# inside content); the blockquote decomposes into inline rows.
+#
+# Level 3, not 2, since #60: this file's only inline run is the blockquote's, and
+# the blockquote's paragraph used to be folded away -- putting its inlines
+# directly under the blockquote at 2. With the paragraph restored the chain is
+# blockquote(1) > paragraph(2) > inlines(3).
 query II
-SELECT count(*) > 0, bool_and(level = 2)
+SELECT count(*) > 0, bool_and(level = 3)
 FROM read_markdown_blocks('test/data/blocks_nested.md')
 WHERE kind = 'inline';
 ----
@@ -271,10 +295,23 @@ true
 # Test: Multiple files via glob
 # =============================================================================
 
+# 50 since #60, and the two directions both show up in the per-file counts:
+#
+#   blocks_basic          4 -> 5    the blockquote's paragraph is no longer folded
+#   blocks_list           7 -> 4    three tight items fold their run onto the item
+#   blocks_ordered_list   7 -> 4    same
+#   blocks_unicode        9 -> 7    same, two items
+#   blocks_nested        18 -> 17   one of each, and a `plain` where the outer
+#                                   tight item holds both a run and a sublist
+#   frontmatter 3, hr 3, special 6, table 1 -- unchanged, no lists
+#
+# Every one of those is what cmark says the file is: <li>x</li> is tight and
+# folds, <li><p>x</p></li> is loose and does not, and <blockquote><p>x</p></…>
+# has a paragraph in it.
 query I
 SELECT count(*) FROM read_markdown_blocks('test/data/blocks_*.md') WHERE kind = 'block';
 ----
-58
+50
 
 query I
 SELECT count(DISTINCT filename) FROM read_markdown_blocks('test/data/blocks_*.md', include_filepath := true);
@@ -325,10 +362,20 @@ true
 # Test: Blockquote content is properly extracted
 # =============================================================================
 
-query I
-SELECT content FROM read_markdown_blocks('test/data/blocks_basic.md') WHERE element_type = 'blockquote';
+# The CARRIER changed with #60. cmark's answer for `> A quote` is
+# <blockquote><p>A quote</p></blockquote> -- there is a paragraph, and this
+# reader used to delete it, folding the text onto the blockquote itself. That
+# made BlockQuote[Para[Str]] indistinguishable from BlockQuote[Plain[Str]].
+# The blockquote now carries no content of its own and the text is in its child,
+# which is what "properly extracted" has to mean if the shape is to survive.
+query II
+SELECT b.element_type, b.content
+FROM unnest(parse_markdown_to_duck_blocks((SELECT content FROM read_text('test/data/blocks_basic.md')))) AS t(b)
+WHERE b.element_type IN ('blockquote', 'paragraph') AND b.level >= 1 AND b.element_order >= 3
+ORDER BY b.element_order;
 ----
-A quote
+blockquote	NULL
+paragraph	A quote
 
 # =============================================================================
 # Test: a list carries NO content -- its items are children
@@ -349,11 +396,19 @@ SELECT count(*) FROM read_markdown_blocks('test/data/blocks_list.md') WHERE elem
 ----
 3
 
-# ...and each item's text is in a paragraph beneath it, not in the list
+# ...and each item's text is on the ITEM, not in the list and not in a paragraph
+# beneath it. cmark renders this file as <ul><li>Item 1</li>... -- tight, no <p> --
+# so each run is a Plain and 6.0's content rule folds it onto its item (#60).
+# There are no paragraphs in this document at all, which is the assertion below.
 query I
-SELECT string_agg(content, '|' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'paragraph';
+SELECT string_agg(content, '|' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'list_item';
 ----
 Item 1|Item 2|Item 3
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/data/blocks_list.md') WHERE element_type = 'paragraph';
+----
+0
 
 # =============================================================================
 # Test: Unicode and international characters
@@ -371,10 +426,13 @@ SELECT bool_or(content LIKE '%émojis%') FROM read_markdown_blocks('test/data/bl
 ----
 true
 
-# The list's non-ASCII text lives in its items, not in the list's own content
+# The list's non-ASCII text lives in its items, not in the list's own content --
+# and since #60 it is ON the item rather than in a paragraph beneath it, because
+# cmark renders this list as <li>中文</li>... with no <p>. The property being
+# pinned is that multi-byte text survives the carrier, and it does.
 query I
 SELECT string_agg(content, '|' ORDER BY element_order) FROM read_markdown_blocks('test/data/blocks_unicode.md') b
-WHERE b.element_type = 'paragraph' AND b.level > 1;
+WHERE b.element_type = 'list_item';
 ----
 中文|العربية|עברית
 

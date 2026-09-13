@@ -16,19 +16,19 @@ require markdown
 
 # Structural bullet list: the item's text lives in its child paragraph
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'alpha', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'beta', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'- alpha\n- beta\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'alpha', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'beta', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'- alpha\n\n- beta\n\n';
 ----
 true
 
 # Ordered list numbers from the container's start attribute
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '3', 'number_style': 'Decimal', 'number_delim': 'Period'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'one', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'two', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'3. one\n4. two\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '3', 'number_style': 'Decimal', 'number_delim': 'Period'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'one', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'two', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'3. one\n\n4. two\n\n';
 ----
 true
 
 # number_style and number_delim are honoured, so iii) does not come back as 3.
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '3', 'number_style': 'LowerRoman', 'number_delim': 'OneParen'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'one', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'two', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'iii) one\niv) two\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: NULL, encoding: 'text', attributes: MAP{'list_type': 'ordered', 'start': '3', 'number_style': 'LowerRoman', 'number_delim': 'OneParen'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'paragraph', content: 'one', level: 3, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 3}, {kind: 'block', element_type: 'paragraph', content: 'two', level: 3, encoding: 'text', attributes: MAP{}, element_order: 4}]) = E'iii) one\n\niv) two\n\n';
 ----
 true
 
@@ -491,7 +491,7 @@ true
 
 # Mixed: one item of each shape in the same list
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'flat', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'nested', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'- flat\n- nested\n\n';
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'list', content: NULL, level: 1, encoding: 'text', attributes: MAP{'list_type': 'bullet'}, element_order: 0}, {kind: 'block', element_type: 'list_item', content: 'flat', level: 2, encoding: 'text', attributes: MAP{}, element_order: 1}, {kind: 'block', element_type: 'list_item', content: NULL, level: 2, encoding: 'text', attributes: MAP{}, element_order: 2}, {kind: 'block', element_type: 'paragraph', content: 'nested', level: 3, encoding: 'text', attributes: MAP{}, element_order: 3}]) = E'- flat\n\n- nested\n\n';
 ----
 true
 

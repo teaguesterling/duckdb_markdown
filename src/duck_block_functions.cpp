@@ -762,6 +762,23 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		if (heading_level > 6)
 			heading_level = 6;
 		result = string(heading_level, '#') + " " + content + "\n\n";
+	} else if (element_type == Vocab::TYPE_PLAIN) {
+		// Pandoc's Plain: a text run with NO paragraph semantics, so no blank line
+		// after it. That single newline is the entire difference between a tight
+		// list item and a loose one on the way out (#60) -- a `plain` followed by a
+		// sublist renders `- a\n  - b`, while a `paragraph` in the same position
+		// renders `- a\n\n  - b`, which is a loose list.
+		//
+		// Spacing is NOT where tightness lives. A `plain` renders with the same
+		// blank line as a paragraph, because at top level or beside a caption it
+		// must not merge with what follows -- `x\nnext` is one paragraph in
+		// CommonMark. Tightness is decided in the LIST ITEM below, which is the only
+		// place that knows whether the run and its sibling belong to a tight list.
+		//
+		// The first attempt put the single newline here and guarded the merge in the
+		// range renderer. That guard could not work: several branches emit and
+		// `continue` before reaching it, and the caption branch is one of them.
+		result = content + "\n\n";
 	} else if (element_type == Vocab::TYPE_PARAGRAPH) {
 		// Plain paragraph
 		result = content + "\n\n";
@@ -1336,6 +1353,23 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 						continue;
 					}
 
+					// LOOSE OR TIGHT, decided from the encoding rather than guessed.
+					// An item holding a `paragraph` is Pandoc's Para and the list is
+					// loose; an item carrying its text in `content`, or holding a
+					// `plain`, is tight (#60). Before the reader emitted `plain` this
+					// distinction did not survive the read at all, so the writer had
+					// nothing to key on and rendered every list tight -- which
+					// cancelled the reader's opposite collapse and kept the round-trip
+					// suite green while both halves were broken.
+					bool loose = false;
+					for (idx_t j = i + 1; j < scope_end && !loose; j++) {
+						if (DuckBlockLevel(list_children[j]) == item_level + 1 &&
+						    DuckBlockElementType(list_children[j]) == Vocab::TYPE_PARAGRAPH) {
+							loose = true;
+						}
+					}
+
+					bool first_item = true;
 					for (idx_t j = i + 1; j < scope_end;) {
 						if (DuckBlockLevel(list_children[j]) != item_level) {
 							// Not an item -- a producer we do not recognise, or a
@@ -1358,7 +1392,31 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 						                   ? RenderDuckBlockRange(list_children, j + 1, item_end, depth + 1)
 						                   : DuckBlockContent(list_children[j]);
 						StringUtil::Trim(inner);
+						// TIGHT ITEM: the run and its first sibling have no blank line
+						// between them -- that is what `- a\n  - b` means, and a `plain`
+						// child is how the reader says the run was a Plain (#60).
+						//
+						// ONLY THE FIRST BOUNDARY is collapsed, never every "\n\n" in the
+						// item. An outer tight item may hold a sublist that is itself
+						// LOOSE, and flattening those would destroy the inner list's
+						// spacing to fix the outer one's:
+						//
+						//     - a          outer tight
+						//       - x        inner LOOSE -- its own blank lines must stay
+						//
+						//       - y
+						if (!loose && item_end > j + 1 &&
+						    DuckBlockElementType(list_children[j + 1]) == Vocab::TYPE_PLAIN) {
+							const auto brk = inner.find("\n\n");
+							if (brk != string::npos) {
+								inner.replace(brk, 2, "\n");
+							}
+						}
 						const string marker = ordered ? FormatListMarker(number++, number_style, number_delim) : "- ";
+						if (loose && !first_item) {
+							result += "\n";
+						}
+						first_item = false;
 						result += IndentContinuation(inner, marker);
 						j = item_end;
 					}

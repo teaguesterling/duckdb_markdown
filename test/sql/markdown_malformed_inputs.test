@@ -261,14 +261,19 @@ true
 # 500 levels of list nesting. This used to be ONE block: the reader emitted a
 # JSON array of item strings and skipped nested lists entirely, so 499 levels
 # were silently discarded and "1" looked like a tidy answer. Structural emission
-# keeps them -- 3 elements per level -- and still round-trips without throwing.
+# keeps them and still round-trips without throwing.
+#
+# 1499, not 1500: every level but the last is list + list_item + plain, because
+# the item holds a sublist as well as its run. The INNERMOST item has no sublist,
+# so it is a tight item with a single text child and 6.0's content rule folds the
+# run onto it -- 2 blocks, not 3 (#60). 499*3 + 2 = 1499.
 query II
 SELECT len(parse_markdown_to_duck_blocks(md)),
        length(duck_blocks_to_md(parse_markdown_to_duck_blocks(md))) > 0
 FROM (SELECT string_agg(repeat('  ', i) || '- i', chr(10) ORDER BY i) AS md
       FROM range(0, 500) t(i));
 ----
-1500	true
+1499	true
 
 # 200 nested emphasis delimiters on each side: GetInlineText walks this with a
 # depth guard (MAX_INLINE_DEPTH) rather than recursing without bound.
