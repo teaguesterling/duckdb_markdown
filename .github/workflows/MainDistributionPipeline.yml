@@ -33,8 +33,8 @@ jobs:
   # A RED RUN HERE IS NOW A BUG TO FIX, not noise to note. That is the change in
   # standing, and it is only defensible because v2.0 support is the target rather
   # than a someday: the three breaks this job used to report on every push are fixed
-  # (see duckdb_compat.hpp), and the fourth -- ConstantExpression -- is fixed in this
-  # same branch.
+  # (see duckdb_compat.hpp), and the fourth -- ConstantExpression -- is fixed as of
+  # v1.9.1.
   #
   # THE `if` IS NARROWER THAN "always", and deliberately. Pushing to a branch fires a
   # push run AND a pull_request run against the same commit, and a PR's rollup
@@ -46,21 +46,12 @@ jobs:
   # WORKFLOW accepts only name/needs/if/permissions/uses/with/secrets/strategy/
   # concurrency -- `continue-on-error` is not among them, and adding it makes the whole
   # workflow fail to PARSE (zero jobs scheduled, run marked failed).
-  # UNPARKED 2026-09-04. It was parked on 2026-09-03 because DuckDB main had become
-  # the v2.0 line (v2.0-cyanoptera): against a major bump the canary reported the
-  # same known breakage on every push, which is noise rather than warning. All three
-  # breaks it was reporting, from run 33717059343, are now fixed -- see
-  # src/include/duckdb_compat.hpp:
-  #   LogicalType::SetAlias                 removed -> CompatWithAlias
-  #   UnaryExecutor::ExecuteWithNulls       removed -> explicit validity loop
-  #   vector<string> -> vector<Identifier>  in copy_to_bind_t and
-  #                                         table_function_bind_t -> CompatName
-  # Run 33926873489 is green against main: 49 passed, 0 failed.
   #
-  # Expect it to go red again, and treat that as signal rather than breakage here.
-  # `main` is a moving target: it built two different DuckDB commits within one day
-  # during this port, and the second rejected a named argument on a scalar function
-  # that the first had accepted. That is exactly the advance warning this job is for.
+  # MATRIX WIDTH: reduced_ci_mode defaults to `auto`, which builds three arches on
+  # pull requests (linux_amd64, windows_amd64, wasm_eh) and all nine on pushes to
+  # main and on dispatch (measured 2026-09-13). The push that merges is therefore the
+  # full-matrix check before any registry PR. `reduced_ci_mode: disabled` below would
+  # widen PRs too; exclude_archs can only narrow a matrix, never widen one.
   duckdb-next-build:
     name: Next-line build — DuckDB v2.0
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
@@ -71,6 +62,25 @@ jobs:
       # moves under the canary -- duck_block_utils' ExecuteWithNulls regression
       # surfaced there -- so a red canary could not be told from upstream churn.
       duckdb_version: v2.0-cyanoptera
+      ci_tools_version: main
+      extension_name: markdown
+      vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
+      vcpkg_url: https://github.com/Microsoft/vcpkg.git
+
+  # ADVISORY canary on DuckDB `main`, the line beyond 2.0. Pushes to main and
+  # dispatch only, never pull requests: a PR's rollup would go red for a line nothing
+  # ships. A red run here is a warning about upstream, not a bug in the change -- the
+  # v2.0-cyanoptera job above is the gate. `main` moves under it: during the first 2.0
+  # port it built two different DuckDB commits within one day, and the second rejected
+  # a named argument on a scalar function that the first had accepted. That advance
+  # warning is what this job is for. To run it on a branch:
+  #   gh workflow run MainDistributionPipeline.yml --ref <branch>
+  duckdb-main-canary:
+    name: Canary build — DuckDB main (advisory)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    with:
+      duckdb_version: main
       ci_tools_version: main
       extension_name: markdown
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
@@ -87,21 +97,41 @@ jobs:
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
-  # src/include/duck_block_vocabulary.hpp is a VENDORED copy of the published
-  # duck_block vocabulary, so nothing notices when upstream moves. Renames are a
-  # compile error once the constants are in use; a changed VALUE is not -- it
-  # compiles clean and silently stops matching. This is what catches that.
-  # No submodules: the point of vendoring is that this needs none.
+  # THE PIN EQUALS THE REGISTRY DEFAULT, AND THE WORKFLOW SHIPS EVERY LINE THE
+  # REGISTRY BUILDS. Fleet rule (Teague, 2026-09-13): the duckdb submodule is
+  # pinned at exactly the commit of the tag the stable build ships against, which
+  # is also the version the community registry builds every extension with, and
+  # this workflow also ships the next line the registry builds (build_next.yml).
+  # Otherwise local builds and each repo's own CI artifacts carry a different
+  # DuckDB than the served one, and extensions built in different repos cannot
+  # co-load locally (the ABI is exact-version). Measured 2026-09-13: five sibling
+  # repos were on a July dev commit, one on a v1.5.6-dev commit, one on DuckDB
+  # main. Nothing but a check keeps this true. The second assertion keeps this
+  # job's constants from drifting away from the `duckdb_version:` the build jobs
+  # above actually use.
   duckdb-pin:
     name: DuckDB submodule pin equals the shipped tag
+    # Name kept as-is even though the rule is now "pin equals the registry default":
+    # required-check configuration may key on this job name.
     runs-on: ubuntu-latest
     env:
       DUCKDB_VERSION: v1.5.5
+      DUCKDB_NEXT: v2.0-cyanoptera
+      # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
+      # for one release; set this to that version then so the stray-literal scan below
+      # exempts it instead of flagging it. Empty the rest of the time.
+      DUCKDB_LEGACY: ''
     steps:
       - uses: actions/checkout@v4
       - name: Compare the submodule pin with the tag's commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          # One variable, one edit point: every sibling repo copies this job
+          # verbatim, and the greps and the stray-literal scan below all read
+          # this same file.
+          wf=.github/workflows/MainDistributionPipeline.yml
           want=$(git ls-remote --tags https://github.com/duckdb/duckdb "refs/tags/${DUCKDB_VERSION}^{}" | cut -f1)
           [ -n "$want" ] || want=$(git ls-remote --tags https://github.com/duckdb/duckdb "refs/tags/${DUCKDB_VERSION}" | cut -f1)
           have=$(git ls-tree HEAD duckdb | awk '{print $3}')
@@ -109,35 +139,100 @@ jobs:
           echo "submodule pin          -> ${have}"
           [ -n "$want" ] || { echo "::error::could not resolve tag ${DUCKDB_VERSION} upstream"; exit 1; }
           [ "$want" = "$have" ] || { echo "::error::duckdb submodule pin ${have} is not the ${DUCKDB_VERSION} tag ${want}; run: git -C duckdb fetch --tags && git -C duckdb checkout ${DUCKDB_VERSION}"; exit 1; }
-          n=$(grep -c "duckdb_version: ${DUCKDB_VERSION}$" .github/workflows/MainDistributionPipeline.yml)
+          n=$(grep -c "duckdb_version: ${DUCKDB_VERSION}$" "$wf" || true)
           [ "$n" -ge 1 ] || { echo "::error::no build job in this workflow ships duckdb_version: ${DUCKDB_VERSION}; this job's constant has drifted"; exit 1; }
-          # The AUTHORITY is the registry's own default, not this job's constant: a
+          m=$(grep -c "duckdb_version: ${DUCKDB_NEXT}$" "$wf" || true)
+          [ "$m" -ge 1 ] || { echo "::error::no build job in this workflow builds the next line duckdb_version: ${DUCKDB_NEXT}"; exit 1; }
+          # NO OTHER DuckDB PATCH VERSION may drift from the shipped ${DUCKDB_VERSION}
+          # anywhere else in this file: sibling workflows (yaml, mcp) embed a version
+          # in artifact NAMES and CLI download URLs (e.g. `yaml-v1.5.4-extension-wasm_*`,
+          # `releases/download/v1.5.4/duckdb_cli`) that the `duckdb_version:` greps above
+          # cannot see, so a bump left them stale and this job went green over a red
+          # build. Comment lines (first non-space char `#`) are exempt, and so are
+          # `uses:` lines (a `- uses:` list item too): a third-party action pin like
+          # `@v2.0.4` is not a DuckDB version. Branch/tag names like `v2.0-cyanoptera`
+          # and `v1.5-variegata` have no third numeric component and so never match
+          # this pattern. DUCKDB_LEGACY, when set (flip day, see above), is exempt too.
+          bad=0
+          while IFS=: read -r lineno line; do
+            printf '%s\n' "$line" | grep -qE '^[[:space:]]*#' && continue
+            printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:' && continue
+            for v in $(printf '%s\n' "$line" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true); do
+              if [ "$v" != "$DUCKDB_VERSION" ]; then
+                if [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ]; then
+                  continue
+                fi
+                echo "::error::line ${lineno}: ${line} -- a DuckDB version literal that is not the shipped ${DUCKDB_VERSION}: derive it from the shipped version or bump it"
+                bad=1
+              fi
+            done
+          done < <(grep -nE 'v[0-9]+\.[0-9]+\.[0-9]+' "$wf" || true)
+          [ "$bad" -eq 0 ] || exit 1
+          # THE AUTHORITY is the registry's own files, not this job's constants: a
           # constant checked only against itself passes for a year after the registry
-          # moves (panduck, 2026-09-13). Resolve main to a sha first so the raw fetch is
-          # not served from the branch cache. TWO degraded paths, deliberately different:
-          # UNREACHABLE is the world being unavailable -> a NOTE, and the summary says
-          # the assertion was not made; REACHABLE BUT UNPARSEABLE is this check being
-          # wrong about the file (renamed input, moved default) -> a FAILURE, because
-          # only the check can fix that and a green run measuring nothing is the way
-          # this class of check rots (panduck again).
+          # moves (panduck, 2026-09-13). Resolve main to a sha first so the raw fetches
+          # are not served from the branch cache. THREE degraded paths, deliberately
+          # different: UNREACHABLE (curl itself failed, HTTP code 000) is the world
+          # being unavailable -> a NOTE, and the summary says the registry assertions
+          # were not made, with only the local-constant assertions above run; a
+          # non-2xx HTTP code (e.g. a renamed/removed registry file) is this check
+          # asking the world a well-formed question and getting told no -> a FAILURE
+          # naming the code and URL (a bare `curl -sf` would have mistaken this for
+          # UNREACHABLE and measured nothing); REACHABLE, 2xx, BUT UNPARSEABLE is this
+          # check being wrong about the file's content -> also a FAILURE.
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
-          sha=$(curl -sf https://api.github.com/repos/duckdb/community-extensions/commits/main | grep -m1 -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
-          if body=$(curl -sf "https://raw.githubusercontent.com/duckdb/community-extensions/${sha:-main}/.github/workflows/build.yml"); then
-            registry=$(printf '%s' "$body" | grep -m1 -o "inputs.duckdb_version || 'v[0-9][0-9.]*'" | grep -o "'v[0-9][0-9.]*'" | tr -d "'" || true)
-            if [ -z "$registry" ]; then
-              echo "::error::community-extensions build.yml at ${sha:-main} was fetched but has no \"inputs.duckdb_version || 'vX.Y.Z'\" default; this check's parse is wrong about the registry, fix the check"
-              echo "duckdb-pin: FAILED, registry file fetched but unparseable" >> "$summary"; exit 1
-            elif [ "$registry" != "$DUCKDB_VERSION" ]; then
-              echo "::error::the community registry builds at ${registry} (build.yml default at ${sha:-main}) but this repo ships and pins ${DUCKDB_VERSION}; the served artifact and the local build differ"
-              echo "duckdb-pin: FAILED, registry builds ${registry}, repo pins ${DUCKDB_VERSION}" >> "$summary"; exit 1
-            fi
-            mode="checked against the registry (${registry} at ${sha:-main})"
+          base="https://raw.githubusercontent.com/duckdb/community-extensions"
+          # An Authorization: Bearer header with an EMPTY token is not "no header": GitHub
+          # answers 401 to it, worse than sending no header at all (confirmed empirically).
+          # An unauthenticated local run (no GITHUB_TOKEN, which the docs tell maintainers
+          # to run) would then always miss sha resolution and fall back to the `main` REF
+          # NAME, comparing against whatever the branch URL's cache happens to be serving --
+          # the exact staleness this sha-resolution step exists to avoid. So the header is
+          # added only when a token is actually present; CI always has one.
+          auth=(); [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+          sha=$(curl -sf "${auth[@]}" https://api.github.com/repos/duckdb/community-extensions/commits/main | grep -m1 -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
+          f1=$(mktemp); f2=$(mktemp)
+          # curl itself writes 000 to -w's %{http_code} when no HTTP response was
+          # received at all (DNS failure, connection refused, timeout); `|| echo 000`
+          # would DOUBLE that to "000000" (curl's own "000" plus the fallback's),
+          # which then fails the equality check below and misreads UNREACHABLE as a
+          # non-2xx code. `|| true` only stops `set -e` from killing the script on
+          # curl's nonzero exit; the "000" already captured is curl's, unaltered.
+          code1=$(curl -s -o "$f1" -w '%{http_code}' "${base}/${sha:-main}/.github/workflows/build.yml" || true)
+          code2=$(curl -s -o "$f2" -w '%{http_code}' "${base}/${sha:-main}/.github/workflows/build_next.yml" || true)
+          if [ "$code1" = "000" ] || [ "$code2" = "000" ]; then
+            echo "::notice::could not reach the community registry; the pin was checked against the local constants only"
+            mode="NOT checked against the registry (unreachable); local constants ${DUCKDB_VERSION}/${DUCKDB_NEXT} only"
+          elif [ "${code1#2}" = "$code1" ]; then
+            url="${base}/${sha:-main}/.github/workflows/build.yml"
+            echo "::error::community registry returned HTTP ${code1} for ${url}"
+            echo "duckdb-pin: FAILED, registry returned ${code1} for ${url}" >> "$summary"; exit 1
+          elif [ "${code2#2}" = "$code2" ]; then
+            url="${base}/${sha:-main}/.github/workflows/build_next.yml"
+            echo "::error::community registry returned HTTP ${code2} for ${url}"
+            echo "duckdb-pin: FAILED, registry returned ${code2} for ${url}" >> "$summary"; exit 1
           else
-            echo "::notice::could not reach the community registry; the pin was checked against the local constant only"
-            mode="NOT checked against the registry (unreachable); local constant ${DUCKDB_VERSION} only"
+            body=$(cat "$f1")
+            next_body=$(cat "$f2")
+            registry=$(printf '%s' "$body" | grep -m1 -o "inputs.duckdb_version || 'v[0-9][0-9.]*'" | grep -o "'v[0-9][0-9.]*'" | tr -d "'" || true)
+            registry_next=$(printf '%s' "$next_body" | grep -m1 -o "duckdb_version: *'v[0-9][0-9.]*-[a-z]*'" | grep -o "'v[^']*'" | tr -d "'" || true)
+            if [ -z "$registry" ] || [ -z "$registry_next" ]; then
+              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml/build_next.yml carry no recognisable duckdb_version (default='${registry}', next='${registry_next}'); this check's parse is wrong about the registry, fix the check"
+              echo "duckdb-pin: FAILED, registry files fetched but unparseable" >> "$summary"; exit 1
+            fi
+            if [ "$registry" != "$DUCKDB_VERSION" ] || [ "$registry_next" != "$DUCKDB_NEXT" ]; then
+              echo "::error::the community registry builds default=${registry} next=${registry_next} (at ${sha:-main}) but this repo ships default=${DUCKDB_VERSION} next=${DUCKDB_NEXT}; update the pin, the constants and the build jobs to the registry's lines"
+              echo "duckdb-pin: FAILED, registry ${registry}/${registry_next} vs repo ${DUCKDB_VERSION}/${DUCKDB_NEXT}" >> "$summary"; exit 1
+            fi
+            mode="checked against the registry (default ${registry}, next ${registry_next}, at ${sha:-main})"
           fi
-          echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} build job(s) ship it; ${mode}" | tee -a "$summary"
+          echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} job(s) shipping ${DUCKDB_VERSION} and ${m} job(s) shipping ${DUCKDB_NEXT}; ${mode}" | tee -a "$summary"
 
+  # src/include/duck_block_vocabulary.hpp is a VENDORED copy of the published
+  # duck_block vocabulary, so nothing notices when upstream moves. Renames are a
+  # compile error once the constants are in use; a changed VALUE is not -- it
+  # compiles clean and silently stops matching. This is what catches that.
+  # No submodules: the point of vendoring is that this needs none.
   vocabulary-drift:
     name: duck_block Vocabulary Drift
     runs-on: ubuntu-latest
