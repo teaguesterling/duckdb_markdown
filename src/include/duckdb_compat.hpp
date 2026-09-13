@@ -2,6 +2,9 @@
 
 #include "duckdb.hpp"
 #include "duckdb/function/table_function.hpp"
+// ConstantExpression is not reachable through duckdb.hpp; the path is identical
+// on the v1.5 and v2.0 lines, so a direct include needs no probe of its own.
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include <type_traits>
 #include <utility>
 
@@ -237,5 +240,66 @@ template <class FV = FlatVector>
 inline ValidityMask &CompatFlatValidityMutable(Vector &vec) {
 	return CompatFlatValidityMutableImpl<FV>(vec, CompatHasFlatValidityMutable<FV>());
 }
+
+// ConstantExpression(const Value &) is DELETED on v2.0, which names its own
+// replacement in the deletion:
+//
+//     DUCKDB_API explicit ConstantExpression(Literal literal);
+//     //! Values are not literals - use ConstantExpression::FromValue
+//     explicit ConstantExpression(const Value &value) = delete;
+//     ...
+//     DUCKDB_API static unique_ptr<ParsedExpression> FromValue(const Value &);
+//
+// The v1.5 line has `explicit ConstantExpression(Value)` and NO FromValue, so
+// neither spelling compiles on both and the replacement is not a rename: v2.0's
+// FromValue returns a ParsedExpression that may be a literal, a constructor call
+// for a nested value, or a cast. Our call site pushes into a
+// vector<unique_ptr<ParsedExpression>>, so the richer return type slots in.
+//
+// PROBE THE THING THAT CHANGED, per this file's own rule: ask whether
+// ConstantExpression::FromValue exists, not whether some header is present or
+// some version macro is set. FromValue IS the migration DuckDB added; a probe on
+// it cannot answer for a different change the way a header probe can (see the
+// identifier.hpp backport above, which is exactly that failure).
+template <class T, class = void>
+struct CompatHasFromValue : std::false_type {};
+template <class T>
+struct CompatHasFromValue<T, decltype(void(T::FromValue(std::declval<const Value &>())))> : std::true_type {};
+
+template <class CE>
+inline unique_ptr<ParsedExpression> CompatConstantImpl(Value value, std::true_type) {
+	return CE::FromValue(value);
+}
+template <class CE>
+inline unique_ptr<ParsedExpression> CompatConstantImpl(Value value, std::false_type) {
+	return make_uniq<CE>(std::move(value));
+}
+
+//! A parsed expression for a literal value, on either DuckDB line.
+template <class CE = ConstantExpression>
+inline unique_ptr<ParsedExpression> CompatConstant(Value value) {
+	return CompatConstantImpl<CE>(std::move(value), CompatHasFromValue<CE>());
+}
+
+// BOTH ANSWERS ARE PINNED, not just the one our pin happens to give. A detector
+// tested only against the line you build on is a detector you have half-checked:
+// it would pass identically if it always returned false, which is precisely the
+// answer v1.5 wants and v2.0 does not. These cost nothing at runtime and fail
+// the build the day the probe stops discriminating.
+namespace compat_detail {
+//! Shaped like v2.0's ConstantExpression: Value constructor deleted, FromValue present.
+struct HasFromValueProbe {
+	explicit HasFromValueProbe(const Value &) = delete;
+	static unique_ptr<ParsedExpression> FromValue(const Value &);
+};
+//! Shaped like v1.5's: a Value constructor and no FromValue.
+struct NoFromValueProbe {
+	explicit NoFromValueProbe(Value);
+};
+static_assert(CompatHasFromValue<HasFromValueProbe>::value,
+              "CompatHasFromValue must detect FromValue where it exists (the v2.0 shape)");
+static_assert(!CompatHasFromValue<NoFromValueProbe>::value,
+              "CompatHasFromValue must not fire where FromValue is absent (the v1.5 shape)");
+} // namespace compat_detail
 
 } // namespace duckdb

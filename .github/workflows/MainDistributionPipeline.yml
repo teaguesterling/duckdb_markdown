@@ -17,17 +17,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Forward-compatibility canary: builds against DuckDB main to give advance warning
-  # of upstream API changes. It is EXPECTED to go red whenever DuckDB main breaks an
-  # API this extension uses -- the extension targets the stable release below, and
-  # outstanding breaks are tracked as a checklist in the "DuckDB main API breaks"
-  # issue.
+  # THE NEXT-LINE BUILD. No longer advisory, and no longer gated to main: it runs on
+  # every pull request, because the thing it checks is a property of the CHANGE, not
+  # of upstream drift (Teague, 2026-09-13; duck_block_utils' dual-line design spec).
   #
-  # It runs ONLY on pushes to main (and on demand). Skipping `pull_request` alone was
-  # not enough: pushing to a branch fires a push run AND a pull_request run against the
-  # same commit, and a PR's check rollup includes both -- so the canary still showed as
-  # a red check on every PR. Upstream drift is a property of main, not of a branch, so
-  # main is where it belongs.
+  # WHY IT WAS PROMOTED. markdown's community descriptor carried no ref_next, so the
+  # registry's prerelease leg printed "Skipping prerelease validation" and every
+  # release passed green having built nothing against v2.0. Adding ref_next in
+  # community-extensions#2690 ran it for the first time, and it failed immediately on
+  # a constructor DuckDB had deleted -- meaning this extension had been broken on the
+  # v2.0 line for an unknown number of releases with nothing anywhere saying so. A
+  # gated canary could not have caught it: the break arrived in a PR and the canary
+  # does not run on PRs. That is the gap this closes.
+  #
+  # A RED RUN HERE IS NOW A BUG TO FIX, not noise to note. That is the change in
+  # standing, and it is only defensible because v2.0 support is the target rather
+  # than a someday: the three breaks this job used to report on every push are fixed
+  # (see duckdb_compat.hpp), and the fourth -- ConstantExpression -- is fixed in this
+  # same branch.
+  #
+  # THE `if` IS NARROWER THAN "always", and deliberately. Pushing to a branch fires a
+  # push run AND a pull_request run against the same commit, and a PR's rollup
+  # includes both -- so an unconditional job builds the whole matrix TWICE per push
+  # and shows two rows per check. Running on pull_request plus pushes to main gives
+  # one run per PR and one per merge, which is the coverage without the duplication.
   #
   # `if` is used rather than `continue-on-error` because a job calling a REUSABLE
   # WORKFLOW accepts only name/needs/if/permissions/uses/with/secrets/strategy/
@@ -49,11 +62,15 @@ jobs:
   # during this port, and the second rejected a named argument on a scalar function
   # that the first had accepted. That is exactly the advance warning this job is for.
   duckdb-next-build:
-    name: Canary — build against DuckDB main (advisory)
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    name: Next-line build — DuckDB v2.0
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: main
+      # The 2.0 RELEASE branch, not `main`: one canary line for the whole fleet
+      # (Teague's rule, 2026-09-13), and the branch 2.0.0 is cut from. `main`
+      # moves under the canary -- duck_block_utils' ExecuteWithNulls regression
+      # surfaced there -- so a red canary could not be told from upstream churn.
+      duckdb_version: v2.0-cyanoptera
       ci_tools_version: main
       extension_name: markdown
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
@@ -61,10 +78,10 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.4
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.5
     with:
-      duckdb_version: v1.5.4
-      ci_tools_version: v1.5.4
+      duckdb_version: v1.5.5
+      ci_tools_version: v1.5.5
       extension_name: markdown
       # Pin to vcpkg commit with verified cmark-gfm support (tested 2025-01-08)
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
@@ -75,6 +92,52 @@ jobs:
   # compile error once the constants are in use; a changed VALUE is not -- it
   # compiles clean and silently stops matching. This is what catches that.
   # No submodules: the point of vendoring is that this needs none.
+  duckdb-pin:
+    name: DuckDB submodule pin equals the shipped tag
+    runs-on: ubuntu-latest
+    env:
+      DUCKDB_VERSION: v1.5.5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare the submodule pin with the tag's commit
+        run: |
+          set -eu
+          want=$(git ls-remote --tags https://github.com/duckdb/duckdb "refs/tags/${DUCKDB_VERSION}^{}" | cut -f1)
+          [ -n "$want" ] || want=$(git ls-remote --tags https://github.com/duckdb/duckdb "refs/tags/${DUCKDB_VERSION}" | cut -f1)
+          have=$(git ls-tree HEAD duckdb | awk '{print $3}')
+          echo "shipped tag ${DUCKDB_VERSION} -> ${want}"
+          echo "submodule pin          -> ${have}"
+          [ -n "$want" ] || { echo "::error::could not resolve tag ${DUCKDB_VERSION} upstream"; exit 1; }
+          [ "$want" = "$have" ] || { echo "::error::duckdb submodule pin ${have} is not the ${DUCKDB_VERSION} tag ${want}; run: git -C duckdb fetch --tags && git -C duckdb checkout ${DUCKDB_VERSION}"; exit 1; }
+          n=$(grep -c "duckdb_version: ${DUCKDB_VERSION}$" .github/workflows/MainDistributionPipeline.yml)
+          [ "$n" -ge 1 ] || { echo "::error::no build job in this workflow ships duckdb_version: ${DUCKDB_VERSION}; this job's constant has drifted"; exit 1; }
+          # The AUTHORITY is the registry's own default, not this job's constant: a
+          # constant checked only against itself passes for a year after the registry
+          # moves (panduck, 2026-09-13). Resolve main to a sha first so the raw fetch is
+          # not served from the branch cache. TWO degraded paths, deliberately different:
+          # UNREACHABLE is the world being unavailable -> a NOTE, and the summary says
+          # the assertion was not made; REACHABLE BUT UNPARSEABLE is this check being
+          # wrong about the file (renamed input, moved default) -> a FAILURE, because
+          # only the check can fix that and a green run measuring nothing is the way
+          # this class of check rots (panduck again).
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          sha=$(curl -sf https://api.github.com/repos/duckdb/community-extensions/commits/main | grep -m1 -o '"sha": *"[0-9a-f]*"' | grep -o '[0-9a-f]\{40\}' || true)
+          if body=$(curl -sf "https://raw.githubusercontent.com/duckdb/community-extensions/${sha:-main}/.github/workflows/build.yml"); then
+            registry=$(printf '%s' "$body" | grep -m1 -o "inputs.duckdb_version || 'v[0-9][0-9.]*'" | grep -o "'v[0-9][0-9.]*'" | tr -d "'" || true)
+            if [ -z "$registry" ]; then
+              echo "::error::community-extensions build.yml at ${sha:-main} was fetched but has no \"inputs.duckdb_version || 'vX.Y.Z'\" default; this check's parse is wrong about the registry, fix the check"
+              echo "duckdb-pin: FAILED, registry file fetched but unparseable" >> "$summary"; exit 1
+            elif [ "$registry" != "$DUCKDB_VERSION" ]; then
+              echo "::error::the community registry builds at ${registry} (build.yml default at ${sha:-main}) but this repo ships and pins ${DUCKDB_VERSION}; the served artifact and the local build differ"
+              echo "duckdb-pin: FAILED, registry builds ${registry}, repo pins ${DUCKDB_VERSION}" >> "$summary"; exit 1
+            fi
+            mode="checked against the registry (${registry} at ${sha:-main})"
+          else
+            echo "::notice::could not reach the community registry; the pin was checked against the local constant only"
+            mode="NOT checked against the registry (unreachable); local constant ${DUCKDB_VERSION} only"
+          fi
+          echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} build job(s) ship it; ${mode}" | tee -a "$summary"
+
   vocabulary-drift:
     name: duck_block Vocabulary Drift
     runs-on: ubuntu-latest
@@ -99,12 +162,12 @@ jobs:
     # it was "pure SQL, no extension": the RULES are pure SQL, but the reader
     # under test is this extension and the script loads it.
     #
-    # The artifacts target released v1.5.4, so a stock duckdb of the same version
+    # The artifacts target released v1.5.5, so a stock duckdb of the same version
     # can load them. That is only true of the CI build -- a local dev build
     # reports a submodule hash and no released CLI will touch it.
     #
     # VERSION COUPLING: the artifact name and the CLI url below both hardcode
-    # v1.5.4, matching duckdb-stable-build's duckdb_version above. A reusable
+    # v1.5.5, matching duckdb-stable-build's duckdb_version above. A reusable
     # workflow's `with:` cannot read `env`, so this cannot be a single variable.
     # Bumping the build's version without bumping these two fails LOUDLY here
     # (artifact not found, or the CLI refuses the extension's ABI) rather than
@@ -116,12 +179,12 @@ jobs:
       - name: Download the built extension
         uses: actions/download-artifact@v4
         with:
-          name: markdown-v1.5.4-extension-linux_amd64
+          name: markdown-v1.5.5-extension-linux_amd64
           path: ci-ext
       - name: Install a matching DuckDB CLI
         run: |
           set -euo pipefail
-          curl -fsSL -o duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip
+          curl -fsSL -o duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
           unzip -o duckdb.zip -d ci-bin
           chmod +x ci-bin/duckdb
           ci-bin/duckdb -c "SELECT 'cli ok';"
@@ -140,7 +203,7 @@ jobs:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
     with:
-      duckdb_version: v1.5.4
+      duckdb_version: v1.5.5
       ci_tools_version: main
       extension_name: markdown
       format_checks: 'format'
@@ -151,7 +214,7 @@ jobs:
   # Two layers (see test/wasm/):
   #   1. static symbol check (hard gate) — no duckdb-wasm runtime needed.
   #   2. live load+query in duckdb-wasm (informational / continue-on-error) —
-  #      expected-red until an official duckdb-wasm ships a matching v1.5.4
+  #      expected-red until an official duckdb-wasm ships a matching v1.5.5
   #      build (a version/emscripten skew surfaces as an ABI mismatch on LOAD).
   wasm-load-test:
     name: WASM load test
@@ -165,7 +228,7 @@ jobs:
       - name: Download WASM artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: markdown-v1.5.4-extension-wasm_*
+          pattern: markdown-v1.5.5-extension-wasm_*
           path: wasm-artifacts
       - name: Static symbol check (cmark-gfm must be linked, not unresolved)
         run: bash test/wasm/run_wasm_checks.sh wasm-artifacts
@@ -176,8 +239,8 @@ jobs:
         run: |
           set -uo pipefail
           timeout 300 npm install --no-save
-          mkdir -p repo/v1.5.4/wasm_eh
-          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v1.5.4-extension-wasm_eh/markdown.duckdb_extension.wasm" \
-             repo/v1.5.4/wasm_eh/
+          mkdir -p repo/v1.5.5/wasm_eh
+          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v1.5.5-extension-wasm_eh/markdown.duckdb_extension.wasm" \
+             repo/v1.5.5/wasm_eh/
           timeout 240 node load_test.cjs --repo repo --name markdown --platform eh \
             --query "SELECT md_to_html('# H') AS h" --expect "<h1>"

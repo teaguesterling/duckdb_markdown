@@ -295,7 +295,7 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 	if (is_markdown_file || is_glob_pattern) {
 		// Create read_markdown function call
 		vector<unique_ptr<ParsedExpression>> children;
-		children.push_back(make_uniq<ConstantExpression>(Value(table_name)));
+		children.push_back(CompatConstant(Value(table_name)));
 
 		auto function_expr = make_uniq<FunctionExpression>("read_markdown", std::move(children));
 		auto result = make_uniq<TableFunctionRef>();
