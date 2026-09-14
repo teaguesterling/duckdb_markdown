@@ -492,11 +492,25 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	// Register md_extract_table_rows scalar function (renamed from md_extract_tables)
 	ScalarFunction table_rows_func("md_extract_table_rows", {MarkdownTypes::MarkdownType()},
 	                               LogicalType::LIST(table_row_struct_type), TableRowExtractionFunction);
-	loader.RegisterFunction(table_rows_func);
 
 	// Register md_extract_tables_json scalar function
 	ScalarFunction tables_json_func("md_extract_tables_json", {MarkdownTypes::MarkdownType()},
 	                                LogicalType::LIST(table_json_struct_type), TableJSONExtractionFunction);
+
+	// Both extract through ExtractTables, which calls GetInlineText on every cell,
+	// and GetInlineText throws InvalidInputException past MAX_INLINE_DEPTH. On
+	// v2.0 an unmarked scalar function that throws an execution error has the
+	// throw rewritten into an InternalException, which defeats the depth cap's
+	// readable message (measured on v2.0-cyanoptera). The other extractors here
+	// reach no such throw.
+	//
+	// As with md_to_html/md_to_text, this is not inert on v1.5: it makes the
+	// planner more conservative around these two functions.
+	// See test/sql/markdown_table_extraction_fallible.test.
+	table_rows_func.SetFallible();
+	tables_json_func.SetFallible();
+
+	loader.RegisterFunction(table_rows_func);
 	loader.RegisterFunction(tables_json_func);
 
 	// Register md_extract_sections scalar function
