@@ -1,0 +1,68 @@
+# name: test/sql/markdown_table_extraction_fallible.test
+# description: The table extractors' inline depth cap stays an Invalid Input Error on DuckDB v2.0
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# md_extract_table_rows and md_extract_tables_json reach an InvalidInputException
+# two calls down: the callback calls ExtractTables, ExtractTables calls
+# GetInlineText on every cell, and GetInlineText throws past MAX_INLINE_DEPTH
+# (src/markdown_utils.cpp). Neither function declared SetFallible().
+#
+# On v1.5 that makes no difference to the error. On v2.0 it does. DuckDB
+# v2.0-cyanoptera, src/function/scalar_function.cpp:
+#
+#   void ThrowNonFallibleFunctionError(const Identifier &name, std::exception &ex) {
+#       ErrorData error(ex);
+#       if (!Exception::IsExecutionError(error.Type())) {
+#           throw;
+#       }
+#       throw InternalException("Scalar function \"%s\" threw an execution error, but the "
+#                               "function is not marked as fallible - ...");
+#
+# and src/common/exception.cpp limits IsExecutionError to INVALID_INPUT,
+# OUT_OF_RANGE and CONVERSION. The depth cap exists to turn unbounded recursion
+# into a readable message, and an unmarked function turns that message into an
+# INTERNAL error instead.
+#
+# THE EXPECTATION PINS THE ERROR CLASS, NOT JUST THE TEXT. The INTERNAL form
+# quotes the original message after "Error: ", so a bare substring match on
+# "Markdown inline nesting exceeds" passes on both lines and discriminates
+# nothing. Only the "Invalid Input Error: " prefix fails on an unmarked v2.0
+# build. That is also why the case below is an InvalidInputException: an
+# IOException passes through ThrowNonFallibleFunctionError unchanged, so it
+# cannot tell the two apart (duck_block_utils, measured on v2.0-cyanoptera,
+# 2026-09-14).
+#
+# THE INPUT IS NESTED IMAGES. Each `![` opens an image node that GetInlineText
+# recurses into, so 1001 of them reach depth 1001. Alternating emphasis
+# (`*_*_...`) and nested strikethrough do not reach the cap at 1001 or 3000;
+# cmark does not build them that deep. That was measured on the v1.5.5 build.
+# This file passes on v1.5 with or without the fix. Only the v2.0 build can
+# fail it.
+# =============================================================================
+
+# ---- Boundary: depth 1000 is within the cap, and both functions return the table.
+
+query I
+SELECT len(md_extract_table_rows(('| h |' || chr(10) || '|---|' || chr(10) || '| ' || repeat('![', 1000) || 'x' || repeat('](u)', 1000) || ' |')::MARKDOWN));
+----
+2
+
+query I
+SELECT len(md_extract_tables_json(('| h |' || chr(10) || '|---|' || chr(10) || '| ' || repeat('![', 1000) || 'x' || repeat('](u)', 1000) || ' |')::MARKDOWN));
+----
+1
+
+# ---- Depth 1001: the cap fires, and it must surface as Invalid Input on every line.
+
+statement error
+SELECT md_extract_table_rows(('| h |' || chr(10) || '|---|' || chr(10) || '| ' || repeat('![', 1001) || 'x' || repeat('](u)', 1001) || ' |')::MARKDOWN);
+----
+Invalid Input Error: Markdown inline nesting exceeds maximum supported depth (1000)
+
+statement error
+SELECT md_extract_tables_json(('| h |' || chr(10) || '|---|' || chr(10) || '| ' || repeat('![', 1001) || 'x' || repeat('](u)', 1001) || ' |')::MARKDOWN);
+----
+Invalid Input Error: Markdown inline nesting exceeds maximum supported depth (1000)
