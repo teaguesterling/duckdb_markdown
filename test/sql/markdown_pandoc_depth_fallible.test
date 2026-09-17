@@ -69,14 +69,20 @@ SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', 
 1
 
 # ---- Boundary: depth 1000 is within the cap, and every surface still renders.
+# ----
+# ---- These check rendered CONTENT, not IS NOT NULL. '' IS NOT NULL is true, so
+# ---- an IS NOT NULL form would keep passing if the guard ever began silently
+# ---- returning an empty string instead of rendering -- a green that measures
+# ---- nothing, which is the same defect this file exists to prevent on the error
+# ---- side. Measured at depth 1000: 2005 chars beginning '> **********'.
 
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) IS NOT NULL;
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '> %';
 ----
 true
 
 query I
-SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}) IS NOT NULL;
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}) LIKE '> %';
 ----
 true
 
