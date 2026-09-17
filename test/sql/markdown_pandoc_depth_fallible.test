@@ -1,0 +1,120 @@
+# name: test/sql/markdown_pandoc_depth_fallible.test
+# description: The duck_block -> Markdown converters' Pandoc depth cap stays an Invalid Input Error on DuckDB v2.0
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# duck_block_to_md, duck_blocks_to_md and duck_blocks_to_sections all reach
+# ExtractPandocTextFromVal (src/duck_block_functions.cpp), which throws
+# InvalidInputException past MAX_PANDOC_DEPTH. All three declare SetFallible().
+#
+# WHY THE CLASS PREFIX IS PINNED, and not just the message:
+#
+# On v1.5 the mark makes no difference to the error text. On v2.0 it does.
+# ThrowNonFallibleFunctionError rewrites an unmarked scalar function's
+# execution-error throw into an INTERNAL Error that QUOTES the original message:
+#
+#   INTERNAL Error: Scalar function "x" threw an execution error, but the
+#   function is not marked as fallible ... Error: <the original message>
+#
+# So an expectation matching only "Pandoc inline nesting exceeds ..." matches the
+# rewritten form too, and passes whether or not the function is marked. It cannot
+# detect a lost SetFallible(). Only the "Invalid Input Error: " prefix does.
+# Measured on duck_block_utils' throwaway run 34860157025 (2026-09-14): with the
+# mark removed, the 2.0 leg produced the INTERNAL form and the class-prefixed
+# expectation rejected it. Same technique as
+# test/sql/markdown_table_extraction_fallible.test, which covers the other
+# reachable guard (the inline depth cap, via the table extractors).
+#
+# The technique has a limit worth recording: ThrowNonFallibleFunctionError is
+# gated on Exception::IsExecutionError, which is true only for InvalidInput,
+# OutOfRange and Conversion. An IOException or BinderException is never
+# rewritten, so no expectation can guard an IO- or bind-throwing function's
+# declaration, however it is written.
+#
+# HOW THE GUARD IS REACHED (both facts are load-bearing for these inputs):
+#
+#  1. The Pandoc walker is entered from the BLOCK renderer only, and only when
+#     encoding='json' -- blockquote (ExtractPandocBlocksText), list
+#     (ParsePandocListItems) and table (ParsePandocTable). A paragraph with
+#     encoding='json' does NOT route there: it emits its content verbatim.
+#     These cases use blockquote.
+#  2. The walker's array arm recurses WITHOUT incrementing depth; only nested
+#     inline objects (Emph, Strong, Strikeout, Superscript, Subscript, and the
+#     Plain/Para/Span/SmallCaps/Quoted/Cite group) increment it. So the nesting
+#     has to be in objects, not arrays.
+#
+# Boundary measured on the v1.5.5 build: 1000 nested Emph renders, 1001 throws.
+# This file passes on v1.5 with or without the marks. Only a v2.0 build can fail
+# it.
+# =============================================================================
+
+# ---- Controls: shallow nesting renders on every surface, so the expectations
+# ---- below pin an input-dependent throw rather than a function that always fails.
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 3) || '{"t":"Str","c":"x"}' || repeat(']}', 3) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '> ***x***%';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 3) || '{"t":"Str","c":"x"}' || repeat(']}', 3) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}) LIKE '> ***x***%';
+----
+true
+
+query I
+SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 3) || '{"t":"Str","c":"x"}' || repeat(']}', 3) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]));
+----
+1
+
+# ---- Boundary: depth 1000 is within the cap, and every surface still renders.
+# ----
+# ---- These check rendered CONTENT, not IS NOT NULL. '' IS NOT NULL is true, so
+# ---- an IS NOT NULL form would keep passing if the guard ever began silently
+# ---- returning an empty string instead of rendering -- a green that measures
+# ---- nothing, which is the same defect this file exists to prevent on the error
+# ---- side. Measured at depth 1000: 2005 chars beginning '> **********'.
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '> %';
+----
+true
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}) LIKE '> %';
+----
+true
+
+query I
+SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]));
+----
+1
+
+# ---- Depth 1001: the cap fires, and it must surface as Invalid Input on every
+# ---- line, on all three marked surfaces.
+
+statement error
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1001) || '{"t":"Str","c":"x"}' || repeat(']}', 1001) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (1000)
+
+statement error
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1001) || '{"t":"Str","c":"x"}' || repeat(']}', 1001) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0});
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (1000)
+
+statement error
+SELECT duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1001) || '{"t":"Str","c":"x"}' || repeat(']}', 1001) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (1000)
+
+# ---- A paragraph with encoding='json' does not route into the Pandoc walker at
+# ---- all, so the same content that throws above is emitted verbatim here. This
+# ---- pins the gate: if paragraph ever started routing, the cases above would
+# ---- stop being about blockquote.
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'paragraph', content: '[{"t":"Str","c":"hello"}]', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '[{"t":"Str","c":"hello"}]%';
+----
+true
