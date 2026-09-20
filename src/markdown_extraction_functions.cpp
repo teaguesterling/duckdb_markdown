@@ -8,6 +8,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 namespace duckdb {
 
@@ -467,27 +468,77 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	// Register md_extract_code_blocks scalar function
 	ScalarFunction code_blocks_func("md_extract_code_blocks", {MarkdownTypes::MarkdownType()},
 	                                LogicalType::LIST(code_block_struct_type), CodeBlockExtractionFunction);
-	loader.RegisterFunction(code_blocks_func);
+	{
+		CreateScalarFunctionInfo info(std::move(code_blocks_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract fenced and indented code blocks from Markdown content.";
+		desc.examples = {"md_extract_code_blocks('```sql\nSELECT 1;\n```')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register md_extract_links scalar function
 	ScalarFunction links_func("md_extract_links", {MarkdownTypes::MarkdownType()}, LogicalType::LIST(link_struct_type),
 	                          LinkExtractionFunction);
-	loader.RegisterFunction(links_func);
+	{
+		CreateScalarFunctionInfo info(std::move(links_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract hyperlinks from Markdown content.";
+		desc.examples = {"md_extract_links('[DuckDB](https://duckdb.org)')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register md_extract_images scalar function
 	ScalarFunction images_func("md_extract_images", {MarkdownTypes::MarkdownType()},
 	                           LogicalType::LIST(image_struct_type), ImageExtractionFunction);
-	loader.RegisterFunction(images_func);
+	{
+		CreateScalarFunctionInfo info(std::move(images_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract images from Markdown content.";
+		desc.examples = {"md_extract_images('![Logo](logo.png)')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register md_extract_wikilinks scalar function (Obsidian / wiki-style links + embeds)
 	ScalarFunction wikilinks_func("md_extract_wikilinks", {MarkdownTypes::MarkdownType()},
 	                              LogicalType::LIST(wikilink_struct_type), WikilinkExtractionFunction);
-	loader.RegisterFunction(wikilinks_func);
+	{
+		CreateScalarFunctionInfo info(std::move(wikilinks_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract wiki-style links and embeds from Markdown content.";
+		desc.examples = {"md_extract_wikilinks('[[Page Name]]')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register md_extract_tags scalar function (inline #tags)
 	ScalarFunction tags_func("md_extract_tags", {MarkdownTypes::MarkdownType()}, LogicalType::LIST(tag_struct_type),
 	                         TagExtractionFunction);
-	loader.RegisterFunction(tags_func);
+	{
+		CreateScalarFunctionInfo info(std::move(tags_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract hashtag tags from Markdown content.";
+		desc.examples = {"md_extract_tags('Tag #important text')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register md_extract_table_rows scalar function (renamed from md_extract_tables)
 	ScalarFunction table_rows_func("md_extract_table_rows", {MarkdownTypes::MarkdownType()},
@@ -510,8 +561,28 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	table_rows_func.SetFallible();
 	tables_json_func.SetFallible();
 
-	loader.RegisterFunction(table_rows_func);
-	loader.RegisterFunction(tables_json_func);
+	{
+		CreateScalarFunctionInfo info(std::move(table_rows_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract table cell rows from Markdown content.";
+		desc.examples = {"md_extract_table_rows('| a | b |\n|---|---|\n| 1 | 2 |')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
+	{
+		CreateScalarFunctionInfo info(std::move(tables_json_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Extract tables from Markdown content as structured objects.";
+		desc.examples = {"md_extract_tables_json('| a | b |\n|---|---|\n| 1 | 2 |')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register md_extract_sections scalar function
 	LogicalType section_struct_type = LogicalType::STRUCT({{"section_id", LogicalType::VARCHAR},
@@ -526,19 +597,46 @@ void MarkdownExtractionFunctions::Register(ExtensionLoader &loader) {
 	// Register main function with MARKDOWN type
 	ScalarFunction sections_func("md_extract_sections", {MarkdownTypes::MarkdownType()},
 	                             LogicalType::LIST(section_struct_type), SectionExtractionFunction);
-	loader.RegisterFunction(sections_func);
 
 	// Register overload for VARCHAR with level filtering
 	ScalarFunction sections_levels_func("md_extract_sections",
 	                                    {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER},
 	                                    LogicalType::LIST(section_struct_type), SectionExtractionFunctionWithLevels);
-	loader.RegisterFunction(sections_levels_func);
 
 	// Register overload for VARCHAR with level filtering and content_mode
 	ScalarFunction sections_content_mode_func(
 	    "md_extract_sections", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::VARCHAR},
 	    LogicalType::LIST(section_struct_type), SectionExtractionFunctionWithContentMode);
-	loader.RegisterFunction(sections_content_mode_func);
+
+	ScalarFunctionSet sections_set("md_extract_sections");
+	sections_set.AddFunction(sections_func);
+	sections_set.AddFunction(sections_levels_func);
+	sections_set.AddFunction(sections_content_mode_func);
+
+	CreateScalarFunctionInfo sec_info(std::move(sections_set));
+	sec_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription sec_desc1;
+	sec_desc1.parameter_names = {"markdown"};
+	sec_desc1.description = "Extract all sections from Markdown content.";
+	sec_desc1.examples = {"md_extract_sections('# Header\nContent')"};
+	sec_desc1.categories = {"markdown"};
+	sec_info.descriptions.push_back(sec_desc1);
+
+	FunctionDescription sec_desc2;
+	sec_desc2.parameter_names = {"markdown", "min_level", "max_level"};
+	sec_desc2.description = "Extract sections within a heading level range from Markdown content.";
+	sec_desc2.examples = {"md_extract_sections('# Header\n## Sub\nContent', 1, 2)"};
+	sec_desc2.categories = {"markdown"};
+	sec_info.descriptions.push_back(sec_desc2);
+
+	FunctionDescription sec_desc3;
+	sec_desc3.parameter_names = {"markdown", "min_level", "max_level", "content_mode"};
+	sec_desc3.description = "Extract sections with specified level range and content mode.";
+	sec_desc3.examples = {"md_extract_sections('# Header\n## Sub\nContent', 1, 2, 'minimal')"};
+	sec_desc3.categories = {"markdown"};
+	sec_info.descriptions.push_back(sec_desc3);
+
+	loader.RegisterFunction(std::move(sec_info));
 }
 
 } // namespace duckdb

@@ -7,6 +7,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "yyjson.hpp"
 #include "duck_block_vocabulary.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include <sstream>
 
 namespace duckdb {
@@ -1875,7 +1876,18 @@ void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) 
 	// into a readable message. Found by following the throwing HELPERS, not the
 	// literal throws: the guard is two files away from every one of these.
 	duck_block_to_md.SetFallible();
-	loader.RegisterFunction(duck_block_to_md);
+	{
+		CreateScalarFunctionInfo info(std::move(duck_block_to_md));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"block"};
+		desc.description = "Convert a single duck_block struct to Markdown text.";
+		desc.examples = {"duck_block_to_md({'kind': 'container', 'element_type': 'paragraph', 'content': 'hello', "
+		                 "'level': 0, 'encoding': 'text', 'attributes': map(), 'element_order': 0})"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -1906,7 +1918,17 @@ void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader)
 	                                 });
 
 	duck_blocks_to_md.SetFallible();
-	loader.RegisterFunction(duck_blocks_to_md);
+	{
+		CreateScalarFunctionInfo info(std::move(duck_blocks_to_md));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"blocks"};
+		desc.description = "Convert a list of duck_blocks to Markdown text.";
+		desc.examples = {"duck_blocks_to_md([])"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -2090,7 +2112,17 @@ void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &l
 	    });
 
 	duck_blocks_to_sections.SetFallible();
-	loader.RegisterFunction(duck_blocks_to_sections);
+	{
+		CreateScalarFunctionInfo info(std::move(duck_blocks_to_sections));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"blocks"};
+		desc.description = "Convert a list of duck_blocks into structured sections.";
+		desc.examples = {"duck_blocks_to_sections([])"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -2143,7 +2175,17 @@ static void RegisterParseMarkdownToDuckBlocks(ExtensionLoader &loader) {
 		                  }
 	                  });
 	fn.SetFallible();
-	loader.RegisterFunction(fn);
+	{
+		CreateScalarFunctionInfo info(std::move(fn));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"markdown"};
+		desc.description = "Parse Markdown text into a list of canonical duck_block structs.";
+		desc.examples = {"parse_markdown_to_duck_blocks('# Hello')"};
+		desc.categories = {"markdown"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 void DuckBlockFunctions::Register(ExtensionLoader &loader) {
