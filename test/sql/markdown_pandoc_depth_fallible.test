@@ -40,14 +40,26 @@ require markdown
 #     (ParsePandocListItems) and table (ParsePandocTable). A paragraph with
 #     encoding='json' does NOT route there: it emits its content verbatim.
 #     These cases use blockquote.
-#  2. The walker's array arm recurses WITHOUT incrementing depth; only nested
-#     inline objects (Emph, Strong, Strikeout, Superscript, Subscript, and the
-#     Plain/Para/Span/SmallCaps/Quoted/Cite group) increment it. So the nesting
-#     has to be in objects, not arrays.
+#  2. EVERY recursion counts toward depth, ARRAYS INCLUDED. One level of nested
+#     emphasis therefore costs 2: the {"t":"Emph","c":[...]} object, and the
+#     array inside its "c". Measured against this build: 100 nested Emph render
+#     and 101 throw; 201 bare array levels are accepted and 202 throw.
 #
-# Boundary measured on the v1.5.5 build: 1000 nested Emph renders, 1001 throws.
-# This file passes on v1.5 with or without the marks. Only a v2.0 build can fail
-# it.
+# THE ARRAY ARM USED TO NOT COUNT, and that was a bug, not a quirk to write
+# tests around. An earlier version of this file described the old behaviour in
+# this very comment and then carefully nested in objects to avoid it. But an
+# uncounted arm means no value of MAX_PANDOC_DEPTH can bound array recursion:
+# 100000 nested arrays segfaulted DuckDB on an 8 MB stack while the same depth
+# in objects threw cleanly. The array cases below are the regression test.
+#
+# WHY THE CAP IS 200 AND NOT 1000: at 1000 the guard was unreachable on a macOS
+# worker thread, which gets 512 KB. The walker costs ~275 bytes per frame, so
+# the stack died around depth 900 -- a SIGBUS mid-suite, not an error. This is
+# not hypothetical: it crashed the registry's macOS arm64 build of v1.9.3, and
+# because a failed build skips the deploy job, it silently prevented that
+# release from ever publishing. Anything asserted in this file must stay far
+# enough inside the cap that the test cannot itself become the crash it exists
+# to prevent.
 # =============================================================================
 
 # ---- Controls: shallow nesting renders on every surface, so the expectations
@@ -68,46 +80,81 @@ SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', 
 ----
 1
 
-# ---- Boundary: depth 1000 is within the cap, and every surface still renders.
+# ---- Boundary: 100 nested Emph is the deepest that renders (depth 200).
 # ----
 # ---- These check rendered CONTENT, not IS NOT NULL. '' IS NOT NULL is true, so
 # ---- an IS NOT NULL form would keep passing if the guard ever began silently
 # ---- returning an empty string instead of rendering -- a green that measures
 # ---- nothing, which is the same defect this file exists to prevent on the error
-# ---- side. Measured at depth 1000: 2005 chars beginning '> **********'.
+# ---- side. Measured at 100 Emph: exactly 205 chars, opening '> ' then asterisks.
 
 query I
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '> %';
+SELECT len(duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 100) || '{"t":"Str","c":"x"}' || repeat(']}', 100) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]));
+----
+205
+
+query I
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 100) || '{"t":"Str","c":"x"}' || repeat(']}', 100) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}) LIKE '> ***%';
 ----
 true
 
 query I
-SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}) LIKE '> %';
-----
-true
-
-query I
-SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1000) || '{"t":"Str","c":"x"}' || repeat(']}', 1000) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]));
+SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 100) || '{"t":"Str","c":"x"}' || repeat(']}', 100) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]));
 ----
 1
 
-# ---- Depth 1001: the cap fires, and it must surface as Invalid Input on every
-# ---- line, on all three marked surfaces.
+# ---- 101 nested Emph (depth 202): the cap fires, and it must surface as
+# ---- Invalid Input on every line, on all three marked surfaces.
 
 statement error
-SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1001) || '{"t":"Str","c":"x"}' || repeat(']}', 1001) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 101) || '{"t":"Str","c":"x"}' || repeat(']}', 101) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
 ----
-Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (1000)
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
 
 statement error
-SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1001) || '{"t":"Str","c":"x"}' || repeat(']}', 1001) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0});
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 101) || '{"t":"Str","c":"x"}' || repeat(']}', 101) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0});
 ----
-Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (1000)
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
 
 statement error
-SELECT duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 1001) || '{"t":"Str","c":"x"}' || repeat(']}', 1001) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+SELECT duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: '[' || repeat('{"t":"Emph","c":[', 101) || '{"t":"Str","c":"x"}' || repeat(']}', 101) || ']', level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
 ----
-Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (1000)
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+# ---- REGRESSION: nesting built from ARRAYS alone, which the guard once did not
+# ---- count at all. Before the fix these did not throw -- they either returned a
+# ---- value (at depths the stack happened to survive) or killed the process.
+# ---- The control first: 100 array levels are inside the cap and still render.
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: repeat('[', 100) || '{"t":"Str","c":"x"}' || repeat(']', 100), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '> x%';
+----
+true
+
+query I
+SELECT len(duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: repeat('[', 100) || '{"t":"Str","c":"x"}' || repeat(']', 100), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]));
+----
+1
+
+# ---- 5000 array levels: far past the cap, so the guard must fire early and the
+# ---- error must carry the class prefix on all three surfaces. 5000 is chosen to
+# ---- be well beyond the boundary while the throw happens at depth 201, so only
+# ---- ~200 frames are ever on the stack -- this case cannot itself overflow.
+
+statement error
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+statement error
+SELECT duck_block_to_md({kind: 'block', element_type: 'blockquote', content: repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0});
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+statement error
+SELECT duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
 
 # ---- A paragraph with encoding='json' does not route into the Pandoc walker at
 # ---- all, so the same content that throws above is emitted verbatim here. This
