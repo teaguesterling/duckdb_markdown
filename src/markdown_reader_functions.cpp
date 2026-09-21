@@ -762,7 +762,8 @@ void MarkdownReader::MarkdownReadBlocksFunction(ClientContext &context, TableFun
 // Register a reader under both a single VARCHAR path and a LIST(VARCHAR) of paths.
 // MarkdownReader::GetFiles() already resolves either shape; only the binder needs
 // to be told the list form is legal (issue #30).
-static void RegisterPathAndListVariants(ExtensionLoader &loader, TableFunction function) {
+static void RegisterPathAndListVariants(ExtensionLoader &loader, TableFunction function, vector<string> param_names,
+                                        string description, vector<string> examples) {
 	TableFunctionSet function_set(function.name);
 
 	function.arguments = {LogicalType::VARCHAR};
@@ -771,7 +772,15 @@ static void RegisterPathAndListVariants(ExtensionLoader &loader, TableFunction f
 	function.arguments = {LogicalType::LIST(LogicalType::VARCHAR)};
 	function_set.AddFunction(function);
 
-	loader.RegisterFunction(std::move(function_set));
+	CreateTableFunctionInfo info(std::move(function_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = std::move(param_names);
+	desc.description = std::move(description);
+	desc.examples = std::move(examples);
+	desc.categories = {"markdown"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
@@ -790,7 +799,9 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_markdown_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 	read_markdown_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
 
-	RegisterPathAndListVariants(loader, read_markdown_func);
+	RegisterPathAndListVariants(loader, read_markdown_func, {"path"},
+	                            "Read Markdown documents from files into table format with frontmatter and content.",
+	                            {"SELECT * FROM read_markdown('README.md')"});
 
 	// Register read_markdown_sections function
 	TableFunction read_sections_func("read_markdown_sections", {LogicalType(LogicalTypeId::VARCHAR)},
@@ -816,7 +827,9 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_sections_func.named_parameters["max_depth"] = LogicalType(LogicalTypeId::INTEGER);
 	read_sections_func.named_parameters["max_content_length"] = LogicalType(LogicalTypeId::UBIGINT);
 
-	RegisterPathAndListVariants(loader, read_sections_func);
+	RegisterPathAndListVariants(loader, read_sections_func, {"path"},
+	                            "Read Markdown files split by headings into structured sections.",
+	                            {"SELECT * FROM read_markdown_sections('README.md')"});
 
 	// Register read_markdown_blocks function
 	TableFunction read_blocks_func("read_markdown_blocks", {LogicalType(LogicalTypeId::VARCHAR)},
@@ -830,7 +843,9 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	read_blocks_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
 	read_blocks_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
 
-	RegisterPathAndListVariants(loader, read_blocks_func);
+	RegisterPathAndListVariants(loader, read_blocks_func, {"path"},
+	                            "Read Markdown files parsed into atomic block elements.",
+	                            {"SELECT * FROM read_markdown_blocks('README.md')"});
 }
 
 } // namespace duckdb
