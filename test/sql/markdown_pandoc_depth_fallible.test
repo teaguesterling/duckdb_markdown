@@ -35,11 +35,19 @@ require markdown
 #
 # HOW THE GUARD IS REACHED (both facts are load-bearing for these inputs):
 #
-#  1. The Pandoc walker is entered from the BLOCK renderer only, and only when
-#     encoding='json' -- blockquote (ExtractPandocBlocksText), list
-#     (ParsePandocListItems) and table (ParsePandocTable). A paragraph with
-#     encoding='json' does NOT route there: it emits its content verbatim.
-#     These cases use blockquote.
+#  1. The Pandoc walker is entered from the BLOCK renderer only. THREE of its
+#     FOUR entry points are gated on encoding='json': blockquote
+#     (ExtractPandocBlocksText), list (ParsePandocListItems) and table
+#     (ParsePandocTable). A paragraph with encoding='json' does NOT route
+#     there: it emits its content verbatim. Most cases here use blockquote.
+#
+#     The fourth, deflist (ParseDefinitionList), has NO encoding gate at all:
+#     it is called unconditionally and falls back to raw content only when the
+#     content fails to parse as JSON of the right shape. So a deflist block
+#     reaches the walker whatever encoding it declares. Measured: deep content
+#     throws at encoding='json', 'text' and 'markdown' alike, while the SAME
+#     content in a blockquote at encoding='text' renders verbatim. Both are
+#     pinned below, so the gate model in this comment is checked, not asserted.
 #  2. EVERY recursion counts toward depth, ARRAYS INCLUDED. One level of nested
 #     emphasis therefore costs 2: the {"t":"Emph","c":[...]} object, and the
 #     array inside its "c". Measured against this build: 100 nested Emph render
@@ -155,6 +163,49 @@ statement error
 SELECT duck_blocks_to_sections([{kind: 'block', element_type: 'blockquote', content: repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
 ----
 Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+# ---- The bare-array boundary, pinned exactly. The header claims 201 levels are
+# ---- accepted and 202 throw; without these, only 100 and 5000 were covered and
+# ---- neither can see a one-off shift in the array arm's counting.
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: repeat('[', 201) || '{"t":"Str","c":"x"}' || repeat(']', 201), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]) LIKE '> x%';
+----
+true
+
+statement error
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: repeat('[', 202) || '{"t":"Str","c":"x"}' || repeat(']', 202), level: 1, encoding: 'json', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+# ---- deflist is the UNGATED fourth entry point: it reaches the walker whatever
+# ---- encoding the block declares. Pinned at 'text' and 'markdown', which for
+# ---- every other block type would mean "emit verbatim, do not interpret".
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[' || repeat('[', 50) || '{"t":"Str","c":"x"}' || repeat(']', 50) || ',[]]]', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) LIKE 'x%';
+----
+true
+
+statement error
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[' || repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000) || ',[]]]', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+statement error
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'deflist', content: '[[' || repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000) || ',[]]]', level: 1, encoding: 'markdown', attributes: MAP{}, element_order: 0}]);
+----
+Invalid Input Error: Pandoc inline nesting exceeds maximum supported depth (200)
+
+# ---- The control that makes the three cases above mean something: the SAME deep
+# ---- content in a GATED block type at encoding='text' does not reach the walker
+# ---- at all and is emitted verbatim. Without this, the deflist cases could not
+# ---- distinguish "deflist ignores encoding" from "encoding is ignored anywhere".
+
+query I
+SELECT duck_blocks_to_md([{kind: 'block', element_type: 'blockquote', content: '[[' || repeat('[', 5000) || '{"t":"Str","c":"x"}' || repeat(']', 5000) || ',[]]]', level: 1, encoding: 'text', attributes: MAP{}, element_order: 0}]) LIKE '> [[%';
+----
+true
 
 # ---- A paragraph with encoding='json' does not route into the Pandoc walker at
 # ---- all, so the same content that throws above is emitted verbatim here. This
