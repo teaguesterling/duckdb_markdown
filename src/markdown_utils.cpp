@@ -443,6 +443,33 @@ std::string StripFrontmatter(const std::string &markdown_str) {
 	return markdown_str.substr(end);
 }
 
+// Frontmatter removed, line numbering preserved.
+//
+// Plain StripFrontmatter renumbers the body from 1, so a link on line 8 of the
+// real file comes back reported at line 3 and the caller cannot find it again.
+// Padding the removed region with its own newline count keeps every line_number
+// pointing at the original document. Byte offsets still move; nothing downstream
+// reports those.
+//
+// md_stats deliberately uses the PLAIN form instead: its line_count is a
+// measurement OF the body, and padding would re-inflate the very count #58 fixes.
+std::string StripFrontmatterKeepLines(const std::string &markdown_str) {
+	auto fm = FindFrontmatter(markdown_str);
+	if (!fm.found) {
+		return markdown_str;
+	}
+	size_t end = fm.after_close;
+	if (end < markdown_str.size() && markdown_str[end] == '\r') {
+		end++;
+	}
+	while (end < markdown_str.size() && markdown_str[end] == '\n') {
+		end++;
+	}
+	const auto removed = static_cast<size_t>(
+	    std::count(markdown_str.begin(), markdown_str.begin() + static_cast<std::ptrdiff_t>(end), '\n'));
+	return std::string(removed, '\n') + markdown_str.substr(end);
+}
+
 Value MetadataToMap(const MarkdownMetadata &metadata) {
 	// Build lists of keys and values for MAP construction
 	vector<Value> keys;
@@ -509,7 +536,16 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 	// copies when a BOM is actually present (#21).
 	const size_t bom = SkipBOM(markdown_str_in);
 	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
-	const std::string &markdown_str = bom ? bom_stripped : markdown_str_in;
+	const std::string &after_bom = bom ? bom_stripped : markdown_str_in;
+
+	// #58: frontmatter is document METADATA, not body prose. Counting it made
+	// word_count/char_count/line_count -- and reading_time_minutes, derived from
+	// word_count -- wrong by the size of the metadata block. The PLAIN strip is
+	// correct here: these are measurements of the body, so the padded variant
+	// would re-inflate line_count. One point covers everything below, including
+	// CountStructuralNodes (its only caller), which keeps md_stats(doc, true)
+	// agreeing with md_extract_links / md_extract_code_blocks.
+	const std::string markdown_str = StripFrontmatter(after_bom);
 
 	// Word count (approximate)
 	std::istringstream stream(markdown_str);
@@ -703,12 +739,16 @@ std::string ExtractSection(const std::string &markdown_str, const std::string &s
 // Content Extraction
 //===--------------------------------------------------------------------===//
 
-std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str, const std::string &language_filter) {
+std::vector<CodeBlock> ExtractCodeBlocks(const std::string &markdown_str_in, const std::string &language_filter) {
 	std::vector<CodeBlock> code_blocks;
 
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return code_blocks;
 	}
+	// #58: frontmatter is document metadata, not body content. KeepLines pads the
+	// removed region with newlines so line_number still points at the original
+	// document rather than at the body's own numbering.
+	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Parse with cmark-gfm
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
@@ -1860,12 +1900,16 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 	return blocks;
 }
 
-std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str) {
+std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str_in) {
 	std::vector<MarkdownLink> links;
 
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return links;
 	}
+	// #58: frontmatter is document metadata, not body content. KeepLines pads the
+	// removed region with newlines so line_number still points at the original
+	// document rather than at the body's own numbering.
+	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Pre-scan for reference link definitions to detect reference-style links.
 	// Reference definitions look like: [id]: url "optional title".
@@ -1978,12 +2022,16 @@ std::vector<MarkdownLink> ExtractLinks(const std::string &markdown_str) {
 	return links;
 }
 
-std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str) {
+std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str_in) {
 	std::vector<MarkdownImage> images;
 
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return images;
 	}
+	// #58: frontmatter is document metadata, not body content. KeepLines pads the
+	// removed region with newlines so line_number still points at the original
+	// document rather than at the body's own numbering.
+	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Parse with cmark-gfm
 	cmark_parser *parser = cmark_parser_new(CMARK_OPT_DEFAULT);
@@ -2033,12 +2081,16 @@ std::vector<MarkdownImage> ExtractImages(const std::string &markdown_str) {
 	return images;
 }
 
-std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str) {
+std::vector<MarkdownTable> ExtractTables(const std::string &markdown_str_in) {
 	std::vector<MarkdownTable> tables;
 
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return tables;
 	}
+	// #58: frontmatter is document metadata, not body content. KeepLines pads the
+	// removed region with newlines so line_number still points at the original
+	// document rather than at the body's own numbering.
+	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// Tables come from cmark-gfm's GFM table extension -- the same parser
 	// ParseBlocks uses (#21). There used to be a second, hand-rolled pipe-table
@@ -2254,11 +2306,15 @@ std::string NormalizeMarkdown(const std::string &markdown_str) {
 	return normalized;
 }
 
-std::vector<MarkdownWikilink> ExtractWikilinks(const std::string &markdown_str) {
+std::vector<MarkdownWikilink> ExtractWikilinks(const std::string &markdown_str_in) {
 	std::vector<MarkdownWikilink> wikilinks;
-	if (markdown_str.empty()) {
+	if (markdown_str_in.empty()) {
 		return wikilinks;
 	}
+	// #58: frontmatter is document metadata, not body content. KeepLines pads the
+	// removed region with newlines so line_number still points at the original
+	// document rather than at the body's own numbering.
+	const std::string markdown_str = StripFrontmatterKeepLines(markdown_str_in);
 
 	// [[target]], [[target|alias]], [[target#heading]], [[target^block]], ![[embed]].
 	// Linear scan (no std::regex — see #22 ReDoS hardening). Per "[[": read the target
@@ -2372,9 +2428,13 @@ std::vector<MarkdownTag> ExtractTags(const std::string &markdown_str_in) {
 
 	// A leading BOM is not whitespace, so without this the '#' of a first-line
 	// tag looks preceded by a non-space character and the tag is missed (#21).
-	const size_t bom = SkipBOM(markdown_str_in);
-	const std::string bom_stripped = bom ? markdown_str_in.substr(bom) : std::string();
-	const std::string &markdown_str = bom ? bom_stripped : markdown_str_in;
+	// #58: frontmatter is document metadata, not body content. KeepLines keeps
+	// line_number pointing at the original document. Applied before the BOM skip
+	// so the two do not have to reason about each other's offsets.
+	const std::string fm_stripped = StripFrontmatterKeepLines(markdown_str_in);
+	const size_t bom = SkipBOM(fm_stripped);
+	const std::string bom_stripped = bom ? fm_stripped.substr(bom) : std::string();
+	const std::string &markdown_str = bom ? bom_stripped : fm_stripped;
 
 	// Inline #tag / #nested/tag. v1 limitations (documented): tags inside link URLs or
 	// wikilink targets are not suppressed; fenced code blocks and inline code spans are.
