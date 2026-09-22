@@ -33,7 +33,16 @@ static string EscapeMarkdownText(const string &content, bool at_line_start);
 
 // Maximum Pandoc inline-nesting depth walked by ExtractPandocText. Guards
 // against unbounded recursion (stack overflow) on adversarially nested JSON.
-static constexpr int MAX_PANDOC_DEPTH = 1000;
+// Sized so the guard is REACHABLE, which at 1000 it was not. Each frame of
+// ExtractPandocTextFromVal costs ~275 bytes (measured: a 512 KB stack dies
+// between depth 900 and 950, a 256 KB stack between 400 and 500). A macOS
+// worker thread gets 512 KB by default, so a cap of 1000 needed ~275 KB of
+// walker plus whatever DuckDB's execution stack was already using -- the
+// process died before the check could fire. That is what it looks like from
+// CI: SIGBUS/SIGSEGV mid-suite, not an error. 200 keeps the walker under
+// ~55 KB on every platform while still allowing ~100 levels of nested
+// emphasis, far past any real document.
+static constexpr int MAX_PANDOC_DEPTH = 200;
 
 //===--------------------------------------------------------------------===//
 // Helper Functions
@@ -138,7 +147,12 @@ static string ExtractPandocTextFromVal(yyjson_val *val, int depth) {
 		size_t idx, max;
 		yyjson_val *item;
 		yyjson_arr_foreach(val, idx, max, item) {
-			result += ExtractPandocTextFromVal(item, depth);
+			// Counts toward depth like every other recursion. It did not used to, which
+			// meant nested ARRAYS added stack frames the guard never saw: no value of
+			// MAX_PANDOC_DEPTH could bound them, and deep-enough array nesting crashed
+			// the process instead of throwing (measured: 100000 levels segfaulted on an
+			// 8 MB stack while the same depth in objects threw cleanly).
+			result += ExtractPandocTextFromVal(item, depth + 1);
 		}
 		return result;
 	}
