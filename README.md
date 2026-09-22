@@ -259,6 +259,31 @@ no metadata rather than two thematic breaks. These are the same rules the `yaml`
 `read_yaml_frontmatter` applies, so the two extensions agree about where a given document's
 frontmatter begins and ends.
 
+**Frontmatter is metadata, not body content — every function reads the body.** `md_to_text`,
+`md_to_html`, `md_extract_links`, `md_extract_images`, `md_extract_wikilinks`,
+`md_extract_tags`, `md_extract_code_blocks`, `md_extract_tables_json`,
+`md_extract_table_rows`, `md_stats`, the section readers and `read_markdown`'s `wikilinks`,
+`tags` and `stats` columns all skip the block. A `title: [Doc](http://example.com)` in the
+frontmatter is not a document link, and `md_stats(doc).word_count` measures the prose rather
+than the prose plus the metadata.
+
+`line_number` still refers to the **original** document, not to the body's own numbering, so
+positions reported by the extractors can be used to find the text in the file as written.
+
+Nothing is lost by this: the frontmatter remains available on its own through
+`md_extract_frontmatter` (raw text) and `md_extract_metadata` (flat `MAP`), and composes — if
+you want the canonical OG image out of the metadata rather than out of the body, ask for it
+explicitly:
+
+```sql
+-- body images only
+SELECT md_extract_images(content) FROM read_markdown('posts/*.md');
+
+-- the frontmatter's image, on purpose
+SELECT md_extract_images(md_extract_frontmatter(content)::MARKDOWN)
+FROM read_markdown('posts/*.md');
+```
+
 **This extension does not parse YAML.** Frontmatter — the block between the leading `---`
 delimiters — is read as **flat `key: value` pairs**: each line is split on its *first* `:`,
 both halves are whitespace-trimmed, and a pair of surrounding double quotes is stripped from

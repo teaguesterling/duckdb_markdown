@@ -73,6 +73,11 @@ std::string ExtractRawFrontmatter(const std::string &markdown_str);
 // This is needed because cmark-gfm doesn't understand YAML frontmatter
 std::string StripFrontmatter(const std::string &markdown_str);
 
+// Like StripFrontmatter, but replaces the removed region with the same number of
+// newlines rather than deleting it: byte offsets shift, LINE numbers do not.
+// Extractors that report line_number use this; md_stats deliberately does not.
+std::string StripFrontmatterKeepLines(const std::string &markdown_str);
+
 // Convert metadata to DuckDB MAP value
 Value MetadataToMap(const MarkdownMetadata &metadata);
 

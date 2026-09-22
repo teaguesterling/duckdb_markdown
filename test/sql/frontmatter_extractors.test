@@ -1,0 +1,200 @@
+# name: test/sql/frontmatter_extractors.test
+# description: Frontmatter is document metadata, not body content, on every extractor (#58)
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# #57 fixed the two RENDERERS (md_to_text, md_to_html) and deliberately left the
+# extractors alone, because whether an extractor should see frontmatter is an API
+# question rather than an obvious defect. #58 settles it: body only, everywhere.
+#
+# WHY STRIP RATHER THAN LABEL. The competing option was to keep frontmatter rows
+# and mark them with a source field, on the principle that a visible leak beats a
+# silent discard. Measured, there is no discard: the frontmatter stays reachable
+# on its own, and composes -- the "OG image" case that motivated labelling is
+# pinned at the bottom of this file. With nothing discarded, the principle does
+# not apply, and stripping needs no schema change on four structs.
+#
+# SEVEN SURFACES, NOT FIVE. #58 enumerated cmark_parser_feed sites, which finds
+# md_stats, links, images, code_blocks and tables. md_extract_wikilinks and
+# md_extract_tags are linear scanners that never touch cmark, so that method
+# could not see them -- and they leaked identically. Being fixed by a different
+# mechanism is not a reason to be the accidental exception.
+#
+# TWO HELPERS, ON PURPOSE:
+#
+#   StripFrontmatterKeepLines  -- for the six EXTRACTORS. Pads the removed region
+#                                 with its own newline count, so line_number
+#                                 still points at the original document. A plain
+#                                 strip renumbers the body from 1 and a link on
+#                                 line 8 of the real file comes back as line 3.
+#   StripFrontmatter (plain)   -- for md_stats. Its line_count is a measurement
+#                                 OF the body, so padding would re-inflate the
+#                                 very count this issue is fixing.
+#
+# Stripping in CalculateStats covers word/char/line, the scanners AND
+# CountStructuralNodes (its only caller), which is what keeps md_stats(doc, true)
+# agreeing with md_extract_links / md_extract_code_blocks -- a contract
+# test/sql/md_stats_exact.test pins and that an asymmetric fix would have broken.
+#
+# Nothing here existed before: a search for document-initial frontmatter fed to
+# any of the seven returned zero assertions across the whole suite, which is why
+# this shipped for so long and why the suite passed unchanged when it was fixed.
+# =============================================================================
+
+statement ok
+CREATE TEMPORARY MACRO fm() AS (E'---\ntitle: [Doc](http://example.com/doc)\nimage: ![Logo](http://example.com/l.png)\nwiki: [[WikiTarget]]\ntag: #metatag\n---\n\n# Real Heading\n\nBody [real](http://r) and ![img](http://i.png) and [[BodyWiki]] and #bodytag.\n');
+
+statement ok
+CREATE TEMPORARY MACRO body() AS (E'# Real Heading\n\nBody [real](http://r) and ![img](http://i.png) and [[BodyWiki]] and #bodytag.\n');
+
+# ---- Every surface must agree with the same document minus its frontmatter.
+# ---- body() is the control: these compare against a reference rather than
+# ---- against a hardcoded number that could drift with the fixture.
+
+query I
+SELECT len(md_extract_links(fm())) = len(md_extract_links(body()));
+----
+true
+
+query I
+SELECT len(md_extract_images(fm())) = len(md_extract_images(body()));
+----
+true
+
+query I
+SELECT len(md_extract_wikilinks(fm())) = len(md_extract_wikilinks(body()));
+----
+true
+
+query I
+SELECT len(md_extract_tags(fm())) = len(md_extract_tags(body()));
+----
+true
+
+query I
+SELECT len(md_extract_code_blocks(fm())) = len(md_extract_code_blocks(body()));
+----
+true
+
+query I
+SELECT len(md_extract_table_rows(fm())) = len(md_extract_table_rows(body()));
+----
+true
+
+query II
+SELECT (md_stats(fm())).word_count = (md_stats(body())).word_count,
+       (md_stats(fm())).link_count = (md_stats(body())).link_count;
+----
+true	true
+
+# ---- The absolute values too, so an equality that held because BOTH sides broke
+# ---- the same way would still fail here. The frontmatter carries one link, one
+# ---- image, one wikilink and one tag; the body carries one of each.
+
+query IIII
+SELECT len(md_extract_links(fm())), len(md_extract_images(fm())),
+       len(md_extract_wikilinks(fm())), len(md_extract_tags(fm()));
+----
+1	1	1	1
+
+# ---- line_number is PRESERVED, not renumbered. This is the whole reason the
+# ---- extractors use the padding variant. The body link sits on line 8 of the
+# ---- real document and must still say 8; a plain strip reports 3.
+
+query I
+SELECT (md_extract_links(E'---\ntitle: x\nauthor: y\n---\n\n# H\n\n[real](http://r)\n'))[1].line_number;
+----
+8
+
+query I
+SELECT (md_extract_links(E'# H\n\n[real](http://r)\n'))[1].line_number;
+----
+3
+
+# ---- md_stats uses the PLAIN strip. If the padded variant were used here,
+# ---- line_count would still count the metadata block's lines as blank ones and
+# ---- the headline symptom of #58 would survive its own fix. These are the
+# ---- issue's own numbers: a one-word body reported eleven words.
+
+query III
+SELECT (md_stats(E'---\ntitle: Some Long Title Here\nauthor: A Person\n---\n\nBody.\n')).word_count,
+       (md_stats(E'---\ntitle: Some Long Title Here\nauthor: A Person\n---\n\nBody.\n')).char_count,
+       (md_stats(E'---\ntitle: Some Long Title Here\nauthor: A Person\n---\n\nBody.\n')).line_count;
+----
+1	6	2
+
+query I
+SELECT (md_stats(E'---\ntitle: Some Long Title Here\nauthor: A Person\n---\n\nBody.\n')) =
+       (md_stats(E'Body.\n'));
+----
+true
+
+# ---- The agreement contract from md_stats_exact.test, now on a document WITH
+# ---- frontmatter -- the shape that would have broken had md_stats gone
+# ---- body-only while the extractors kept returning metadata rows.
+
+query I
+SELECT (md_stats(E'---\ntitle: [Doc](http://example.com/doc)\n---\n\n# Real Heading\n\nBody [real](http://r).\n', true)).link_count
+     = len(md_extract_links(E'---\ntitle: [Doc](http://example.com/doc)\n---\n\n# Real Heading\n\nBody [real](http://r).\n'));
+----
+true
+
+# ---- NOTHING IS DISCARDED. This is the premise the strip-over-label decision
+# ---- rests on: the frontmatter image is still reachable, and composes through
+# ---- md_extract_frontmatter. If this ever stops working, the reasoning behind
+# ---- stripping is void and the decision should be revisited, not patched.
+
+query I
+SELECT len(md_extract_images(E'---\nimage: ![Logo](http://example.com/og.png)\n---\n\n# H\n\nno body images\n'));
+----
+0
+
+query II
+SELECT (md_extract_images(md_extract_frontmatter(E'---\nimage: ![Logo](http://example.com/og.png)\n---\n\n# H\n\nno body images\n')::MARKDOWN))[1].url,
+       md_extract_metadata(E'---\nimage: ![Logo](http://example.com/og.png)\n---\n\n# H\n\nno body images\n')['image'];
+----
+http://example.com/og.png	![Logo](http://example.com/og.png)
+
+# ---- The table function follows the same rule: read_markdown's wikilinks, tags
+# ---- and stats columns are body-only too. Same two documents, differing only by
+# ---- the metadata block.
+
+query II
+SELECT len(wikilinks), len(tags)
+FROM read_markdown('test/data/frontmatter_extractors_fm.md', extract_extensions := 'wikilinks,tags');
+----
+1	1
+
+query II
+SELECT len(wikilinks), len(tags)
+FROM read_markdown('test/data/frontmatter_extractors_body.md', extract_extensions := 'wikilinks,tags');
+----
+1	1
+
+query II
+SELECT (stats).word_count, (stats).line_count
+FROM read_markdown('test/data/frontmatter_extractors_fm.md', include_stats := true);
+----
+6	4
+
+query II
+SELECT (stats).word_count, (stats).line_count
+FROM read_markdown('test/data/frontmatter_extractors_body.md', include_stats := true);
+----
+6	4
+
+# ---- Control: the renderers fixed in #57 are undisturbed. If StripFrontmatter
+# ---- itself had been changed to pad -- the obvious one-helper shortcut -- these
+# ---- would gain leading blank lines.
+
+query I
+SELECT md_to_text(fm()) = md_to_text(body());
+----
+true
+
+query I
+SELECT md_to_text(fm()) LIKE 'Real Heading%';
+----
+true
