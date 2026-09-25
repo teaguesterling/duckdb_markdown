@@ -277,7 +277,11 @@ vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const st
 
 unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &context, ReplacementScanInput &input,
                                                              optional_ptr<ReplacementScanData> data) {
-	auto &table_name = input.table_name;
+	// v2.0 narrowed ReplacementScanInput::table_name to the LAST dot-separated
+	// component of the name (it is now an accessor for name.Name()), so a bare
+	// path in FROM position such as 'docs/notes.md' arrives here as just "md".
+	// GetFullPath rejoins every component and exists on both DuckDB lines.
+	auto table_name = ReplacementScan::GetFullPath(input);
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Check if this looks like a markdown file or pattern
