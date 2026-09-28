@@ -277,7 +277,13 @@ vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const st
 
 unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &context, ReplacementScanInput &input,
                                                              optional_ptr<ReplacementScanData> data) {
-	auto &table_name = input.table_name;
+	// Use the full path, not input.table_name. On DuckDB v2.0 ReplacementScanInput
+	// exposes only the last component of the qualified name (e.g. "md@HEAD" for
+	// test/data/foo.md@HEAD, split on '.'), so the markdown-file guard and the path
+	// handed to read_markdown would both see a truncated name and the scan would
+	// decline it -> "No extension found that is capable of reading the file".
+	// GetFullPath rejoins every component and is available on both v1.5 and v2.0.
+	auto table_name = ReplacementScan::GetFullPath(input);
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Check if this looks like a markdown file or pattern
