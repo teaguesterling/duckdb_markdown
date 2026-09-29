@@ -10,6 +10,7 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include <algorithm>
+#include <cstdio>
 
 namespace duckdb {
 
@@ -284,6 +285,14 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 	// decline it -> "No extension found that is capable of reading the file".
 	// GetFullPath rejoins every component and is available on both v1.5 and v2.0.
 	auto table_name = ReplacementScan::GetFullPath(input);
+	// TEMP debug (revert before release): what does v2.0 hand the replacement scan?
+	if (input.table_name.find('@') != string::npos || table_name.find('@') != string::npos ||
+	    input.table_name.find("vfs") != string::npos || table_name.find("vfs") != string::npos) {
+		fprintf(stderr, "[MD-VFS-DBG] input.table_name='%s' | GetFullPath='%s' | ismd(full)=%d ismd(tn)=%d\n",
+		        input.table_name.c_str(), table_name.c_str(), (int)IsMarkdownFileName(table_name),
+		        (int)IsMarkdownFileName(input.table_name));
+		fflush(stderr);
+	}
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Check if this looks like a markdown file or pattern
