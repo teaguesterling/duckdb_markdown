@@ -1,0 +1,66 @@
+# name: test/sql/replacement_scan_paths.test
+# description: The replacement scan claims markdown paths in bare FROM position on every DuckDB line
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# `FROM '<path>'` with no read_markdown() call goes through
+# MarkdownReader::ReadMarkdownReplacement. Before this file the ONLY assertion
+# covering that path anywhere in the suite was the decorated case in
+# test/sql/markdown_vfs_paths.test, which is why a DuckDB 2.0 change that broke
+# EVERY bare-FROM markdown path showed up as exactly one failing test.
+#
+# WHAT BROKE. DuckDB 2.0 changed ReplacementScanInput: `table_name` is now only
+# the LAST dot-separated component of a QualifiedName rather than the whole
+# string. So `FROM 'docs/readme.md'` arrives as table_name == "md" and
+# `FROM 'x/doc.md@HEAD'` as "md@HEAD"; neither is recognisable as markdown, the
+# scan declined, and the binder raised
+#
+#   Binder Error: No extension found that is capable of reading the file "..."
+#
+# The scan now asks ReplacementScan::GetFullPath(input), which rejoins the
+# components and returns the original string on both lines.
+#
+# READ THIS BEFORE TRUSTING A GREEN RUN HERE: on the v1.5.x line `table_name`
+# ALREADY equals the full path, so every assertion below passes with or without
+# that fix. This file cannot discriminate it locally -- only a v2.0 build can.
+# The verifier is the `Next-line build — DuckDB v2.0` job, not `make test_release`.
+# A green local run means "not regressed on 1.5.x", never "the 2.0 fix works".
+# =============================================================================
+
+# ---- The plain case: no decoration, no glob. This is the one that had no
+# ---- coverage at all, and it is broken on 2.0 exactly as the decorated one is.
+
+query I
+SELECT count(*) FROM 'test/markdown/simple.md';
+----
+1
+
+# ---- A glob in bare FROM position takes the scan's other arm (fs.HasGlob), which
+# ---- also received the truncated name. Six markdown files live in test/markdown/.
+
+query I
+SELECT count(*) FROM 'test/markdown/*.md';
+----
+6
+
+# ---- The regression case, kept here too so this file stands alone as the
+# ---- replacement-scan contract. test/sql/markdown_vfs_paths.test owns the wider
+# ---- decoration matrix, including the control that a decorated NON-markdown path
+# ---- is still refused.
+
+query I
+SELECT count(*) FROM 'test/data/vfs_decorated.md@HEAD';
+----
+1
+
+# ---- The path really is read, not merely claimed: content comes back, which is
+# ---- what distinguishes "the scan fired" from "the scan fired and passed the
+# ---- truncated name to read_markdown". Passing "md" through would have opened
+# ---- the wrong file rather than declining, and a count alone could miss that.
+
+query I
+SELECT length(content) > 0 FROM 'test/markdown/simple.md';
+----
+true

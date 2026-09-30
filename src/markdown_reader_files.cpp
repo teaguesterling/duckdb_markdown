@@ -277,7 +277,25 @@ vector<markdown_utils::MarkdownSection> MarkdownReader::ProcessSections(const st
 
 unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &context, ReplacementScanInput &input,
                                                              optional_ptr<ReplacementScanData> data) {
-	auto &table_name = input.table_name;
+	// DuckDB 2.0 changed ReplacementScanInput: `table_name` is now only the LAST
+	// dot-separated component of a QualifiedName, not the whole string. A bare
+	// `FROM 'docs/readme.md'` therefore arrives as table_name == "md", and
+	// `FROM 'x/doc.md@HEAD'` as "md@HEAD". Neither can be recognised as markdown, so
+	// this scan declined and the binder raised "No extension found that is capable of
+	// reading the file" -- which is what broke test/sql/markdown_vfs_paths.test on the
+	// v2.0-cyanoptera line while every 1.5.x leg stayed green.
+	//
+	// GetFullPath rejoins the components and returns the ORIGINAL string on both
+	// lines: on v1.5.x it concatenates catalog/schema/table, and an empty catalog and
+	// schema leave just the table; on v2.0 it joins every component of the
+	// QualifiedName. So this is portable rather than a 2.0-only correction.
+	//
+	// BY VALUE, not by reference: GetFullPath returns a temporary.
+	//
+	// All four uses below need the full path, not just the recognition test -- passing
+	// the truncated name to read_markdown would have opened the wrong file instead of
+	// declining.
+	const auto table_name = ReplacementScan::GetFullPath(input);
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Check if this looks like a markdown file or pattern
