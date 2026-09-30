@@ -96,10 +96,10 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.5
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.6
     with:
-      duckdb_version: v1.5.5
-      ci_tools_version: v1.5.5
+      duckdb_version: v1.5.6
+      ci_tools_version: v1.5.6
       extension_name: markdown
       # Pin to vcpkg commit with verified cmark-gfm support (tested 2025-01-08)
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
@@ -123,7 +123,7 @@ jobs:
     # required-check configuration may key on this job name.
     runs-on: ubuntu-latest
     env:
-      DUCKDB_VERSION: v1.5.5
+      DUCKDB_VERSION: v1.5.6
       DUCKDB_NEXT: v2.0-cyanoptera
       # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
       # for one release; set this to that version then so the stray-literal scan below
@@ -265,12 +265,12 @@ jobs:
     # it was "pure SQL, no extension": the RULES are pure SQL, but the reader
     # under test is this extension and the script loads it.
     #
-    # The artifacts target released v1.5.5, so a stock duckdb of the same version
+    # The artifacts target released v1.5.6, so a stock duckdb of the same version
     # can load them. That is only true of the CI build -- a local dev build
     # reports a submodule hash and no released CLI will touch it.
     #
     # VERSION COUPLING: the artifact name and the CLI url below both hardcode
-    # v1.5.5, matching duckdb-stable-build's duckdb_version above. A reusable
+    # v1.5.6, matching duckdb-stable-build's duckdb_version above. A reusable
     # workflow's `with:` cannot read `env`, so this cannot be a single variable.
     # Bumping the build's version without bumping these two fails LOUDLY here
     # (artifact not found, or the CLI refuses the extension's ABI) rather than
@@ -282,12 +282,12 @@ jobs:
       - name: Download the built extension
         uses: actions/download-artifact@v4
         with:
-          name: markdown-v1.5.5-extension-linux_amd64
+          name: markdown-v1.5.6-extension-linux_amd64
           path: ci-ext
       - name: Install a matching DuckDB CLI
         run: |
           set -euo pipefail
-          curl -fsSL -o duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip
+          curl -fsSL -o duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip
           unzip -o duckdb.zip -d ci-bin
           chmod +x ci-bin/duckdb
           ci-bin/duckdb -c "SELECT 'cli ok';"
@@ -306,7 +306,7 @@ jobs:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
     with:
-      duckdb_version: v1.5.5
+      duckdb_version: v1.5.6
       ci_tools_version: main
       extension_name: markdown
       format_checks: 'format'
@@ -317,7 +317,7 @@ jobs:
   # Two layers (see test/wasm/):
   #   1. static symbol check (hard gate) — no duckdb-wasm runtime needed.
   #   2. live load+query in duckdb-wasm (informational / continue-on-error) —
-  #      expected-red until an official duckdb-wasm ships a matching v1.5.5
+  #      expected-red until an official duckdb-wasm ships a matching v1.5.6
   #      build (a version/emscripten skew surfaces as an ABI mismatch on LOAD).
   wasm-load-test:
     name: WASM load test
@@ -331,7 +331,7 @@ jobs:
       - name: Download WASM artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: markdown-v1.5.5-extension-wasm_*
+          pattern: markdown-v1.5.6-extension-wasm_*
           path: wasm-artifacts
       - name: Static symbol check (cmark-gfm must be linked, not unresolved)
         run: bash test/wasm/run_wasm_checks.sh wasm-artifacts
@@ -342,8 +342,8 @@ jobs:
         run: |
           set -uo pipefail
           timeout 300 npm install --no-save
-          mkdir -p repo/v1.5.5/wasm_eh
-          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v1.5.5-extension-wasm_eh/markdown.duckdb_extension.wasm" \
-             repo/v1.5.5/wasm_eh/
+          mkdir -p repo/v1.5.6/wasm_eh
+          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v1.5.6-extension-wasm_eh/markdown.duckdb_extension.wasm" \
+             repo/v1.5.6/wasm_eh/
           timeout 240 node load_test.cjs --repo repo --name markdown --platform eh \
             --query "SELECT md_to_html('# H') AS h" --expect "<h1>"

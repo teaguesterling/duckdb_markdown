@@ -14,7 +14,7 @@ on:
 # Keep in step with duckdb-stable-build in MainDistributionPipeline.yml -- the
 # artifact name is derived from it, and it decides which duckdb-wasm can load it.
 env:
-  EXTENSION_DUCKDB_VERSION: v1.5.5
+  EXTENSION_DUCKDB_VERSION: v1.5.6
 
 jobs:
   test-wasm-browser:
@@ -29,12 +29,45 @@ jobs:
       #
       #   duckdb-wasm 1.32.0 / 1.33.0  -> duckdb d1dc88f950 (v1.4.x)
       #   duckdb-wasm 1.33.1-dev*      -> duckdb d8cdaa33fd (v1.5.5), built from main
+      #   duckdb-wasm main             -> duckdb 069cc9f9b5 (v1.5.6), bumped
+      #                                  2026-09-29 by duckdb-wasm 448ec38a5
+      #                                  ("Bump to 1.5.6")
       #
-      # v1.5.5 IS carried by a published duckdb-wasm -- 1.33.1-dev*, per the
-      # pairing above -- so this job can now run rather than skip. It skipped for
-      # the whole life of the v1.5.4 pin, which is one of the costs of pinning at
-      # a tag nothing else ships: the WASM leg had no instrument at all.
-      # The skip path is kept for the next version that outruns duckdb-wasm.
+      # v1.5.6 is on duckdb-wasm's MAIN. Whether a PUBLISHED npm bundle carries it
+      # is NOT verified here, and deliberately so rather than assumed: duckdb-wasm
+      # tags releases as v1.33.0-style only, never per dev build, so the npm version
+      # does not say which duckdb commit is embedded and there is no cheap lookup
+      # that does. When this was bumped npm had latest=1.33.1-dev57.0 and
+      # next=1.33.1-dev65.0, and duckdb-wasm's submodule bump landed the SAME DAY --
+      # so a matching published bundle may not exist yet.
+      #
+      # The resolve step below is what decides, and the skip path takes over when no
+      # published bundle matches. Do not read a skipped WASM leg as a fault in the
+      # extension, and do not read a green one as proof the pairing above is still
+      # current. To re-verify, read submodules/duckdb at the duckdb-wasm ref the
+      # bundle was built from -- that is the only thing that actually answers it.
+      #
+      # AND READ THE RESOLVE STEP BELOW BEFORE BELIEVING ANY OF THIS. Its case has
+      # exactly ONE arm, v1.4.3, so every 1.5.x and 2.x pin falls to `*` and sets
+      # compatible=false. Every step that actually tests anything is gated on
+      # `compatible == 'true'`, so they all skip -- and THE JOB THEN REPORTS SUCCESS.
+      # Not "skipped": success, having run no browser test at all.
+      #
+      # Measured on run 35692318019 (v1.5.5 pin, 2026-09-22), job "Test WASM in
+      # Browser" -> success:
+      #
+      #    2. success  Resolve a compatible duckdb-wasm
+      #    3-11. skipped  Checkout / Node / Download artifact / Install /
+      #                   Copy extension / Create browser test / Run browser tests
+      #   12. success  Summary
+      #
+      # So this check has been GREEN OVER ZERO VERIFICATION for every pin since
+      # v1.4.3, and the comment that used to sit here claimed the opposite -- that
+      # v1.5.5 "can now run rather than skip". Do not treat a green
+      # "Test WASM in Browser" as evidence the WASM extension loads. Tracked as #84.
+      #
+      # Bumping EXTENSION_DUCKDB_VERSION does not change any of this; only adding a
+      # case arm, once a published bundle is actually confirmed, does.
       - name: Resolve a compatible duckdb-wasm
         id: pair
         run: |
