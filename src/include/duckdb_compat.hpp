@@ -302,4 +302,124 @@ static_assert(!CompatHasFromValue<NoFromValueProbe>::value,
               "CompatHasFromValue must not fire where FromValue is absent (the v1.5 shape)");
 } // namespace compat_detail
 
+// --- table-function named parameters and argument types ------------------------
+// v1.5: SimpleFunction carries PUBLIC members --
+//         named_parameter_map_t named_parameters;   (case_insensitive_map_t<Value>)
+//         vector<LogicalType>   arguments;
+// v2.0: both are GONE. A TableFunction derives from BaseTableFunction +
+//       SimpleFunction and carries a FunctionSignature reached through
+//       GetSignature(); named parameters became a typed "**kwargs" group, and
+//       argument types became FunctionParameters inside that signature.
+//       (duckdb 234e742a0d and the tablefunc-signature work merged b75e79276.)
+//
+// A PREPROCESSOR BRANCH, NOT A TAG-DISPATCHED ONE, and against this header's own
+// preference. The v2.0 spelling NAMES TYPES THAT DO NOT EXIST ON v1.5 --
+// TypedKwargs, FunctionParameter -- and a template cannot hide an absent type:
+// non-dependent names are looked up when the template is DEFINED, not when it is
+// instantiated. So the CompatWithAlias tag-dispatch pattern above cannot be used
+// here; the branch has to be #if, and it is confined to this header.
+//
+// THE SENTINEL, and why this one is checked rather than trusted.
+// duckdb/main/capi/capi_function_signature.hpp is absent on v1.5.6 and present on
+// v2.0-cyanoptera. It is still a PROXY: no header's presence means exactly "this
+// DuckDB has typed kwargs". Verified at BOTH commits we build against, not just on
+// a branch tip:
+//
+//   v1.5.6           sentinel ABSENT   WithTypedKwargs 0   TableFunction::GetSignature 0
+//   v2.0-cyanoptera  sentinel present  WithTypedKwargs 1   TableFunction::GetSignature 5
+//
+// sitting_duck records a sentinel that once selected the v2.0 path against a
+// DuckDB with no kwargs API -- identifier_case_mode.hpp had landed while
+// TableFunction::GetSignature had not -- and produced 99 errors. A sentinel must
+// CO-VARY with the API it gates. The static_asserts below make a mis-selection
+// fail here, loudly, instead of failing deep in the call sites.
+#if __has_include("duckdb/main/capi/capi_function_signature.hpp")
+#define DUCKDB_HAS_FUNCTION_SIGNATURE 1
+#endif
+
+//! One named parameter: the name callers write, and the type it accepts.
+struct CompatNamedParam {
+	const char *name;
+	LogicalType type;
+};
+
+// Probes used ONLY to assert the sentinel picked the right line. They are not the
+// selector: see the note above on why the selector must be #if.
+template <class T, class = void>
+struct CompatHasGetSignature : std::false_type {};
+template <class T>
+struct CompatHasGetSignature<T, decltype(void(std::declval<T &>().GetSignature()))> : std::true_type {};
+
+template <class T, class = void>
+struct CompatHasNamedParametersMember : std::false_type {};
+template <class T>
+struct CompatHasNamedParametersMember<T, decltype(void(std::declval<T &>().named_parameters))> : std::true_type {};
+
+#ifdef DUCKDB_HAS_FUNCTION_SIGNATURE
+static_assert(CompatHasGetSignature<TableFunction>::value,
+              "sentinel says v2.0 but TableFunction has no GetSignature(): the sentinel mis-selected");
+#else
+static_assert(CompatHasNamedParametersMember<TableFunction>::value,
+              "sentinel says v1.5 but TableFunction has no named_parameters member: the sentinel mis-selected");
+#endif
+
+//! The name of the kwargs group v2.0 collects a table function's options under.
+//! v1.5 has no grouping, so it is unused there.
+static constexpr const char *COMPAT_KWARGS_GROUP = "options";
+
+#ifdef DUCKDB_HAS_FUNCTION_SIGNATURE
+
+//! Declare a table function's named parameters. Call ONCE per function: v2.0
+//! distinguishes CREATING the "**kwargs" parameter from adding options to it, and
+//! ExtendTypedKwargs throws if the signature has no kwargs parameter yet.
+inline void CompatDeclareNamedParams(TableFunction &func, const vector<CompatNamedParam> &params) {
+	func.GetSignature().WithTypedKwargs(Identifier(string(COMPAT_KWARGS_GROUP)), [&params](TypedKwargs &kwargs) {
+		for (const auto &param : params) {
+			kwargs.Add(Identifier(string(param.name)), param.type);
+		}
+	});
+}
+
+//! Set a table function's positional argument types.
+//!
+//! NOT "add". FunctionSignature has AddParameter but NO way to clear or replace
+//! its parameters, so calling Add twice to register two overloads of the same
+//! function ACCUMULATES them -- a function declared (VARCHAR) then
+//! (LIST(VARCHAR)) would end up taking both, which compiles and silently
+//! registers the wrong signature. Overwrite in place via the mutable
+//! GetParameter(i).SetType() instead, and only append when the signature is
+//! shorter than asked for.
+inline void CompatSetArgumentTypes(TableFunction &func, const vector<LogicalType> &types) {
+	auto &signature = func.GetSignature();
+	if (signature.GetParameterCount() > types.size()) {
+		// No way to shrink a signature, and silently leaving stale trailing
+		// parameters would register an overload nobody asked for.
+		throw InternalException("CompatSetArgumentTypes cannot shrink a signature from %llu to %llu parameters",
+		                        (unsigned long long)signature.GetParameterCount(), (unsigned long long)types.size());
+	}
+	for (idx_t i = 0; i < types.size(); i++) {
+		if (i < signature.GetParameterCount()) {
+			signature.GetParameter(i).SetType(types[i]);
+		} else {
+			signature.AddParameter(types[i]);
+		}
+	}
+}
+
+#else
+
+//! Declare a table function's named parameters (v1.5: the flat map).
+inline void CompatDeclareNamedParams(TableFunction &func, const vector<CompatNamedParam> &params) {
+	for (const auto &param : params) {
+		func.named_parameters[param.name] = param.type;
+	}
+}
+
+//! Set a table function's positional argument types (v1.5: the public member).
+inline void CompatSetArgumentTypes(TableFunction &func, const vector<LogicalType> &types) {
+	func.arguments = types;
+}
+
+#endif
+
 } // namespace duckdb

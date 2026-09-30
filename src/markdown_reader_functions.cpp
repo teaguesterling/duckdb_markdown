@@ -127,15 +127,18 @@ static Value BuildTagsValue(const std::string &content) {
 
 static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::MarkdownReadOptions &options) {
 	for (const auto &kv : input.named_parameters) {
-		if (kv.first == "extract_metadata") {
+		// v2.0 keys this map by Identifier, not string: CompatNameStr spans both lines,
+		// so every comparison and the unknown-key throw below stay as they were.
+		const auto key = CompatNameStr(kv.first);
+		if (key == "extract_metadata") {
 			options.extract_metadata = BooleanValue::Get(kv.second);
-		} else if (kv.first == "include_stats") {
+		} else if (key == "include_stats") {
 			options.include_stats = BooleanValue::Get(kv.second);
-		} else if (kv.first == "normalize_content") {
+		} else if (key == "normalize_content") {
 			options.normalize_content = BooleanValue::Get(kv.second);
-		} else if (kv.first == "maximum_file_size") {
+		} else if (key == "maximum_file_size") {
 			options.maximum_file_size = UBigIntValue::Get(kv.second);
-		} else if (kv.first == "flavor") {
+		} else if (key == "flavor") {
 			const auto flavor_str = StringValue::Get(kv.second);
 			if (flavor_str == "gfm") {
 				options.flavor = markdown_utils::MarkdownFlavor::GFM;
@@ -146,32 +149,32 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 			} else {
 				throw InvalidInputException("Unknown markdown flavor: %s", flavor_str);
 			}
-		} else if (kv.first == "include_content") {
+		} else if (key == "include_content") {
 			options.include_content = BooleanValue::Get(kv.second);
-		} else if (kv.first == "min_level") {
+		} else if (key == "min_level") {
 			options.min_level = IntegerValue::Get(kv.second);
-		} else if (kv.first == "max_level") {
+		} else if (key == "max_level") {
 			options.max_level = IntegerValue::Get(kv.second);
-		} else if (kv.first == "include_empty_sections") {
+		} else if (key == "include_empty_sections") {
 			options.include_empty_sections = BooleanValue::Get(kv.second);
-		} else if (kv.first == "include_filepath" || kv.first == "filename") {
+		} else if (key == "include_filepath" || key == "filename") {
 			options.include_filepath = BooleanValue::Get(kv.second);
-		} else if (kv.first == "content_as_varchar") {
+		} else if (key == "content_as_varchar") {
 			options.content_as_varchar = BooleanValue::Get(kv.second);
-		} else if (kv.first == "content_mode") {
+		} else if (key == "content_mode") {
 			auto mode = StringValue::Get(kv.second);
 			if (mode != "minimal" && mode != "full" && mode != "smart") {
 				throw InvalidInputException("content_mode must be 'minimal', 'full', or 'smart', got: %s", mode);
 			}
 			options.content_mode = mode;
-		} else if (kv.first == "max_depth") {
+		} else if (key == "max_depth") {
 			options.max_depth = IntegerValue::Get(kv.second);
 			if (options.max_depth < 1 || options.max_depth > 6) {
 				throw InvalidInputException("max_depth must be between 1 and 6");
 			}
-		} else if (kv.first == "max_content_length") {
+		} else if (key == "max_content_length") {
 			options.max_content_length = UBigIntValue::Get(kv.second);
-		} else if (kv.first == "extract_extensions") {
+		} else if (key == "extract_extensions") {
 			// Opt-in add-on extractors. Comma-separated VARCHAR — each token is a flavor
 			// ('obsidian' → wikilinks + tags) or a feature ('wikilinks', 'tags').
 			// NULL/unset is the default (no extensions); unknown tokens throw, matching
@@ -199,7 +202,7 @@ static void ParseMarkdownOptions(TableFunctionBindInput &input, MarkdownReader::
 				}
 			}
 		} else {
-			throw InvalidInputException("Unknown parameter for read_markdown: %s", kv.first);
+			throw InvalidInputException("Unknown parameter for read_markdown: %s", key);
 		}
 	}
 }
@@ -766,10 +769,10 @@ static void RegisterPathAndListVariants(ExtensionLoader &loader, TableFunction f
                                         string description, vector<string> examples) {
 	TableFunctionSet function_set(function.name);
 
-	function.arguments = {LogicalType::VARCHAR};
+	CompatSetArgumentTypes(function, {LogicalType::VARCHAR});
 	function_set.AddFunction(function);
 
-	function.arguments = {LogicalType::LIST(LogicalType::VARCHAR)};
+	CompatSetArgumentTypes(function, {LogicalType::LIST(LogicalType::VARCHAR)});
 	function_set.AddFunction(function);
 
 	CreateTableFunctionInfo info(std::move(function_set));
@@ -789,15 +792,19 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	                                 MarkdownReadDocumentsFunction, MarkdownReadDocumentsBind);
 
 	// Add named parameters
-	read_markdown_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_markdown_func.named_parameters["include_stats"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_markdown_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_markdown_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
-	read_markdown_func.named_parameters["extract_extensions"] = LogicalType(LogicalTypeId::VARCHAR);
-	read_markdown_func.named_parameters["flavor"] = LogicalType(LogicalTypeId::VARCHAR);
-	read_markdown_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_markdown_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
-	read_markdown_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
+	// Named parameters. One call per function: v2.0 CREATES the kwargs group here.
+	CompatDeclareNamedParams(read_markdown_func,
+	                         {
+	                             {"extract_metadata", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"include_stats", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"normalize_content", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
+	                             {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
+	                             {"flavor", LogicalType(LogicalTypeId::VARCHAR)},
+	                             {"include_filepath", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"filename", LogicalType(LogicalTypeId::BOOLEAN)}, // Alias for include_filepath
+	                             {"content_as_varchar", LogicalType(LogicalTypeId::BOOLEAN)},
+	                         });
 
 	RegisterPathAndListVariants(loader, read_markdown_func, {"path"},
 	                            "Read Markdown documents from files into table format with frontmatter and content.",
@@ -808,24 +815,26 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	                                 MarkdownReadSectionsFunction, MarkdownReadSectionsBind);
 
 	// Add named parameters for sections
-	read_sections_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["include_stats"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
-	read_sections_func.named_parameters["extract_extensions"] = LogicalType(LogicalTypeId::VARCHAR);
-	read_sections_func.named_parameters["flavor"] = LogicalType(LogicalTypeId::VARCHAR);
-	read_sections_func.named_parameters["include_content"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["min_level"] = LogicalType(LogicalTypeId::INTEGER);
-	read_sections_func.named_parameters["max_level"] = LogicalType(LogicalTypeId::INTEGER);
-	read_sections_func.named_parameters["include_empty_sections"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_sections_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
-	read_sections_func.named_parameters["content_as_varchar"] = LogicalType(LogicalTypeId::BOOLEAN);
-
-	// Content mode options (Issue #8)
-	read_sections_func.named_parameters["content_mode"] = LogicalType(LogicalTypeId::VARCHAR);
-	read_sections_func.named_parameters["max_depth"] = LogicalType(LogicalTypeId::INTEGER);
-	read_sections_func.named_parameters["max_content_length"] = LogicalType(LogicalTypeId::UBIGINT);
+	// Named parameters for sections (content-mode options included).
+	CompatDeclareNamedParams(read_sections_func,
+	                         {
+	                             {"extract_metadata", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"include_stats", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"normalize_content", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
+	                             {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
+	                             {"flavor", LogicalType(LogicalTypeId::VARCHAR)},
+	                             {"include_content", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"min_level", LogicalType(LogicalTypeId::INTEGER)},
+	                             {"max_level", LogicalType(LogicalTypeId::INTEGER)},
+	                             {"include_empty_sections", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"include_filepath", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"filename", LogicalType(LogicalTypeId::BOOLEAN)}, // Alias for include_filepath
+	                             {"content_as_varchar", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"content_mode", LogicalType(LogicalTypeId::VARCHAR)},
+	                             {"max_depth", LogicalType(LogicalTypeId::INTEGER)},
+	                             {"max_content_length", LogicalType(LogicalTypeId::UBIGINT)},
+	                         });
 
 	RegisterPathAndListVariants(loader, read_sections_func, {"path"},
 	                            "Read Markdown files split by headings into structured sections.",
@@ -836,12 +845,16 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 	                               MarkdownReadBlocksFunction, MarkdownReadBlocksBind);
 
 	// Add named parameters for blocks
-	read_blocks_func.named_parameters["extract_metadata"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_blocks_func.named_parameters["normalize_content"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_blocks_func.named_parameters["maximum_file_size"] = LogicalType(LogicalTypeId::UBIGINT);
-	read_blocks_func.named_parameters["extract_extensions"] = LogicalType(LogicalTypeId::VARCHAR);
-	read_blocks_func.named_parameters["include_filepath"] = LogicalType(LogicalTypeId::BOOLEAN);
-	read_blocks_func.named_parameters["filename"] = LogicalType(LogicalTypeId::BOOLEAN); // Alias for include_filepath
+	// Named parameters for blocks.
+	CompatDeclareNamedParams(read_blocks_func,
+	                         {
+	                             {"extract_metadata", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"normalize_content", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"maximum_file_size", LogicalType(LogicalTypeId::UBIGINT)},
+	                             {"extract_extensions", LogicalType(LogicalTypeId::VARCHAR)},
+	                             {"include_filepath", LogicalType(LogicalTypeId::BOOLEAN)},
+	                             {"filename", LogicalType(LogicalTypeId::BOOLEAN)}, // Alias for include_filepath
+	                         });
 
 	RegisterPathAndListVariants(loader, read_blocks_func, {"path"},
 	                            "Read Markdown files parsed into atomic block elements.",
