@@ -158,13 +158,21 @@ jobs:
           # cannot see, so a bump left them stale and this job went green over a red
           # build. Comment lines (first non-space char `#`) are exempt, and so are
           # `uses:` lines (a `- uses:` list item too): a third-party action pin like
-          # `@v2.0.4` is not a DuckDB version. Branch/tag names like `v2.0-cyanoptera`
+          # `@v2.0.4` is not a DuckDB version -- EXCEPT duckdb/extension-ci-tools, whose
+          # `@vX.Y.Z` IS a DuckDB-line version and must track the shipped one. Without
+          # that carve-out a bump could update `duckdb_version:` and `ci_tools_version:`
+          # and leave the reusable-workflow pin on the old line, building the new DuckDB
+          # with the old ci-tools while every assertion in this job passed. #86 bumped it
+          # correctly by hand; nothing here would have noticed if it had not (#88).
+          # Branch/tag names like `v2.0-cyanoptera`
           # and `v1.5-variegata` have no third numeric component and so never match
           # this pattern. DUCKDB_LEGACY, when set (flip day, see above), is exempt too.
           bad=0
           while IFS=: read -r lineno line; do
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*#' && continue
-            printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:' && continue
+            if printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:'; then
+              printf '%s\n' "$line" | grep -q 'duckdb/extension-ci-tools' || continue
+            fi
             for v in $(printf '%s\n' "$line" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true); do
               if [ "$v" != "$DUCKDB_VERSION" ]; then
                 if [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ]; then
