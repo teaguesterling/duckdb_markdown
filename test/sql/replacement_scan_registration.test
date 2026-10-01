@@ -40,6 +40,16 @@ SELECT count(*) > 0 FROM 'test/markdown/*.md';
 ----
 true
 
+# Binding is not reading. count(*) above proves a row was produced; this proves
+# the row carries content, so a scan that routed to read_markdown but opened the
+# wrong path (or none) cannot pass. Salvaged from #83, whose code change turned
+# out not to be the fix but whose assertions are what made the real defect
+# visible.
+query I
+SELECT length(content) > 0 FROM 'test/markdown/simple.md';
+----
+true
+
 # An explicit reader call does NOT depend on the replacement scan, so it keeps
 # working even when the scan is missing. It is the control that proves the two
 # assertions above are testing the scan and not merely "the extension loaded".
