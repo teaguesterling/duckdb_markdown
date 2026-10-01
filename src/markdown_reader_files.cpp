@@ -6,6 +6,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/function/replacement_scan.hpp"
+#include <cstdio>
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -297,6 +298,20 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 	// declining.
 	const auto table_name = ReplacementScan::GetFullPath(input);
 	auto &fs = FileSystem::GetFileSystem(context);
+
+	// ===== TEMPORARY DIAGNOSTIC (#82) -- NOT FOR MERGE =====
+	// Answers, on a real 2.0 build, the question no amount of reading settles:
+	// is this function entered at all, and if so what string does it receive?
+	// GetFullPath is in place here (this branch is #83), yet bare FROM still
+	// declines for a PLAIN path, so one of those two assumptions is false.
+	fprintf(stderr, "[MDDIAG] entered ReadMarkdownReplacement\n");
+	fprintf(stderr, "[MDDIAG]   input.table_name   = '%s'\n", input.table_name.c_str());
+	fprintf(stderr, "[MDDIAG]   input.schema_name  = '%s'\n", input.schema_name.c_str());
+	fprintf(stderr, "[MDDIAG]   input.catalog_name = '%s'\n", input.catalog_name.c_str());
+	fprintf(stderr, "[MDDIAG]   GetFullPath(input) = '%s'\n", table_name.c_str());
+	fprintf(stderr, "[MDDIAG]   IsMarkdownFileName = %d\n", (int)IsMarkdownFileName(table_name));
+	fflush(stderr);
+	// ===== END TEMPORARY DIAGNOSTIC =====
 
 	// Check if this looks like a markdown file or pattern
 	bool is_markdown_file = IsMarkdownFileName(table_name);
