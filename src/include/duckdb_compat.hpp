@@ -391,18 +391,46 @@ inline void CompatDeclareNamedParams(TableFunction &func, const vector<CompatNam
 //! shorter than asked for.
 inline void CompatSetArgumentTypes(TableFunction &func, const vector<LogicalType> &types) {
 	auto &signature = func.GetSignature();
-	if (signature.GetParameterCount() > types.size()) {
-		// No way to shrink a signature, and silently leaving stale trailing
-		// parameters would register an overload nobody asked for.
-		throw InternalException("CompatSetArgumentTypes cannot shrink a signature from %llu to %llu parameters",
-		                        (unsigned long long)signature.GetParameterCount(), (unsigned long long)types.size());
+	// COUNT THE POSITIONAL BLOCK, NOT THE WHOLE SIGNATURE. `GetParameterCount()`
+	// returns `parameters.size()`, and on 2.0 the named parameters live in that
+	// same vector: `WithTypedKwargs` appends one VAR_KEYWORD parameter holding
+	// them all. So a function with one path argument and any number of named
+	// parameters reports a count of 2, and replacing its single positional type
+	// looked like a request to shrink 2 -> 1. Every table function here declares
+	// named parameters before registering its path/list variants, so the guard
+	// below fired on all three and the extension failed to LOAD on 2.0 with
+	// "cannot shrink a signature from 2 to 1 parameters".
+	//
+	// `GetPositionalParameterCount()` counts only the leading parameters whose
+	// `AcceptsPosition()` is true -- STANDARD and POSITIONAL_ONLY, never
+	// VAR_KEYWORD -- which is exactly the set that v1.5's `func.arguments = types`
+	// replaced. Assigning `arguments` on v1.5 never touched `named_parameters`;
+	// this is the same contract.
+	const auto positional = signature.GetPositionalParameterCount();
+	if (positional > types.size()) {
+		// Still unreachable for us (every caller passes exactly one type for one
+		// positional parameter), and still a throw rather than a silent partial
+		// write: `parameters` is private with no erase/clear, so stale trailing
+		// positional parameters would register an overload nobody asked for.
+		throw InternalException(
+		    "CompatSetArgumentTypes cannot shrink a signature from %llu to %llu positional parameters",
+		    (unsigned long long)positional, (unsigned long long)types.size());
 	}
 	for (idx_t i = 0; i < types.size(); i++) {
-		if (i < signature.GetParameterCount()) {
+		if (i < positional) {
 			signature.GetParameter(i).SetType(types[i]);
-		} else {
-			signature.AddParameter(types[i]);
+			continue;
 		}
+		// Appending is only correct while the positional block is the whole
+		// signature: `AddParameter` pushes to the back, so growing past a
+		// trailing VAR_KEYWORD would order a positional parameter after the
+		// kwargs one. No API inserts mid-vector, so refuse instead of reordering.
+		if (positional != signature.GetParameterCount()) {
+			throw InternalException("CompatSetArgumentTypes cannot add positional parameter %llu: the signature "
+			                        "already carries non-positional parameters that would be reordered",
+			                        (unsigned long long)i);
+		}
+		signature.AddParameter(types[i]);
 	}
 }
 
