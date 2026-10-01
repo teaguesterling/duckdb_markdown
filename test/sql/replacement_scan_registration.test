@@ -1,0 +1,49 @@
+# name: test/sql/replacement_scan_registration.test
+# description: The replacement scan is registered on EVERY load path, so bare FROM works
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# `FROM '<path>'` with no reader function goes through the replacement scan,
+# which is registered in LoadInternal. It used to be registered in
+# MarkdownExtension::Load instead -- a function the LOADABLE extension's entry
+# point (markdown_duckdb_cpp_init, via DUCKDB_CPP_EXTENSION_ENTRY) never calls.
+#
+# So the loadable build registered every table function and no replacement scan:
+# read_markdown('x.md') worked while FROM 'x.md' raised
+#
+#   Binder Error: No extension found that is capable of reading the file "x.md"
+#
+# This was NOT a DuckDB 2.0 regression, though #82 assumed one. The entry macro
+# expands identically on v1.5.6 and v2.0-cyanoptera and the failure reproduces on
+# a stock v1.5.6 CLI; static builds hid it because they run Load().
+#
+# WHAT THIS FILE CAN AND CANNOT SEE. Run by `unittest`, these assertions exercise
+# whichever load path that binary uses -- statically linked, they would pass even
+# with the defect restored. They are still worth pinning: they fail loudly on a
+# loadable run, which is what the community-extensions next-line leg does, and
+# they document the contract. The discriminating check is to LOAD the built
+# .duckdb_extension into a STOCK duckdb of the same version, where pre-fix both
+# queries below raise the binder error and post-fix both return 1.
+# =============================================================================
+
+# Plain path, no decoration, no glob.
+query I
+SELECT count(*) FROM 'test/markdown/simple.md';
+----
+1
+
+# A glob still routes through the same scan.
+query I
+SELECT count(*) > 0 FROM 'test/markdown/*.md';
+----
+true
+
+# An explicit reader call does NOT depend on the replacement scan, so it keeps
+# working even when the scan is missing. It is the control that proves the two
+# assertions above are testing the scan and not merely "the extension loaded".
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md');
+----
+1
