@@ -300,17 +300,21 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// ===== TEMPORARY DIAGNOSTIC (#82) -- NOT FOR MERGE =====
-	// Answers, on a real 2.0 build, the question no amount of reading settles:
-	// is this function entered at all, and if so what string does it receive?
-	// GetFullPath is in place here (this branch is #83), yet bare FROM still
-	// declines for a PLAIN path, so one of those two assumptions is false.
-	fprintf(stderr, "[MDDIAG] entered ReadMarkdownReplacement\n");
-	fprintf(stderr, "[MDDIAG]   input.table_name   = '%s'\n", input.table_name.c_str());
-	fprintf(stderr, "[MDDIAG]   input.schema_name  = '%s'\n", input.schema_name.c_str());
-	fprintf(stderr, "[MDDIAG]   input.catalog_name = '%s'\n", input.catalog_name.c_str());
-	fprintf(stderr, "[MDDIAG]   GetFullPath(input) = '%s'\n", table_name.c_str());
-	fprintf(stderr, "[MDDIAG]   IsMarkdownFileName = %d\n", (int)IsMarkdownFileName(table_name));
-	fflush(stderr);
+	// REPORTS BY THROWING, because stderr does not survive the harness.
+	// duckdb/scripts/ci/run_tests.py runs batches with workers=3 and prints only a
+	// dot-progress display plus failure excerpts; a child's fprintf(stderr) is
+	// swallowed. A previous version of this probe printed to stderr and produced
+	// ZERO lines in the 2.0 log -- which looks exactly like "never entered" and is
+	// not evidence of it.
+	//
+	// An exception, by contrast, is surfaced verbatim as "Actual result". So the two
+	// outcomes are now textually distinct and both are printed:
+	//   entered     -> "MDDIAG" with the strings this function actually received
+	//   not entered -> the binder's own "No extension found that is capable ..."
+	throw InvalidInputException(
+	    "MDDIAG entered=1 table_name='%s' catalog='%s' schema='%s' full_path='%s' is_md=%d",
+	    input.table_name, input.catalog_name, input.schema_name, table_name,
+	    (int)IsMarkdownFileName(table_name));
 	// ===== END TEMPORARY DIAGNOSTIC =====
 
 	// Check if this looks like a markdown file or pattern
