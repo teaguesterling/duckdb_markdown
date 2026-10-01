@@ -983,9 +983,26 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 		}
 		result += "\n\n";
 	} else if (element_type == Vocab::TYPE_DEFLIST) {
-		// Definition list (Markdown Extra / Pandoc syntax)
+		// Definition list (Markdown Extra / Pandoc syntax).
+		//
+		// GATED ON encoding, like blockquote, list and table. It was not, and that made
+		// deflist the one block type whose content was reinterpreted as Pandoc JSON
+		// whatever the producer declared -- so a deflist saying encoding='text' whose
+		// text happened to parse as [[[term],[defs]],...] was silently replaced by the
+		// extracted text instead of emitted as written (#77).
+		//
+		// The gate matches the PRODUCER's own contract rather than being our
+		// invention: duck_block_utils checks the same thing before treating a deflist
+		// as Pandoc (pandoc_block_convert.cpp:1941-42 and :2484-85, both
+		// `... == BlockTypes::TYPE_DEFLIST && GetElementStringField(...) ==
+		// BlockTypes::ENCODING_JSON`). So nothing a real producer emits stops being
+		// interpreted; only content that was never claimed to be JSON does.
+		//
+		// Nothing OUR reader emits is affected: cmark does not parse definition lists,
+		// so TYPE_DEFLIST only ever arrives from an external producer -- verified, we
+		// have exactly one mention of it and it is this consuming branch.
 		vector<std::pair<string, vector<string>>> entries;
-		if (ParseDefinitionList(content, entries)) {
+		if (encoding == Vocab::ENCODING_JSON && ParseDefinitionList(content, entries)) {
 			for (const auto &entry : entries) {
 				result += entry.first + "\n";
 				for (const auto &definition : entry.second) {
