@@ -193,10 +193,14 @@ a fully green canary does not clear you of either.
 | 19 | single-arrow lambdas rejected by the binder | **SQL, not C++ — no compile signal at all** |
 | 20 | `CopyInfo::options` rekeyed to `identifier_map_t` | compile error — **second form has nothing to grep** |
 | 21 | COPY option NAMES lowercased by the v2.0 parser | **compiles on both lines; only a test pinning the string catches it** |
+| 22 | `SimpleNamedParameterFunction` deleted — `fn.named_parameters[…] =` gone | compile error — **but the obvious port is a silent runtime break** |
 
 Classes 7, 13 and 21 break at run time on a build that compiles cleanly
-everywhere. Class 11 can compile and misbehave. Classes 15 and 18 can return
-**wrong rows** with no error at all — 15 if your pushdown *is* the filter rather
+everywhere. Class 22 announces itself as a compile error, but its *obvious* port
+(`AddKeywordOnly`) joins that set: it compiles clean, passes every build check,
+and makes every named option mandatory for callers. Class 11 can compile and
+misbehave. Classes 15 and 18 can return **wrong rows** with no error at all — 15
+if your pushdown *is* the filter rather
 than an optimisation, 18 if your extension calls `SetCardinality` directly with
 no shim, where a column can print `NULL` while `IS NULL` on it returns `false`
 in the same result set.
@@ -563,8 +567,15 @@ arguments to a *table* function go through `TableFunction::named_parameters`,
 which are declared and bound by the table-function path and are unaffected by
 this change. `capture_argument_aliases` governs only **scalar** functions that
 derive names from their argument *aliases* — the `struct_pack` case. A repo whose
-named options are all table-function parameters is not affected, however many of
-them it has.
+named options are all table-function parameters is not affected **by this change**,
+however many of them it has.
+
+> **Scope warning, added 2026-10-02.** The sentence above is about class 7 only. It
+> is NOT a statement that table-function named parameters survive v2.0 untouched —
+> they do not. `SimpleNamedParameterFunction` was deleted on 2026-09-25, taking the
+> `named_parameters` member with it, and every declaration site is now a compile
+> error. See **class 22**. Read as a blanket reassurance, this paragraph sent a repo
+> with 158 declaration sites looking elsewhere.
 
 **COPY option keys are a different surface — do not confuse the two.** A COPY
 bind reading `input.info.options` (a map) is untouched by this change; only
@@ -771,8 +782,10 @@ hand-off to a `FunctionSet`.
 
 **Scope notes.** Table functions, COPY and casts are outside this contract —
 casts run through `BoundCastInfo`, not `BaseScalarFunction::Execute`. And
-`PragmaFunction` derives from `SimpleNamedParameterFunction`, not
-`BaseScalarFunction`, so pragmas are unaffected.
+`PragmaFunction` does not derive from `BaseScalarFunction`, so pragmas are
+unaffected. (On the pinned line its base is `SimpleNamedParameterFunction`; that
+class was **deleted** in v2.0 — class 22 — but the conclusion for *this* contract
+is unchanged either way.)
 
 **A passing `statement error` test is NOT evidence the error mode is right.**
 This is the trap that makes class 13 hard to close out, and several ports
@@ -1212,10 +1225,14 @@ identically to the broken cases in a grep, so they are easy to over-port:
   `Vector &` already returns a mutable pointer. Do not "fix" these into a
   `ConstantVector::GetDataMutable` that does not exist.
 - `named_parameter_map_t` is now `identifier_map_t<Value>`, so `kv.first` in a
-  named-parameter loop is an `Identifier` — and still needs no change.
-  `Identifier` has `operator==` against `const char *`, `const string &` and
-  `Identifier`, and `fn.named_parameters["literal"] = type` still works through
-  the implicit literal constructor.
+  named-parameter loop is an `Identifier` — and the **read side** still needs no
+  change. `Identifier` has `operator==` against `const char *`, `const string &`
+  and `Identifier`, so a loop over `input.named_parameters` compiles unchanged.
+  **The write side does not** (corrected 2026-10-02):
+  `fn.named_parameters["literal"] = type` was removed along with
+  `SimpleNamedParameterFunction` on 2026-09-25 and is now a compile error — see
+  class 22. This bullet was about the map's *key type*, never about the member
+  continuing to exist.
 
 You can settle any such question in seconds without a CI round and without
 cloning: read the header on `raw.githubusercontent.com/duckdb/duckdb/main/...`.
@@ -1704,3 +1721,75 @@ catch it.
 If your extension echoes option names back to the user, decide deliberately
 whether to normalise on both lines rather than letting the two versions disagree.
 
+### 22. `SimpleNamedParameterFunction` was deleted — the `named_parameters` member is gone
+
+Landed on `v2.0-cyanoptera` **2026-09-25**, after the rest of this guide was
+written, in three commits: "add FunctionOptionSchema to handle optional named
+parameter (`**kwarg`)", "always pass defaults in named_parameter map", and "make
+positional-only by default, fix overload conflicts".
+
+```
+v1.5.6:      class TableFunction : public SimpleNamedParameterFunction          // carries named_parameters
+cyanoptera:  class TableFunction : public BaseTableFunction, public SimpleFunction   // neither does
+```
+
+The base class is gone entirely — zero occurrences in cyanoptera's `function.hpp`
+against nine for `SimpleFunction`, and `copy_function.hpp` / `pragma_function.hpp`
+carry no `named_parameters` either. Every declaration site becomes:
+
+```
+error: 'class duckdb::TableFunction' has no member named 'named_parameters'
+```
+
+**The read side is unaffected** — `input.named_parameters` in a bind still exists,
+still keyed by `Identifier`. Only declaration moved.
+
+#### The port
+
+Map each former map entry onto a typed `**kwargs` bag, which is how upstream
+migrated its own `read_csv` (`src/function/table/read_csv.cpp`):
+
+```cpp
+func.GetSignature().WithTypedKwargs("options", [](TypedKwargs &kwargs) {
+    kwargs.Add("name", LogicalType::VARCHAR);
+});
+```
+
+Probe the **member**, not a header — `GetSignature()` / `WithTypedKwargs` are absent
+on v1.5.6 and present on cyanoptera — and keep `named_parameters[...]` on the old
+branch.
+
+**More than one option on the same function needs care.** A second
+`WithTypedKwargs` REPLACES the first bag, and `ExtendTypedKwargs` throws
+`InternalException` when no bag exists yet. A shim called once per option must
+branch on `GetSignature().GetTypedKwargs()` and extend when one is already there.
+
+#### The trap — a SILENT runtime break
+
+`AddKeywordOnly(name, type)` is the reading that looks right, and it is wrong.
+**A parameter with no default is REQUIRED on v2.0** — `function_binder.cpp` throws
+`Missing value for parameter %s in function call to %s`. That port makes every
+named option mandatory and breaks every existing caller, while **compiling cleanly
+and passing every build check**. It fails only when somebody calls the function
+without that option.
+
+A typed kwargs bag is optional by construction, is typed `ANY` so overload
+selection cannot reject the value, and still arrives as
+`input.named_parameters["name"]` — bind code and caller syntax both unchanged.
+
+#### Why this one arrived with no warning
+
+The v2.0 job pins `duckdb_version: v2.0-cyanoptera`, a **floating branch ref**, and
+the job log never prints the resolved sha. The same extension commit built green on
+2026-09-22 and red on 2026-09-30 with nothing changed locally — which reads exactly
+like "my branch broke it".
+
+When an advisory leg reddens on a branch that touches no C++, **re-run the last
+green run on its own unchanged commit before attributing the failure to your
+change**. A matching failure exonerates the branch in one measurement. Note also
+that the `HEAD is now at …` line inside the docker build belongs to **vcpkg**, not
+DuckDB, so it is no help in identifying what was built.
+
+Reference implementations, reached independently and in agreement:
+`duckdb_markdown/src/include/duckdb_compat.hpp` and
+`duckdb_panduck/src/include/panduck_duckdb_compat.hpp` (`AddNamedParameter`).
