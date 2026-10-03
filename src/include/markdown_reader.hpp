@@ -22,6 +22,26 @@ namespace duckdb {
 class TableRef;
 struct ReplacementScanData;
 
+//! Signals that a file exceeded the caller's `maximum_file_size`.
+//!
+//! DELIBERATELY NOT A std::exception. Every per-file read in the three readers is
+//! wrapped in `catch (const std::exception &)` so that one unreadable file does not
+//! fail a glob over hundreds. A size-cap violation is a different kind of event: the
+//! user configured that limit, so swallowing it drops data they asked to be told
+//! about. Not deriving from std::exception means the existing resilience handlers
+//! cannot catch it by accident -- a new reader that forgets to handle it gets a loud
+//! escape rather than a silent skip, which is the failure direction we want.
+//!
+//! Before this existed the three readers disagreed: a file over the cap raised from
+//! read_markdown and vanished silently from read_markdown_sections and
+//! read_markdown_blocks, so the same query shape either failed or quietly returned
+//! short depending on which reader you called.
+struct MarkdownFileTooLarge {
+	string file_path;
+	idx_t file_size;
+	idx_t maximum_file_size;
+};
+
 /**
  * @brief Markdown Reader class for handling Markdown files in DuckDB
  *

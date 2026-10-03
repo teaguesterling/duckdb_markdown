@@ -1,0 +1,205 @@
+# name: test/sql/named_parameter_binding.test
+# description: Every declared named parameter still binds on every reader that declares it
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# BIND-ONLY, DELIBERATELY. Each assertion passes a valid value and checks only
+# that the parameter is ACCEPTED -- not what it does. That is the assertion a
+# port breaks, and it is cheap enough to cover all 31 declarations.
+#
+# WHY THIS FILE EXISTS. An audit of the 31 declared named parameters against
+# every `name :=` in the suite found 13 that nothing exercised anywhere. Seven
+# distinct names, and `git log -S` per name showed FIVE of them trace to
+# 7552f62, the original "Transform extension template to markdown reader
+# extension" commit -- the extension's first parameters, declared when it was
+# written and never witnessed since. A parameter nothing exercises is a public
+# promise with no witness: a port that drops one entry, or a rename that lands
+# on the one nobody calls, ships green.
+#
+# A bind-only probe over all 31 found 0 unrecognised names, so none of them were
+# dead on arrival. These assertions lock that in.
+#
+# NOT pinning semantics: for several of these the correct behaviour has never
+# been established, and asserting what they currently do would freeze behaviour
+# nobody has reviewed. "It still binds" is the weaker claim, and the useful one.
+#
+# Values are valid rather than arbitrary where the parameter validates its input
+# -- flavor, extract_extensions, content_mode and max_depth all reject unknown
+# values correctly, so a placeholder would fail for the wrong reason and this
+# file would be testing the validator instead of the binding.
+# =============================================================================
+
+# ---- read_markdown: 9 declared ----
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', extract_metadata := true);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', include_stats := true);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', normalize_content := true);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', maximum_file_size := 1000000);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', extract_extensions := 'wikilinks');
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', flavor := 'gfm');
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', include_filepath := true);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', filename := true);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', content_as_varchar := true);
+----
+1
+
+# ---- read_markdown_sections: 16 declared ----
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', extract_metadata := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', include_stats := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', normalize_content := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', maximum_file_size := 1000000);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', extract_extensions := 'tags');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', flavor := 'commonmark');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', include_content := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', min_level := 1);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', max_level := 6);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', include_empty_sections := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', include_filepath := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', filename := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', content_as_varchar := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', content_mode := 'minimal');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', max_depth := 6);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_sections('test/markdown/simple.md', max_content_length := 1000000);
+----
+true
+
+# ---- read_markdown_blocks: 6 declared ----
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md', extract_metadata := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md', normalize_content := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md', maximum_file_size := 1000000);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md', extract_extensions := 'obsidian');
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md', include_filepath := true);
+----
+true
+
+query I
+SELECT count(*) > 0 FROM read_markdown_blocks('test/markdown/simple.md', filename := true);
+----
+true
+
+# ---- An unknown name must still be rejected. Without this, every assertion
+# ---- above would pass just as well if the reader accepted ANY named parameter
+# ---- and ignored it -- which is exactly what a broken kwargs bag looks like.
+statement error
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', no_such_parameter := true);
+----
+
+statement error
+SELECT count(*) FROM read_markdown_sections('test/markdown/simple.md', no_such_parameter := true);
+----
+
+statement error
+SELECT count(*) FROM read_markdown_blocks('test/markdown/simple.md', no_such_parameter := true);
+----
