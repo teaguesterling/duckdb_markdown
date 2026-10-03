@@ -1,0 +1,93 @@
+# name: test/sql/maximum_file_size_consistency.test
+# description: A file over maximum_file_size behaves the same in all three readers
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# The three readers used to DISAGREE about a file exceeding the cap:
+#
+#   read_markdown           raised  (and leaked the inner exception as JSON into
+#                                    the message: "Error reading Markdown file
+#                                    x.md: {"exception_type":"Invalid Input",...)
+#   read_markdown_sections  returned 0 rows, silently
+#   read_markdown_blocks    returned 0 rows, silently
+#
+# One enforcement point in ReadMarkdownFile, three different dispositions in the
+# callers: one rethrew, two had `catch (const std::exception &) { continue; }`
+# labelled "skip files that can't be read".
+#
+# The cap is the USER'S OWN instruction, not a file we failed to read, so it now
+# propagates from all three. ReadMarkdownFile throws MarkdownFileTooLarge, which
+# deliberately does not derive from std::exception so the resilience handlers
+# cannot swallow it -- a reader that forgets to handle it fails loudly rather
+# than silently returning short.
+#
+# The default cap is 16MB, so every caller has one whether they set it or not;
+# this was reachable without opting in.
+# =============================================================================
+
+# ---- All three raise, and name the sizes. 122 bytes is simple.md's actual size.
+statement error
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', maximum_file_size := 1);
+----
+File test/markdown/simple.md is too large (122 bytes, maximum is 1 bytes)
+
+statement error
+SELECT count(*) FROM read_markdown_sections('test/markdown/simple.md', maximum_file_size := 1);
+----
+File test/markdown/simple.md is too large (122 bytes, maximum is 1 bytes)
+
+statement error
+SELECT count(*) FROM read_markdown_blocks('test/markdown/simple.md', maximum_file_size := 1);
+----
+File test/markdown/simple.md is too large (122 bytes, maximum is 1 bytes)
+
+# ---- CONTROL: a generous cap must still work everywhere. Without this the three
+# ---- assertions above would pass just as well if the cap rejected everything.
+query I
+SELECT count(*) FROM read_markdown('test/markdown/simple.md', maximum_file_size := 1000000);
+----
+1
+
+query I
+SELECT count(*) FROM read_markdown_sections('test/markdown/simple.md', maximum_file_size := 1000000);
+----
+2
+
+query I
+SELECT count(*) FROM read_markdown_blocks('test/markdown/simple.md', maximum_file_size := 1000000);
+----
+7
+
+# ---- A cap inside a GLOB raises too. The resilience handler must not catch this
+# ---- back: skipping would silently shorten the result, which is the defect.
+statement error
+SELECT count(*) FROM read_markdown_sections('test/markdown/*.md', maximum_file_size := 1);
+----
+is too large
+
+# ---- But genuine glob resilience is untouched: with no cap in play, a glob over
+# ---- the fixture directory still returns every file's rows.
+query I
+SELECT count(*) > 0 FROM read_markdown('test/markdown/*.md');
+----
+true
+
+# ---- A path that does not exist still raises, in all three. That is caught during
+# ---- file resolution, before the per-file loop, so the skip-on-unreadable
+# ---- behaviour never applied to it and this is unchanged.
+statement error
+SELECT count(*) FROM read_markdown('test/markdown/does_not_exist_xyz.md');
+----
+does not exist
+
+statement error
+SELECT count(*) FROM read_markdown_sections('test/markdown/does_not_exist_xyz.md');
+----
+does not exist
+
+statement error
+SELECT count(*) FROM read_markdown_blocks('test/markdown/does_not_exist_xyz.md');
+----
+does not exist

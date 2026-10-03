@@ -232,11 +232,16 @@ string MarkdownReader::ReadMarkdownFile(ClientContext &context, const string &fi
 	auto file_handle = fs.OpenFile(file_path, FileOpenFlags::FILE_FLAGS_READ);
 	const auto file_size = fs.GetFileSize(*file_handle);
 
-	// Check file size
+	// Check file size.
+	//
+	// Throws MarkdownFileTooLarge rather than InvalidInputException so the three
+	// callers can tell a user-configured limit apart from a file they simply could
+	// not read. They skip the latter to keep a glob resilient; they must NOT skip
+	// this one, because the cap is the user's own instruction and silently dropping
+	// the file hides that it was hit. See the type's comment in markdown_reader.hpp.
 	if (options.maximum_file_size > 0) {
 		if (file_size > options.maximum_file_size) {
-			throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", file_path,
-			                            file_size, options.maximum_file_size);
+			throw MarkdownFileTooLarge {file_path, file_size, options.maximum_file_size};
 		}
 	}
 
