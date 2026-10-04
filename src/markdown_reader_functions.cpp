@@ -349,7 +349,29 @@ void MarkdownReader::MarkdownReadDocumentsFunction(ClientContext &context, Table
 
 			output_idx++;
 
+		} catch (const MarkdownFileTooLarge &e) {
+			// The user's own cap, so it propagates rather than skipping. Rebuilt as
+			// a clean message here instead of wrapping the inner exception: the old
+			// generic handler below used e.what(), which on a DuckDB exception is
+			// serialised JSON, so the user saw
+			//   Error reading Markdown file x.md: {"exception_type":"Invalid Input",
+			//   "exception_message":"File x.md is too large (122 bytes, maximum ..."
+			throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", e.file_path,
+			                            static_cast<unsigned long long>(e.file_size),
+			                            static_cast<unsigned long long>(e.maximum_file_size));
 		} catch (const std::exception &e) {
+			// read_markdown STAYS STRICT about everything else, deliberately. An
+			// earlier version of this change made it skip here, to match
+			// read_markdown_sections and read_markdown_blocks -- and broke
+			// markdown_malformed_inputs.test:322, which pins that an invalid-UTF-8
+			// file is "rejected with a catchable user error, not an internal error
+			// and not a crash". This handler never caught only I/O failures; it also
+			// catches content validation, and surfacing that is the tested intent.
+			//
+			// So the three readers agree on the SIZE CAP (handled above, which is
+			// the defect that was reported) and keep their existing dispositions for
+			// everything else. Making them agree on the rest is a separate decision
+			// with its own tests to change.
 			throw InvalidInputException("Error reading Markdown file %s: %s", file_path, e.what());
 		}
 
@@ -479,8 +501,16 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadSectionsBind(ClientContext 
 				section.title = file_path + "|" + section.title; // Store file path temporarily
 				result->all_sections.push_back(section);
 			}
-		} catch (const std::exception &e) {
-			// Skip files that can't be read
+		} catch (const MarkdownFileTooLarge &e) {
+			// The user's own cap: propagate rather than skip. This used to fall into
+			// the handler below and vanish, so a file over the limit silently
+			// shortened the result while read_markdown raised on the same input.
+			throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", e.file_path,
+			                            static_cast<unsigned long long>(e.file_size),
+			                            static_cast<unsigned long long>(e.maximum_file_size));
+		} catch (const std::exception &) {
+			// Skip files that cannot be read, so one unreadable file does not fail a
+			// glob. A path that does not exist still raises, during resolution.
 			continue;
 		}
 	}
@@ -629,8 +659,15 @@ unique_ptr<FunctionData> MarkdownReader::MarkdownReadBlocksBind(ClientContext &c
 			for (auto &block : blocks) {
 				result->all_blocks.push_back({file_path, block});
 			}
-		} catch (const std::exception &e) {
-			// Skip files that can't be read
+		} catch (const MarkdownFileTooLarge &e) {
+			// The user's own cap: propagate rather than skip. See the matching
+			// handler in the sections bind above.
+			throw InvalidInputException("File %s is too large (%llu bytes, maximum is %llu bytes)", e.file_path,
+			                            static_cast<unsigned long long>(e.file_size),
+			                            static_cast<unsigned long long>(e.maximum_file_size));
+		} catch (const std::exception &) {
+			// Skip files that cannot be read, so one unreadable file does not fail a
+			// glob. A path that does not exist still raises, during resolution.
 			continue;
 		}
 	}
@@ -793,6 +830,21 @@ void MarkdownReader::RegisterFunction(ExtensionLoader &loader) {
 
 	// Add named parameters
 	// Named parameters. One call per function: v2.0 CREATES the kwargs group here.
+	// EVERY ENTRY BELOW IS EXERCISED by test/sql/named_parameter_binding.test, which
+	// asserts each declared name still binds (not what it does) plus a negative
+	// control that an unknown name is still rejected.
+	//
+	// That file exists because an audit found 13 of these 31 declarations exercised
+	// nowhere in the suite, five of them dating to the original template-transform
+	// commit -- declared when the extension was written and never witnessed since.
+	// A parameter nothing exercises is a public promise with no witness, and a port
+	// that drops one entry ships green.
+	//
+	// It also makes the ORDER here safe to change. Before it, the only thing
+	// protecting these was that `extract_metadata` happens to be declared first and
+	// happens to be tested, so a whole-bag failure would surface -- a property held
+	// by accident of ordering that a tidy-up reorder would have silently destroyed.
+	// Add a parameter here, add a line there.
 	CompatDeclareNamedParams(read_markdown_func,
 	                         {
 	                             {"extract_metadata", LogicalType(LogicalTypeId::BOOLEAN)},
