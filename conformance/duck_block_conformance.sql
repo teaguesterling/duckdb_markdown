@@ -111,7 +111,24 @@ CREATE OR REPLACE MACRO duck_block_is_valid(elem) AS (
 CREATE OR REPLACE MACRO duck_block_declared_types() AS (
     [
         'blockquote', 'blocks', 'bold', 'bool', 'caption', 'cite', 'code', 'deflist',
-        'div', 'figure', 'generic', 'heading', 'hr', 'image', 'inlines', 'italic',
+        -- CAUTION: this comment block contains no apostrophe and no square bracket.
+        -- Both checkers scrape this list by taking the text up to the first closing
+        -- bracket and then matching single-quoted runs, so either character in comment
+        -- prose truncates the list or invents a type name out of the prose itself.
+        -- Measured, not assumed: an earlier draft of this very comment cut the scraped
+        -- list from 44 names to 9.
+        --
+        -- The entry named document below is TYPE_DOCUMENT, which duck_block_utils added
+        -- in v3.4.0 as an amendment to SPEC_VERSION 1.4 with no version bump. ADDED HERE
+        -- BY HAND rather than re-vendored: upstream vendor/duck_block_conformance.sql at
+        -- v3.5.0 (e00db698) still does not list it, so the upstream header and the
+        -- upstream conformance SQL disagree with each other. Two encodings of one
+        -- vocabulary with no comparator between them; this repo runs that comparator
+        -- via scripts/check_duck_block_vocabulary.py, which is why the gap is visible
+        -- here and in no other consumer. Declaring it is a LINT-list change only: an
+        -- undeclared type is reported, never refused, so nothing about validity moves.
+        'div', 'document', 'figure', 'generic', 'heading', 'hr', 'image', 'inlines',
+        'italic',
         'lineblock', 'linebreak', 'link', 'list', 'list_item', 'map', 'math', 'metadata',
         'note', 'page_break', 'paragraph', 'plain', 'quoted', 'raw', 'section',
         'smallcaps', 'softbreak', 'space', 'span', 'strikethrough', 'string', 'subscript',
