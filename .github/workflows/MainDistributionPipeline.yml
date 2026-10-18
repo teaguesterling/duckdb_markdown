@@ -179,22 +179,27 @@ jobs:
           # Branch/tag names like `v2.0-cyanoptera`
           # and `v1.5-variegata` have no third numeric component and so never match
           # this pattern. DUCKDB_LEGACY, when set (flip day, see above), is exempt too.
+          # The optional pre-release suffix makes `v2.0.0-alpha46057` match WHOLE rather
+          # than reading as `v2.0.0`, so the recorded registry tag can be compared as
+          # itself. Without it the scan sees a bare `v2.0.0`, which equals neither the
+          # shipped version nor the recorded tag, and the exemption below cannot fire.
+          # `v1.5.6-extension-wasm_eh` in an artifact name still reads as `v1.5.6`.
+          ver_re='v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|dev)[0-9.]*)?'
           bad=0
           while IFS=: read -r lineno line; do
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*#' && continue
             if printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:'; then
               printf '%s\n' "$line" | grep -q 'duckdb/extension-ci-tools' || continue
             fi
-            for v in $(printf '%s\n' "$line" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true); do
-              if [ "$v" != "$DUCKDB_VERSION" ]; then
-                if [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ]; then
-                  continue
-                fi
-                echo "::error::line ${lineno}: ${line} -- a DuckDB version literal that is not the shipped ${DUCKDB_VERSION}: derive it from the shipped version or bump it"
-                bad=1
-              fi
+            for v in $(printf '%s\n' "$line" | grep -oE "$ver_re" || true); do
+              [ "$v" = "$DUCKDB_VERSION" ] && continue
+              # What the registry builds is a second authority, recorded on purpose.
+              [ "$v" = "$DUCKDB_REGISTRY_TAG" ] && continue
+              [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ] && continue
+              echo "::error::line ${lineno}: ${line} -- a DuckDB version literal that is not the shipped ${DUCKDB_VERSION} or the recorded registry tag ${DUCKDB_REGISTRY_TAG}: derive it from the shipped version or bump it"
+              bad=1
             done
-          done < <(grep -nE 'v[0-9]+\.[0-9]+\.[0-9]+' "$wf" || true)
+          done < <(grep -nE "$ver_re" "$wf" || true)
           [ "$bad" -eq 0 ] || exit 1
           # THE AUTHORITY is the registry's own files, not this job's constants: a
           # constant checked only against itself passes for a year after the registry
