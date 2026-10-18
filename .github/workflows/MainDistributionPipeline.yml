@@ -125,6 +125,18 @@ jobs:
     env:
       DUCKDB_VERSION: v1.5.6
       DUCKDB_NEXT: v2.0-cyanoptera
+      # What the community registry builds BY DEFAULT, as of duckdb/community-extensions#3079.
+      # Recorded so that the registry moving again fails THIS check rather than surprising a
+      # release. These are a second authority, deliberately separate from DUCKDB_VERSION: that
+      # one is what this repo ships, these are what the registry builds, and they are allowed
+      # to differ. DUCKDB_REGISTRY_TAG is NOT an upstream tag -- no `v2*` ref exists in
+      # duckdb/duckdb; ci-tools applies it locally so the built extension reports a version.
+      DUCKDB_REGISTRY_COMMIT: b15358c371daf10dad799a43b6167f6ccdce84d8
+      DUCKDB_REGISTRY_TAG: v2.0.0-alpha46057
+      DUCKDB_REGISTRY_TOOLS: v2.0-cyanoptera
+      # scripts/build.py routes a v1.5.6 build to each descriptor's `variegata` ref, which is
+      # the line this repo ships.
+      DUCKDB_REGISTRY_VARIANT: v1.5.6
       # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
       # for one release; set this to that version then so the stray-literal scan below
       # exempts it instead of flagging it. Empty the rest of the time.
@@ -215,7 +227,7 @@ jobs:
           # non-2xx code. `|| true` only stops `set -e` from killing the script on
           # curl's nonzero exit; the "000" already captured is curl's, unaltered.
           code1=$(curl -s -o "$f1" -w '%{http_code}' "${base}/${sha:-main}/.github/workflows/build.yml" || true)
-          code2=$(curl -s -o "$f2" -w '%{http_code}' "${base}/${sha:-main}/.github/workflows/build_next.yml" || true)
+          code2=$(curl -s -o "$f2" -w '%{http_code}' "${base}/${sha:-main}/scripts/build.py" || true)
           if [ "$code1" = "000" ] || [ "$code2" = "000" ]; then
             echo "::notice::could not reach the community registry; the pin was checked against the local constants only"
             mode="NOT checked against the registry (unreachable); local constants ${DUCKDB_VERSION}/${DUCKDB_NEXT} only"
@@ -224,23 +236,33 @@ jobs:
             echo "::error::community registry returned HTTP ${code1} for ${url}"
             echo "duckdb-pin: FAILED, registry returned ${code1} for ${url}" >> "$summary"; exit 1
           elif [ "${code2#2}" = "$code2" ]; then
-            url="${base}/${sha:-main}/.github/workflows/build_next.yml"
+            url="${base}/${sha:-main}/scripts/build.py"
             echo "::error::community registry returned HTTP ${code2} for ${url}"
             echo "duckdb-pin: FAILED, registry returned ${code2} for ${url}" >> "$summary"; exit 1
           else
-            body=$(cat "$f1")
-            next_body=$(cat "$f2")
-            registry=$(printf '%s' "$body" | grep -m1 -o "inputs.duckdb_version || 'v[0-9][0-9.]*'" | grep -o "'v[0-9][0-9.]*'" | tr -d "'" || true)
-            registry_next=$(printf '%s' "$next_body" | grep -m1 -o "duckdb_version: *'v[0-9][0-9.]*-[a-z]*'" | grep -o "'v[^']*'" | tr -d "'" || true)
-            if [ -z "$registry" ] || [ -z "$registry_next" ]; then
-              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml/build_next.yml carry no recognisable duckdb_version (default='${registry}', next='${registry_next}'); this check's parse is wrong about the registry, fix the check"
+            # The registry's default is a BARE 40-hex COMMIT since #3079, not a vX.Y.Z tag.
+            # The previous parse looked for 'v[0-9][0-9.]*' and returned empty, which this
+            # job then reported as "unparseable" -- a true statement about the parse, read as
+            # a fact about the registry.
+            reg_commit=$(grep -m1 -o "inputs.duckdb_version || '[0-9a-f]\{40\}'" "$f1" | grep -o '[0-9a-f]\{40\}' || true)
+            reg_tag=$(grep -m1 -o "inputs.duckdb_tag || 'v[^']*'" "$f1" | grep -o "'v[^']*'" | tr -d "'" || true)
+            reg_tools=$(grep -m1 -o "inputs.ci_tools_version || '[^']*'" "$f1" | grep -o "'[^']*'$" | tr -d "'" || true)
+            # build.py routes one DUCKDB_VERSION to each descriptor's `variegata` ref; the
+            # version sits in the condition on the line before.
+            reg_variant=$(grep -B1 "'variegata' in desc" "$f2" | grep -m1 -o "== 'v[0-9.]*'" | grep -o "v[0-9.]*" || true)
+            if [ -z "$reg_commit" ] || [ -z "$reg_tag" ] || [ -z "$reg_tools" ] || [ -z "$reg_variant" ]; then
+              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml/build.py carry no recognisable defaults (commit='${reg_commit}', tag='${reg_tag}', ci-tools='${reg_tools}', variant='${reg_variant}'); this check's parse is wrong about the registry, fix the check"
               echo "duckdb-pin: FAILED, registry files fetched but unparseable" >> "$summary"; exit 1
             fi
-            if [ "$registry" != "$DUCKDB_VERSION" ] || [ "$registry_next" != "$DUCKDB_NEXT" ]; then
-              echo "::error::the community registry builds default=${registry} next=${registry_next} (at ${sha:-main}) but this repo ships default=${DUCKDB_VERSION} next=${DUCKDB_NEXT}; update the pin, the constants and the build jobs to the registry's lines"
-              echo "duckdb-pin: FAILED, registry ${registry}/${registry_next} vs repo ${DUCKDB_VERSION}/${DUCKDB_NEXT}" >> "$summary"; exit 1
+            registry="${reg_commit}/${reg_tag}/${reg_tools}/${reg_variant}"
+            recorded="${DUCKDB_REGISTRY_COMMIT}/${DUCKDB_REGISTRY_TAG}/${DUCKDB_REGISTRY_TOOLS}/${DUCKDB_REGISTRY_VARIANT}"
+            if [ "$registry" != "$recorded" ]; then
+              echo "::error::the community registry now builds commit/tag/ci-tools/variant ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants after checking what the move means for this repo"
+              echo "duckdb-pin: FAILED, registry ${registry} vs recorded ${recorded}" >> "$summary"; exit 1
             fi
-            mode="checked against the registry (default ${registry}, next ${registry_next}, at ${sha:-main})"
+            # Restated every run so it cannot go quiet: the registry's default build target and
+            # the line this repo ships are different things, on purpose.
+            mode="registry verified at ${sha:-main}: default ${reg_commit:0:10} ${reg_tag} on ${reg_tools}, variant ${reg_variant}; THIS REPO SHIPS ${DUCKDB_VERSION} (declared divergence)"
           fi
           echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} job(s) shipping ${DUCKDB_VERSION} and ${m} job(s) shipping ${DUCKDB_NEXT}; ${mode}" | tee -a "$summary"
 
