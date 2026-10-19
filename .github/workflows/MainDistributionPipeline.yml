@@ -75,6 +75,15 @@ jobs:
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
 
+      # Make a skipped test run FAIL on this leg. `T` is the test pattern ci-tools
+      # hands run_tests.py (`T ?=` in duckdb_extension.Makefile, so an env var wins)
+      # and test_env_variables reaches `make test_release` via ci_phase.py.
+      # `--require markdown` turns "could not load" into `require markdown: FAILED`
+      # instead of a silent skip. Verified on ci-tools main against b15358c371d:
+      # present -> exit 0 "16 passed, 2 skipped"; hidden -> exit 2 "0 passed, 18 failed".
+      # Needs a ci_tools_version that HAS `T` (main / v2.0-cyanoptera); on
+      # v1.5-variegata the variable is silently ignored -- hence `make test-require`.
+      test_config: '{"test_env_variables": {"T": "--test-flags \"--require markdown\" \"test/*\""}}'
   # ADVISORY canary on DuckDB `main`, the line beyond 2.0. Pushes to main and
   # dispatch only, never pull requests: a PR's rollup would go red for a line nothing
   # ships. A red run here is a warning about upstream, not a bug in the change -- the
