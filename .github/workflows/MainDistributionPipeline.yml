@@ -140,7 +140,9 @@ jobs:
       # one is what this repo ships, these are what the registry builds, and they are allowed
       # to differ. DUCKDB_REGISTRY_TAG is NOT an upstream tag -- no `v2*` ref exists in
       # duckdb/duckdb; ci-tools applies it locally so the built extension reports a version.
-      DUCKDB_REGISTRY_COMMIT: b15358c371daf10dad799a43b6167f6ccdce84d8
+      # Moved 2026-10-24 (registry at f13027e5): the default build commit is now the one
+      # `refs/tags/v2.0.0` resolves to. 2.0.0 shipped.
+      DUCKDB_REGISTRY_COMMIT: d54cbbe3df17e8e5ce68312f483b4155836112aa
       DUCKDB_REGISTRY_TAG: v2.0.0-alpha46057
       DUCKDB_REGISTRY_TOOLS: v2.0-cyanoptera
       # scripts/build.py routes a v1.5.6 build to each descriptor's `variegata` ref, which is
