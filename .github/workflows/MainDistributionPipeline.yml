@@ -84,24 +84,95 @@ jobs:
       # Needs a ci_tools_version that HAS `T` (main / v2.0-cyanoptera); on
       # v1.5-variegata the variable is silently ignored -- hence `make test-require`.
       test_config: '{"test_env_variables": {"T": "--test-flags \"--require markdown\" \"test/*\""}}'
-  # ADVISORY canary on DuckDB `main`, the line beyond 2.0. Pushes to main and
-  # dispatch only, never pull requests: a PR's rollup would go red for a line nothing
-  # ships. A red run here is a warning about upstream, not a bug in the change -- the
-  # v2.0-cyanoptera job above is the gate. `main` moves under it: during the first 2.0
-  # port it built two different DuckDB commits within one day, and the second rejected
-  # a named argument on a scalar function that the first had accepted. That advance
-  # warning is what this job is for. To run it on a branch:
+  # RESOLVE `main` TO A VERSION/COMMIT PAIR, because the branch NAME cannot be
+  # built. `duckdb_version:` reaches the build as DUCKDB_VERSION, and duckdb's own
+  # CMakeLists.txt (main, a494af27aa, lines 484-532) takes that env var as
+  # DUCKDB_EXPLICIT_VERSION verbatim -- so the branch name became the library's
+  # version string, the extension was stamped with it, and the loader refused the
+  # pair. Every test then SKIPPED at its `require` line and the leg reported
+  # success. MEASURED in this repo, run 40245804312 on 2026-10-26: all nine canary
+  # legs green, and linux_amd64, osx_arm64 and windows_amd64 each printed
+  # `ran tests: 0 passed, 60 skipped in 1s` with `require markdown: 60`.
+  # Found by duckdb_scalarfs (its #28); the controls are its workflow at 6271b22,
+  # which is also the source text this job is ported from.
+  #
+  # WHY A PAIR AND NOT JUST A VERSION. A computed `-dev` version is not a git ref,
+  # so the commit has to travel beside it: the same CMakeLists.txt takes
+  # GIT_COMMIT_HASH from ENV{DUCKDB_COMMIT} (line 497), and on a `-dev` version
+  # that hash -- not the version -- is the extension folder (line 578). Passing the
+  # version alone would resolve the ref to nothing.
+  #
+  # `--filter=tree:0`, NOT `blob:none`: `rev-list --count` walks every commit, so
+  # only the TREES are skippable. The dev iteration IS that count, which is how
+  # duckdb derives its own version when nothing overrides it (lines 561-572).
+  #
+  # Staging has no prebuilt extension for a main commit, so ci-tools builds DuckDB
+  # from source here. That is by design rather than luck: ci_phase.py keys its
+  # staged-version lookup on the COMMIT, so the 404 is caught and it falls back.
+  duckdb-main-ref:
+    name: Canary build — resolve DuckDB main
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+          # Commits only: rev-list --count needs the whole history, not its trees.
+          git clone --quiet --filter=tree:0 --no-checkout --single-branch --branch main \
+              https://github.com/duckdb/duckdb.git "$tmp/duckdb"
+          commit=$(git -C "$tmp/duckdb" rev-parse HEAD)
+          release=$(git -C "$tmp/duckdb" show HEAD:scripts/ci/release_version.txt | tr -d '[:space:]')
+          count=$(git -C "$tmp/duckdb" rev-list --count HEAD)
+          version="v${release}.0-dev${count}"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.0-dev[0-9]+$ ]]; then
+            echo "::error::could not build a dev version for duckdb main at $commit (got '$version')"
+            exit 1
+          fi
+          echo "duckdb main -> $commit, version $version"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # CANARY on DuckDB `main`, the line beyond 2.0. Pushes to main and dispatch only,
+  # never pull requests: a PR's rollup would go red for a line nothing ships. `main`
+  # moves under it -- during the first 2.0 port it built two different DuckDB commits
+  # within one day, and the second rejected a named argument on a scalar function that
+  # the first had accepted. That advance warning is what this job is for. To run it on
+  # a branch:
   #   gh workflow run MainDistributionPipeline.yml --ref <branch>
+  #
+  # NO LONGER ADVISORY IN EFFECT, and the name no longer says it is. The guard below
+  # makes a load failure FAIL rather than skip, so a broken canary now turns main's
+  # rollup red. That is the intended standing (Teague, relayed 2026-10-26 with the
+  # fleet rollout): a red canary after this fix is a real finding to report, not a
+  # reason to revert. The v2.0-cyanoptera job above is still the gate on the line
+  # this extension ships against; this one is the early warning on the line after it.
+  #
+  # The `if` is kept here as well as on the resolver. A skipped `needs:` already
+  # skips this job, so the condition is redundant -- but a reader of this block
+  # should not have to open the resolver to learn when the canary runs.
   duckdb-main-canary:
-    name: Canary build — DuckDB main (advisory)
+    name: Canary build — DuckDB main
+    needs: duckdb-main-ref
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: main
+      duckdb_version: ${{ needs.duckdb-main-ref.outputs.version }}
+      duckdb_commit: ${{ needs.duckdb-main-ref.outputs.commit }}
       ci_tools_version: main
       extension_name: markdown
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
       vcpkg_url: https://github.com/Microsoft/vcpkg.git
+
+      # Same guard, and the same line, as duckdb-next-build above: without it a
+      # load failure is a silent skip that reports success, which is how the
+      # version defect survived. Fixing the version without adding the guard
+      # would leave the next such defect just as invisible.
+      test_config: '{"test_env_variables": {"T": "--test-flags \"--require markdown\" \"test/*\""}}'
 
   duckdb-stable-build:
     name: Build extension binaries
