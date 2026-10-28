@@ -60,8 +60,73 @@ jobs:
   # main and on dispatch (measured 2026-09-13). The push that merges is therefore the
   # full-matrix check before any registry PR. `reduced_ci_mode: disabled` below would
   # widen PRs too; exclude_archs can only narrow a matrix, never widen one.
+  # RESOLVE THE 2.0 RELEASE BRANCH TO A VERSION/COMMIT PAIR. Same shape, and the same
+  # reason, as duckdb-main-ref below -- but this leg failed DIFFERENTLY, so the two are
+  # worth telling apart.
+  #
+  # `v2.0-cyanoptera` begins with `v`, so it never hit the `vmain` normalisation that
+  # broke the canary. It broke through the OTHER path. `ci_phase.py:409` enters the
+  # staged-version lookup only when STAGED_DUCKDB_VERSION_PATTERN (that file, lines
+  # 42-44) fails to fullmatch the version. A branch name never matches it, so the lookup
+  # ran, found what staging had published for the commit, and built the download URL from
+  # THAT string -- while CMake went on stamping the extension with the branch name.
+  #
+  # MEASURED, run 40245804312 job 121336086218: `Using prebuilt DuckDB archive:
+  # .../bb5bdadda4/v2.0.1-alpha50125/...` against an extension stamped
+  # `v2.0-cyanoptera`. 54 of 60 test files logged `require markdown: FAILED`, and
+  # run_tests.py still printed `ran tests: 54 passed, 6 failed`. That count is not a
+  # count of executed tests; zero executed.
+  #
+  # THE GREEN RUNS WERE NOT A FIX, they were a coincidence. Runs 40586180584 and
+  # 40621762047 both printed `Prebuilt DuckDB archive is unavailable` for their commit,
+  # so DuckDB was built from source, both halves got the branch name, and the exact
+  # comparison happened to succeed. That green flipped to red whenever staging reached
+  # the commit, with no change in this repo.
+  #
+  # A RESOLVED VERSION CLOSES THE PATH rather than narrowing it. `v2.0.0-dev<count>`
+  # fullmatches the pattern, so the lookup is skipped entirely and the URL is built from
+  # the string we passed: a download can only succeed if staging published under exactly
+  # it, in which case the library reports it too. Measured 2026-10-28: branch tip
+  # b060f56de7, release_version.txt `2.0`, count 89087.
+  #
+  # WHY A RESOLVER AND NOT THE `v2.0.0` TAG (Teague's call, 2026-10-28): the tag is what
+  # the registry serves, but pinning it would stop this leg tracking the branch, and
+  # catching a v2.0 break BEFORE it ships is the whole point of the job.
+  duckdb-cyanoptera-ref:
+    name: Next-line build — resolve DuckDB v2.0
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        env:
+          # The one place this branch name is written for the build. The duckdb-pin job
+          # asserts that this line names the next line it expects.
+          NEXT_BRANCH: v2.0-cyanoptera
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+          # Commits only: rev-list --count needs the whole history, not its trees.
+          git clone --quiet --filter=tree:0 --no-checkout --single-branch --branch "$NEXT_BRANCH" \
+              https://github.com/duckdb/duckdb.git "$tmp/duckdb"
+          commit=$(git -C "$tmp/duckdb" rev-parse HEAD)
+          release=$(git -C "$tmp/duckdb" show HEAD:scripts/ci/release_version.txt | tr -d '[:space:]')
+          count=$(git -C "$tmp/duckdb" rev-list --count HEAD)
+          version="v${release}.0-dev${count}"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.0-dev[0-9]+$ ]]; then
+            echo "::error::could not build a dev version for $NEXT_BRANCH at $commit (got '$version')"
+            exit 1
+          fi
+          echo "$NEXT_BRANCH -> $commit, version $version"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   duckdb-next-build:
     name: Next-line build — DuckDB v2.0
+    needs: duckdb-cyanoptera-ref
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
@@ -69,7 +134,10 @@ jobs:
       # (Teague's rule, 2026-09-13), and the branch 2.0.0 is cut from. `main`
       # moves under the canary -- duck_block_utils' ExecuteWithNulls regression
       # surfaced there -- so a red canary could not be told from upstream churn.
-      duckdb_version: v2.0-cyanoptera
+      # The branch is named in duckdb-cyanoptera-ref above, which resolves it to the
+      # pair below; passing the branch name itself is what used to break this leg.
+      duckdb_version: ${{ needs.duckdb-cyanoptera-ref.outputs.version }}
+      duckdb_commit: ${{ needs.duckdb-cyanoptera-ref.outputs.commit }}
       ci_tools_version: main
       extension_name: markdown
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
@@ -246,8 +314,14 @@ jobs:
           [ "$want" = "$have" ] || { echo "::error::duckdb submodule pin ${have} is not the ${DUCKDB_VERSION} tag ${want}; run: git -C duckdb fetch --tags && git -C duckdb checkout ${DUCKDB_VERSION}"; exit 1; }
           n=$(grep -c "duckdb_version: ${DUCKDB_VERSION}$" "$wf" || true)
           [ "$n" -ge 1 ] || { echo "::error::no build job in this workflow ships duckdb_version: ${DUCKDB_VERSION}; this job's constant has drifted"; exit 1; }
-          m=$(grep -c "duckdb_version: ${DUCKDB_NEXT}$" "$wf" || true)
-          [ "$m" -ge 1 ] || { echo "::error::no build job in this workflow builds the next line duckdb_version: ${DUCKDB_NEXT}"; exit 1; }
+          # The next line is no longer named in a `duckdb_version:` input: it is a branch
+          # that duckdb-cyanoptera-ref resolves to a version/commit pair, so the literal
+          # the old grep looked for is gone on purpose. Assert the thing that now carries
+          # the branch name instead -- its `NEXT_BRANCH:` env value. Without this the
+          # resolver could be retargeted at another line and every other assertion here
+          # would still pass.
+          m=$(grep -cE "NEXT_BRANCH: ${DUCKDB_NEXT}([[:space:]]|\$)" "$wf" || true)
+          [ "$m" -ge 1 ] || { echo "::error::no resolver in this workflow targets the next line ${DUCKDB_NEXT}; expected a NEXT_BRANCH: ${DUCKDB_NEXT} env value"; exit 1; }
           # NO OTHER DuckDB PATCH VERSION may drift from the shipped ${DUCKDB_VERSION}
           # anywhere else in this file: sibling workflows (yaml, mcp) embed a version
           # in artifact NAMES and CLI download URLs (e.g. `yaml-v1.5.4-extension-wasm_*`,
@@ -387,7 +461,7 @@ jobs:
             fi
             mode="registry verified at ${sha:-main}: default ${reg_version} = commit ${reg_commit:0:10} on ${reg_tools}, variant ${reg_variant}; THIS REPO SHIPS ${DUCKDB_VERSION} (declared divergence)"
           fi
-          echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} job(s) shipping ${DUCKDB_VERSION} and ${m} job(s) shipping ${DUCKDB_NEXT}; ${mode}" | tee -a "$summary"
+          echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} job(s) shipping ${DUCKDB_VERSION} and ${m} resolver(s) targeting ${DUCKDB_NEXT}; ${mode}" | tee -a "$summary"
 
   # src/include/duck_block_vocabulary.hpp is a VENDORED copy of the published
   # duck_block vocabulary, so nothing notices when upstream moves. Renames are a
