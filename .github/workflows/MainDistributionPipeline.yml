@@ -538,10 +538,21 @@ jobs:
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
+    # ci-tools on v2.0-cyanoptera, matching duck_block_utils, duck_tails and
+    # webbed. This repo used to pass @main + ci_tools_version: main, and keeping
+    # that through the promote produced an 80-FILE Format Check failure --
+    # essentially every source and test file. That was NOT a real formatting
+    # backlog. `.clang-format` here is a symlink into the duckdb submodule, and
+    # when it does not resolve clang-format silently falls back to LLVM style and
+    # flags everything. Measured locally with the pinned clang-format 11.0.1:
+    # src/markdown_utils.cpp is byte-identical under duckdb's real v2.0.0
+    # .clang-format (0 changes) and differs by 4518 lines under the LLVM
+    # fallback. duckdb's .clang-format is also the SAME BLOB at v1.5.6 and
+    # v2.0.0 (0c2efa1c), so no style changed -- only whether the config was found.
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v2.0-cyanoptera
     with:
       duckdb_version: v2.0.0
-      ci_tools_version: main
+      ci_tools_version: v2.0-cyanoptera
       extension_name: markdown
       format_checks: 'format'
 
