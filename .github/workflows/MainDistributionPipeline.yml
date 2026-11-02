@@ -244,10 +244,10 @@ jobs:
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.6
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v1.5.6
-      ci_tools_version: v1.5.6
+      duckdb_version: v2.0.0
+      ci_tools_version: v2.0-cyanoptera
       extension_name: markdown
       # Pin to vcpkg commit with verified cmark-gfm support (tested 2025-01-08)
       vcpkg_commit: bffcbb75f71553824aa948a7e7b4f798662a6fa7
@@ -271,7 +271,7 @@ jobs:
     # required-check configuration may key on this job name.
     runs-on: ubuntu-latest
     env:
-      DUCKDB_VERSION: v1.5.6
+      DUCKDB_VERSION: v2.0.0
       DUCKDB_NEXT: v2.0-cyanoptera
       # What the community registry builds BY DEFAULT, re-measured 2026-10-25 against
       # community-extensions at f13027e5 after the registry restructured its build.yml.
@@ -287,9 +287,13 @@ jobs:
       DUCKDB_REGISTRY_VERSION: v2.0.0
       DUCKDB_REGISTRY_COMMIT: d54cbbe3df17e8e5ce68312f483b4155836112aa
       DUCKDB_REGISTRY_TOOLS: v2.0-cyanoptera
-      # scripts/build.py routes a v1.5.6 build to each descriptor's `variegata` ref, which is
-      # the line this repo ships.
-      DUCKDB_REGISTRY_VARIANT: v1.5.6
+      # THERE IS NO VARIANT CONSTANT ANY MORE. build.py still carries a
+      # `'variegata' in desc` branch for a v1.5.6 build, but the registry does not
+      # run one: build.yml's DUCKDB_LATEST_STABLE is v2.0.0 and its duckdb_version
+      # default is v2.0.0 (measured 2026-11-01). Asserting a variant the registry
+      # never builds is a hollow check -- it passes because the dead code path is
+      # still parseable, not because anything ships. So the assertion below compares
+      # version/commit/ci-tools only.
       # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
       # for one release; set this to that version then so the stray-literal scan below
       # exempts it instead of flagging it. Empty the rest of the time.
@@ -426,21 +430,18 @@ jobs:
             # tag, and this parse is then reading the wrong fields. The two input DECLARATIONS
             # (`duckdb_tag:` with nothing after the colon) are not that, and must not fire.
             tag_passed=$(printf '%s\n' "$live" | grep -cE "duckdb_tag:[[:space:]]+[^[:space:]]" || true)
-            # build.py routes one DUCKDB_VERSION to each descriptor's `variegata` ref; the
-            # version sits in the condition on the line before.
-            reg_variant=$(grep -B1 "'variegata' in desc" "$f2" | grep -m1 -o "== 'v[0-9.]*'" | grep -o "v[0-9.]*" || true)
             if [ "$tag_passed" -ne 0 ]; then
               echo "::error::community-extensions at ${sha:-main} passes a duckdb_tag: value again on ${tag_passed} line(s); this check reads duckdb_version:/duckdb_commit: instead, so re-read build.yml and update this job"
               echo "duckdb-pin: FAILED, registry passes duckdb_tag: again" >> "$summary"; exit 1
             fi
-            if [ -z "$reg_version" ] || [ -z "$reg_commit" ] || [ -z "$reg_tools" ] || [ -z "$reg_variant" ]; then
-              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml/build.py carry no recognisable defaults (version='${reg_version}', commit='${reg_commit}', ci-tools='${reg_tools}', variant='${reg_variant}'); this check's parse is wrong about the registry, fix the check"
+            if [ -z "$reg_version" ] || [ -z "$reg_commit" ] || [ -z "$reg_tools" ]; then
+              echo "::error::community-extensions at ${sha:-main} was fetched but build.yml carries no recognisable defaults (version='${reg_version}', commit='${reg_commit}', ci-tools='${reg_tools}'); this check's parse is wrong about the registry, fix the check"
               echo "duckdb-pin: FAILED, registry files fetched but unparseable" >> "$summary"; exit 1
             fi
-            registry="${reg_version}/${reg_commit}/${reg_tools}/${reg_variant}"
-            recorded="${DUCKDB_REGISTRY_VERSION}/${DUCKDB_REGISTRY_COMMIT}/${DUCKDB_REGISTRY_TOOLS}/${DUCKDB_REGISTRY_VARIANT}"
+            registry="${reg_version}/${reg_commit}/${reg_tools}"
+            recorded="${DUCKDB_REGISTRY_VERSION}/${DUCKDB_REGISTRY_COMMIT}/${DUCKDB_REGISTRY_TOOLS}"
             if [ "$registry" != "$recorded" ]; then
-              echo "::error::the community registry now builds version/commit/ci-tools/variant ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants after checking what the move means for this repo"
+              echo "::error::the community registry now builds version/commit/ci-tools ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants after checking what the move means for this repo"
               echo "duckdb-pin: FAILED, registry ${registry} vs recorded ${recorded}" >> "$summary"; exit 1
             fi
             # Restated every run so it cannot go quiet: the registry's default build target and
@@ -459,7 +460,7 @@ jobs:
               echo "::error::the registry builds commit ${reg_commit} but labels it ${reg_version}, which upstream resolves to ${reg_want}; the label and the source have drifted apart"
               echo "duckdb-pin: FAILED, registry ${reg_version} is ${reg_want}, not the built ${reg_commit}" >> "$summary"; exit 1
             fi
-            mode="registry verified at ${sha:-main}: default ${reg_version} = commit ${reg_commit:0:10} on ${reg_tools}, variant ${reg_variant}; THIS REPO SHIPS ${DUCKDB_VERSION} (declared divergence)"
+            mode="registry verified at ${sha:-main}: default ${reg_version} = commit ${reg_commit:0:10} on ${reg_tools}; this repo ships ${DUCKDB_VERSION}, which now MATCHES the registry default -- the divergence this job used to declare is gone"
           fi
           echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_VERSION}; ${n} job(s) shipping ${DUCKDB_VERSION} and ${m} resolver(s) targeting ${DUCKDB_NEXT}; ${mode}" | tee -a "$summary"
 
@@ -509,13 +510,19 @@ jobs:
       - name: Download the built extension
         uses: actions/download-artifact@v4
         with:
-          name: markdown-v1.5.6-extension-linux_amd64
+          name: markdown-v2.0.0-extension-linux_amd64
           path: ci-ext
       - name: Install a matching DuckDB CLI
         run: |
           set -euo pipefail
-          curl -fsSL -o duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip
-          unzip -o duckdb.zip -d ci-bin
+          # NOTE THE ASSET RENAME. Up to v1.5.6 this was duckdb_cli-linux-amd64.zip
+          # (underscore, zip). From v2.0.0 it is duckdb-cli-linux-amd64.tar.gz
+          # (hyphen, tarball) and the archive holds a single `duckdb` at its root.
+          # Measured 2026-11-01: the old .zip URL 404s at v2.0.0. A plain version
+          # bump here would have 404'd this step on every run.
+          curl -fsSL -o duckdb.tar.gz https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-linux-amd64.tar.gz
+          mkdir -p ci-bin
+          tar -xzf duckdb.tar.gz -C ci-bin
           chmod +x ci-bin/duckdb
           ci-bin/duckdb -c "SELECT 'cli ok';"
       - name: Check this reader against the canonical conformance rules
@@ -533,7 +540,7 @@ jobs:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
     with:
-      duckdb_version: v1.5.6
+      duckdb_version: v2.0.0
       ci_tools_version: main
       extension_name: markdown
       format_checks: 'format'
@@ -558,7 +565,7 @@ jobs:
       - name: Download WASM artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: markdown-v1.5.6-extension-wasm_*
+          pattern: markdown-v2.0.0-extension-wasm_*
           path: wasm-artifacts
       - name: Static symbol check (cmark-gfm must be linked, not unresolved)
         run: bash test/wasm/run_wasm_checks.sh wasm-artifacts
@@ -569,8 +576,8 @@ jobs:
         run: |
           set -uo pipefail
           timeout 300 npm install --no-save
-          mkdir -p repo/v1.5.6/wasm_eh
-          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v1.5.6-extension-wasm_eh/markdown.duckdb_extension.wasm" \
-             repo/v1.5.6/wasm_eh/
+          mkdir -p repo/v2.0.0/wasm_eh
+          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v2.0.0-extension-wasm_eh/markdown.duckdb_extension.wasm" \
+             repo/v2.0.0/wasm_eh/
           timeout 240 node load_test.cjs --repo repo --name markdown --platform eh \
             --query "SELECT md_to_html('# H') AS h" --expect "<h1>"
