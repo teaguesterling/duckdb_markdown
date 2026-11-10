@@ -1,0 +1,3 @@
+# VFS Reflog Doc
+
+Named in the deprecated git form with a reflog revision, `name.md@HEAD@{0}`.
