@@ -45,6 +45,17 @@ SELECT count(*) FROM 'test/data/vfs_decorated.md@HEAD';
 1
 
 #===================================================================
+# A reflog revision (`name.md@HEAD@{0}`) is one revision: the separator is
+# the last '@' that is not followed by '{', as in duck_tails' git:// grammar
+# (issue #107)
+#===================================================================
+
+query I
+SELECT title FROM read_markdown_sections('test/data/vfs_reflog.md@HEAD@{0}') WHERE level = 1;
+----
+VFS Reflog Doc
+
+#===================================================================
 # The guard's intent is preserved: stripping decoration must not turn
 # a non-markdown file into a markdown one.
 #===================================================================

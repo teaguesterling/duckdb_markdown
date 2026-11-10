@@ -38,24 +38,55 @@ static bool IsMarkdownExtension(const string &extension) {
 	return extension == "md" || extension == "markdown";
 }
 
+//! Where the query of a git:// URI starts, in duck_tails' grammar (issue #107).
+static constexpr const char *GIT_REF_QUERY = "?ref=";
+
 //! Does this path name a markdown file?
 //!
 //! Virtual filesystems supplied by other extensions decorate the path with a
 //! revision, query or fragment (`git://docs/SCHEMAS.md@HEAD`, `...md?version=2`,
 //! `...md#frag`), so the raw suffix is not `.md` even though the file behind it is
-//! markdown (issue #31). Two spellings of the file name are therefore accepted:
-//! the literal one, and the one with VFS decoration removed. Testing the literal
-//! name first means this check can only ever accept more than the plain suffix
-//! test did -- a local file that genuinely contains '@', '?' or '#' in its name,
-//! such as `my@file.md`, is still matched on its literal name and is never newly
-//! rejected.
-static bool IsMarkdownFileName(const string &path) {
+//! markdown (issue #31). Several spellings of the file name are therefore tried:
+//! the literal one first, then the ones with VFS decoration removed. Testing the
+//! literal name first, and only adding spellings after it, means this check can
+//! only ever accept more than the plain suffix test did -- a local file that
+//! genuinely contains '@', '?' or '#' in its name, such as `my@file.md`, is still
+//! matched on its literal name and is never newly rejected.
+//!
+//! The test is on the name alone, with one exception: a git:// path with no
+//! `?ref=` is handed to `fs.CanonicalizePath`, which cannot throw out of here. For
+//! such a path the answer depends on whether duck_tails is loaded. No other path,
+//! such as an unresolved table name in the replacement scan, reaches `fs`.
+static bool IsMarkdownFileName(FileSystem &fs, const string &path) {
 	// 1. The literal file name.
 	if (IsMarkdownExtension(LowerExtension(PathFileName(path)))) {
 		return true;
 	}
 
-	// 2. The same name with VFS decoration stripped. A query or fragment terminates
+	// 2. duck_tails' git:// grammar (issue #107): the query starts at the first
+	//    `?ref=`, and everything before it is the path, verbatim -- a '#' or '@'
+	//    there is part of the file name. A ref may hold '/', so the cut comes
+	//    before the final component is taken. A path in the deprecated `@rev` form
+	//    is first given to the filesystem, whose CanonicalizePath duck_tails
+	//    overrides to move the revision into `?ref=` without loss; only a result
+	//    that is still a git:// path is used.
+	auto spelling = path;
+	if (StringUtil::StartsWith(path, "git://") && path.find(GIT_REF_QUERY) == string::npos) {
+		try {
+			auto canonical = fs.CanonicalizePath(path);
+			if (StringUtil::StartsWith(canonical, "git://")) {
+				spelling = canonical;
+			}
+		} catch (const std::exception &) {
+			// No canonical spelling: the rules below still apply to the path as written.
+		}
+	}
+	auto ref_pos = spelling.find(GIT_REF_QUERY);
+	if (ref_pos != string::npos && IsMarkdownExtension(LowerExtension(PathFileName(spelling.substr(0, ref_pos))))) {
+		return true;
+	}
+
+	// 3. The same name with VFS decoration stripped. A query or fragment terminates
 	//    the path (RFC 3986) so it is cut from the whole string, while a '@revision'
 	//    suffix is cut from the final component only -- that way the '@' of a URI
 	//    authority such as `sftp://user@host/doc.md` is never mistaken for
@@ -64,8 +95,20 @@ static bool IsMarkdownFileName(const string &path) {
 	auto query_pos = path.find_first_of("?#");
 	auto undecorated = PathFileName(query_pos == string::npos ? path : path.substr(0, query_pos));
 	auto revision_pos = undecorated.find_last_of('@');
-	if (revision_pos != string::npos) {
-		undecorated = undecorated.substr(0, revision_pos);
+	if (revision_pos != string::npos && IsMarkdownExtension(LowerExtension(undecorated.substr(0, revision_pos)))) {
+		return true;
+	}
+
+	// 4. A reflog revision (`name.md@HEAD@{0}`) is one revision: the separator is the
+	//    last '@' that is not followed by '{' (issue #107).
+	auto separator = undecorated.size();
+	while ((separator = undecorated.find_last_of('@', separator - 1)) != string::npos) {
+		if (separator + 1 >= undecorated.size() || undecorated[separator + 1] != '{') {
+			return IsMarkdownExtension(LowerExtension(undecorated.substr(0, separator)));
+		}
+		if (separator == 0) {
+			break;
+		}
 	}
 	return IsMarkdownExtension(LowerExtension(undecorated));
 }
@@ -146,7 +189,7 @@ vector<string> MarkdownReader::GetFiles(ClientContext &context, const Value &pat
 
 	for (const auto &file : result) {
 		// Check if the file names a markdown file (tolerating VFS decoration)
-		if (IsMarkdownFileName(file)) {
+		if (IsMarkdownFileName(fs, file)) {
 			try {
 				if (fs.FileExists(file)) {
 					markdown_files.push_back(file);
@@ -296,7 +339,7 @@ unique_ptr<TableRef> MarkdownReader::ReadMarkdownReplacement(ClientContext &cont
 	auto &fs = FileSystem::GetFileSystem(context);
 
 	// Check if this looks like a markdown file or pattern
-	bool is_markdown_file = IsMarkdownFileName(table_name);
+	bool is_markdown_file = IsMarkdownFileName(fs, table_name);
 
 	// Check if this is a glob pattern that might contain markdown files
 	bool is_glob_pattern = false;
