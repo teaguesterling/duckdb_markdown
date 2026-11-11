@@ -114,7 +114,7 @@ static bool DuckBlockListToMarkdownCast(Vector &source, Vector &result, idx_t co
 			continue;
 		}
 
-		string markdown = DuckBlockFunctions::RenderDuckBlocksToMarkdown(list_value);
+		string markdown = MarkdownDuckBlockFunctions::RenderDuckBlocksToMarkdown(list_value);
 		result.SetValue(i, Value(markdown));
 	}
 

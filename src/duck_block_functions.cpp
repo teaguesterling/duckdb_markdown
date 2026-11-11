@@ -48,7 +48,7 @@ static constexpr int MAX_PANDOC_DEPTH = 200;
 // Helper Functions
 //===--------------------------------------------------------------------===//
 
-string DuckBlockFunctions::GetAttribute(const Value &attributes, const string &key) {
+string MarkdownDuckBlockFunctions::GetAttribute(const Value &attributes, const string &key) {
 	if (attributes.IsNull() || attributes.type().id() != LogicalTypeId::MAP) {
 		return "";
 	}
@@ -64,7 +64,7 @@ string DuckBlockFunctions::GetAttribute(const Value &attributes, const string &k
 	return "";
 }
 
-vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
+vector<string> MarkdownDuckBlockFunctions::ParseJsonListItems(const string &content) {
 	vector<string> items;
 	if (content.empty()) {
 		return items;
@@ -87,7 +87,8 @@ vector<string> DuckBlockFunctions::ParseJsonListItems(const string &content) {
 	return items;
 }
 
-void DuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers, vector<vector<string>> &rows) {
+void MarkdownDuckBlockFunctions::ParseJsonTable(const string &content, vector<string> &headers,
+                                                vector<vector<string>> &rows) {
 	if (content.empty()) {
 		return;
 	}
@@ -362,7 +363,7 @@ static string SanitizeForHtmlComment(const string &text) {
 	return safe;
 }
 
-string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
+string MarkdownDuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
 	if (content.empty()) {
 		return "";
 	}
@@ -376,7 +377,7 @@ string DuckBlockFunctions::ExtractPandocText(const string &content, int depth) {
 	return result;
 }
 
-bool DuckBlockFunctions::IsPandocTableFormat(const string &content) {
+bool MarkdownDuckBlockFunctions::IsPandocTableFormat(const string &content) {
 	if (content.empty()) {
 		return false;
 	}
@@ -418,8 +419,8 @@ static string ExtractPandocCellText(yyjson_val *cell_val) {
 	return ExtractPandocTextFromVal(cell_val, 0);
 }
 
-void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers,
-                                          vector<vector<string>> &rows) {
+void MarkdownDuckBlockFunctions::ParsePandocTable(const string &content, vector<string> &headers,
+                                                  vector<vector<string>> &rows) {
 	if (content.empty()) {
 		return;
 	}
@@ -571,8 +572,8 @@ void DuckBlockFunctions::ParsePandocTable(const string &content, vector<string> 
 // worse for the bytes: prose containing an ordinary `*` would grow a backslash
 // that was never in the source.
 
-string DuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_type, const string &content,
-                                                         const Value &attributes) {
+string MarkdownDuckBlockFunctions::RenderInlineElementToMarkdown(const string &element_type, const string &content,
+                                                                 const Value &attributes) {
 	if (element_type == Vocab::INLINE_LINK) {
 		// [text](href "title")
 		string href = GetAttribute(attributes, "href");
@@ -745,9 +746,9 @@ static string EscapeMarkdownText(const string &content, bool at_line_start) {
 // acceptance, not compatibility with anything known, and the difference
 // matters if someone later reasons from its presence.
 
-string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content,
-                                                        int32_t level, const string &encoding,
-                                                        const Value &attributes) {
+string MarkdownDuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_type, const string &content,
+                                                                int32_t level, const string &encoding,
+                                                                const Value &attributes) {
 	string result;
 
 	if (element_type == "frontmatter" || element_type == Vocab::TYPE_METADATA) {
@@ -1047,9 +1048,9 @@ string DuckBlockFunctions::RenderBlockElementToMarkdown(const string &element_ty
 // RenderDuckBlockToMarkdown (unified block/inline rendering)
 //===--------------------------------------------------------------------===//
 
-string DuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const string &element_type,
-                                                     const string &content, int32_t level, const string &encoding,
-                                                     const Value &attributes) {
+string MarkdownDuckBlockFunctions::RenderDuckBlockToMarkdown(const string &kind, const string &element_type,
+                                                             const string &content, int32_t level,
+                                                             const string &encoding, const Value &attributes) {
 	if (kind == Vocab::KIND_BLOCK) {
 		// Delegate to block rendering
 		return RenderBlockElementToMarkdown(element_type, content, level, encoding, attributes);
@@ -1194,7 +1195,7 @@ static string GetAttributeOf(const Value &block_value, const string &key) {
 	if (fields.size() < DUCK_BLOCK_FIELD_COUNT) {
 		return "";
 	}
-	return DuckBlockFunctions::GetAttribute(fields[Vocab::ATTRIBUTES_IDX], key);
+	return MarkdownDuckBlockFunctions::GetAttribute(fields[Vocab::ATTRIBUTES_IDX], key);
 }
 
 // Ordered-list markers. Pandoc carries the style and delimiter separately from
@@ -1631,8 +1632,8 @@ static string RenderDuckBlockRange(const vector<Value> &list_children, idx_t beg
 			result += "\n\n";
 		}
 
-		result +=
-		    DuckBlockFunctions::RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding, attributes);
+		result += MarkdownDuckBlockFunctions::RenderDuckBlockToMarkdown(kind, element_type, content, level, encoding,
+		                                                                attributes);
 		last_was_inline = is_inline;
 		i = consumed_children ? scope_end : i + 1;
 	}
@@ -1717,7 +1718,7 @@ static idx_t RenderMetaValue(const vector<Value> &children, idx_t i, idx_t end, 
 	const string element_type =
 	    fields[Vocab::ELEMENT_TYPE_IDX].IsNull() ? "" : fields[Vocab::ELEMENT_TYPE_IDX].ToString();
 	const string content = fields[Vocab::CONTENT_IDX].IsNull() ? "" : fields[Vocab::CONTENT_IDX].ToString();
-	const string key = DuckBlockFunctions::GetAttribute(fields[Vocab::ATTRIBUTES_IDX], "key");
+	const string key = MarkdownDuckBlockFunctions::GetAttribute(fields[Vocab::ATTRIBUTES_IDX], "key");
 
 	// The version marker deliberately carries no key, which is what keeps a
 	// storage/exchange stamp out of the document's own metadata on export.
@@ -1803,7 +1804,7 @@ static bool HasFrontmatterBlock(const vector<Value> &children) {
 	return false;
 }
 
-string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value) {
+string MarkdownDuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value) {
 	if (blocks_value.IsNull() || blocks_value.type().id() != LogicalTypeId::LIST) {
 		return "";
 	}
@@ -1855,7 +1856,7 @@ string DuckBlockFunctions::RenderDuckBlocksToMarkdown(const Value &blocks_value)
 // duck_block_to_md - Single duck_block to Markdown
 //===--------------------------------------------------------------------===//
 
-void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) {
+void MarkdownDuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) {
 	auto duck_block_type = MarkdownTypes::DuckBlockType();
 	auto markdown_type = MarkdownTypes::MarkdownType();
 
@@ -1925,7 +1926,7 @@ void DuckBlockFunctions::RegisterDuckBlockToMdFunction(ExtensionLoader &loader) 
 // duck_blocks_to_md - List of duck_blocks to Markdown
 //===--------------------------------------------------------------------===//
 
-void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader) {
+void MarkdownDuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader) {
 	auto duck_block_type = MarkdownTypes::DuckBlockType();
 	auto duck_block_list_type = LogicalType::LIST(duck_block_type);
 	auto markdown_type = MarkdownTypes::MarkdownType();
@@ -1966,7 +1967,7 @@ void DuckBlockFunctions::RegisterDuckBlocksToMdFunction(ExtensionLoader &loader)
 // duck_blocks_to_sections - Convert duck_blocks to sections format
 //===--------------------------------------------------------------------===//
 
-void DuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &loader) {
+void MarkdownDuckBlockFunctions::RegisterDuckBlocksToSectionsFunction(ExtensionLoader &loader) {
 	auto duck_block_type = MarkdownTypes::DuckBlockType();
 	auto duck_block_list_type = LogicalType::LIST(duck_block_type);
 	auto markdown_type = MarkdownTypes::MarkdownType();
@@ -2219,7 +2220,7 @@ static void RegisterParseMarkdownToDuckBlocks(ExtensionLoader &loader) {
 	}
 }
 
-void DuckBlockFunctions::Register(ExtensionLoader &loader) {
+void MarkdownDuckBlockFunctions::Register(ExtensionLoader &loader) {
 	RegisterDuckBlockToMdFunction(loader);
 	RegisterDuckBlocksToMdFunction(loader);
 	RegisterDuckBlocksToSectionsFunction(loader);
