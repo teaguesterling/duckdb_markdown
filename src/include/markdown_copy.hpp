@@ -157,7 +157,7 @@ private:
 	// Blocks Mode
 	//
 	// No render helpers here: blocks mode uses the SHARED duck_block renderer
-	// (DuckBlockFunctions::RenderDuckBlocksToMarkdown), called once per local
+	// (MarkdownDuckBlockFunctions::RenderDuckBlocksToMarkdown), called once per local
 	// state in Combine. Sink only rebuilds each row into a duck_block struct.
 };
 

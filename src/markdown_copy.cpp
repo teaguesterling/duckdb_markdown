@@ -394,7 +394,7 @@ void MarkdownCopyFunction::Combine(ExecutionContext &context, FunctionData &bind
 		// used to have its own row-at-a-time walk, which could not absorb inline
 		// runs and rendered `# H` + empty paragraph + inlines with two spurious
 		// blank lines between heading and body.
-		lstate.buffer += DuckBlockFunctions::RenderDuckBlocksToMarkdown(
+		lstate.buffer += MarkdownDuckBlockFunctions::RenderDuckBlocksToMarkdown(
 		    Value::LIST(MarkdownTypes::DuckBlockType(), std::move(lstate.elements)));
 		lstate.elements.clear();
 	}
@@ -588,7 +588,7 @@ string MarkdownCopyFunction::RenderSection(int32_t level, const string &title, c
 // element at a time, it could not absorb a block's inline run, so a paragraph
 // with NULL content and its inline children came out as separate blocks with
 // spurious blank lines between them. Sink now rebuilds the duck_block and
-// Combine calls DuckBlockFunctions::RenderDuckBlocksToMarkdown -- the same
+// Combine calls MarkdownDuckBlockFunctions::RenderDuckBlocksToMarkdown -- the same
 // renderer duck_blocks_to_md uses.
 //
 // Worth recording what deleting it FOUND: routing this path through the shared

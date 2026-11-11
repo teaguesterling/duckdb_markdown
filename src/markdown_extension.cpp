@@ -27,7 +27,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	MarkdownExtractionFunctions::Register(loader);
 
 	// Register duck_block conversion functions
-	DuckBlockFunctions::Register(loader);
+	MarkdownDuckBlockFunctions::Register(loader);
 
 	// Register Markdown types
 	MarkdownTypes::Register(loader);

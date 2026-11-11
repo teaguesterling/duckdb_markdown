@@ -19,7 +19,7 @@ namespace duckdb {
  * These functions enable round-trip document processing:
  *   read_markdown_blocks() -> manipulate -> duck_blocks_to_md()
  */
-class DuckBlockFunctions {
+class MarkdownDuckBlockFunctions {
 public:
 	/**
 	 * @brief Register all duck_block functions with DuckDB
