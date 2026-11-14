@@ -1,0 +1,142 @@
+# name: test/sql/github_issue_111_slug_ids.test
+# description: heading ids follow pandoc's auto_identifiers rule, shared by every duck_blocks reader
+# group: [sql]
+
+#
+# GitHub Issue #111: https://github.com/teaguesterling/duckdb_markdown/issues/111
+# Rule decided by Teague 2026-11-14, for markdown, webbed, panduck and dmb alike.
+#
+# WHY: section ids, links and anchors must agree across readers. The shared rule is
+# pandoc's auto_identifiers (non-GFM):
+#   1. lowercase, across all of Unicode;
+#   2. keep letters and numbers of any script, whitespace, '_', '-' and '.';
+#   3. split on whitespace and join the words with '-' (other hyphens stay as written);
+#   4. drop everything before the first letter;
+#   5. an empty result is 'section'.
+# GenerateSectionId used to keep only ASCII [a-z0-9_-], so 'Café' was 'caf' and
+# '日本' was '' -- and the blocks reader wrote that empty string as the id.
+# ASCII forms (percent-encoding, Punycode) belong at output boundaries.
+#
+
+require markdown
+
+# --- read_markdown_blocks / parse_markdown_to_duck_blocks --------------------------
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# Field guide'))[1].attributes['id'];
+----
+field-guide
+
+# Letters of any script are kept and lowercased.
+query I
+SELECT (parse_markdown_to_duck_blocks('# Café'))[1].attributes['id'];
+----
+café
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# 日本'))[1].attributes['id'];
+----
+日本
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# Zoë''s notes'))[1].attributes['id'];
+----
+zoës-notes
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# ÉCOLE Ωμέγα'))[1].attributes['id'];
+----
+école-ωμέγα
+
+# pandoc's manual examples.
+query I
+SELECT (parse_markdown_to_duck_blocks('# *Dogs*?--in *my* house?'))[1].attributes['id'];
+----
+dogs--in-my-house
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# [HTML](x), [S5](y), or [RTF](z)?'))[1].attributes['id'];
+----
+html-s5-or-rtf
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# 3. Applications'))[1].attributes['id'];
+----
+applications
+
+# Hyphens stay as written; '.' and '_' stay.
+query I
+SELECT (parse_markdown_to_duck_blocks('# a -- b'))[1].attributes['id'];
+----
+a----b
+
+query I
+SELECT (parse_markdown_to_duck_blocks('# v1.2 snake_case'))[1].attributes['id'];
+----
+v1.2-snake_case
+
+# Nothing left: 'section', never an empty id.
+query II
+SELECT (parse_markdown_to_duck_blocks('# 33'))[1].attributes['id'],
+       (parse_markdown_to_duck_blocks('# !!!'))[1].attributes['id'];
+----
+section	section
+
+# Blocks do not de-duplicate (unchanged).
+query II
+SELECT b[1].attributes['id'], b[2].attributes['id']
+FROM (SELECT parse_markdown_to_duck_blocks(E'# Dup\n\n# Dup') AS b);
+----
+dup	dup
+
+# --- md_extract_sections / read_markdown_sections -----------------------------------
+
+query T
+SELECT section.section_id
+FROM (SELECT UNNEST(md_extract_sections(E'# Café\n\nx\n\n## 日本\n\ny\n\n## !!!\n\nz')) AS section)
+ORDER BY section.start_line;
+----
+café
+日本
+section
+
+# Sections keep their existing de-duplication.
+query T
+SELECT section.section_id
+FROM (SELECT UNNEST(md_extract_sections(E'# Dup\n\nx\n\n# Dup\n\ny')) AS section)
+ORDER BY section.start_line;
+----
+dup
+dup-1
+
+# --- the shared fixture: 41 headings, ids measured with pandoc 3.1.3 -------------------
+# test/data/slug_pandoc_cases.txt: title \x01 pandoc id, one per line, ids from
+# `pandoc -f markdown-smart -t html`, one document per heading (no -1/-2 suffixes).
+# Titles are duckdb_dmb's test/differential/slug_cases.txt (37e85b1) and panduck's
+# heading_ids.test (c3cd374), merged: Greek, Cyrillic, CJK, Arabic digits, emoji,
+# U+3000, İstanbul, ẞ, Ǆ, fullwidth, Roman numerals, the empty case.
+
+statement ok
+CREATE TABLE slug_cases AS
+SELECT row_number() OVER () AS i, title, pandoc_id
+FROM read_csv('test/data/slug_pandoc_cases.txt', header := false, delim := chr(1), quote := '', escape := '',
+              columns := {'title': 'VARCHAR', 'pandoc_id': 'VARCHAR'}, strict_mode := false);
+
+# Every case is read (a gate that an empty fixture could pass is not a gate).
+query I
+SELECT count(*) FROM slug_cases;
+----
+41
+
+query I
+SELECT count(*) FROM slug_cases c
+WHERE (SELECT b.attributes['id'] FROM (SELECT unnest(parse_markdown_to_duck_blocks('# ' || c.title)) AS b)
+       WHERE b.element_type = 'heading') IS DISTINCT FROM c.pandoc_id;
+----
+0
+
+query I
+SELECT count(*) FROM slug_cases c
+WHERE (SELECT s.section_id FROM (SELECT UNNEST(md_extract_sections('# ' || c.title)) AS s)) IS DISTINCT FROM c.pandoc_id;
+----
+0

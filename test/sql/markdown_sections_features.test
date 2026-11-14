@@ -16,8 +16,8 @@ ORDER BY section.start_line;
 ----
 api-reference	API Reference	1
 functions	Functions	2
-read_data-path	read_data(path)	3
-write_data-path-data	write_data(path, data)	3
+read_datapath	read_data(path)	3
+write_datapath-data	write_data(path, data)	3
 
 # Test complex backtick headings with parameters
 query TT
@@ -25,7 +25,7 @@ SELECT section.section_id, section.title
 FROM (SELECT UNNEST(md_extract_sections(E'# Docs\n## `parse_ast(source_code, language, [options...])`\nParses AST.')) as section)
 WHERE section.level = 2;
 ----
-parse_ast-source_code-language-options	parse_ast(source_code, language, [options...])
+parse_astsource_code-language-options...	parse_ast(source_code, language, [options...])
 
 # Test mixed formatting in headings (bold, italic, code)
 query TT
@@ -51,8 +51,8 @@ LIMIT 7;
 ----
 api-reference	api-reference	API Reference
 functions	api-reference/functions	Functions
-read_data-path	api-reference/functions/read_data-path	read_data(path)
-write_data-path-data	api-reference/functions/write_data-path-data	write_data(path, data)
+read_datapath	api-reference/functions/read_datapath	read_data(path)
+write_datapath-data	api-reference/functions/write_datapath-data	write_data(path, data)
 classes	api-reference/classes	Classes
 datamanager	api-reference/classes/datamanager	DataManager
 bold-and-code-heading	api-reference/bold-and-code-heading	Bold and code heading
@@ -217,7 +217,7 @@ SELECT section.section_id, section.title
 FROM (SELECT UNNEST(md_extract_sections(E'# API\n## `array[0]->field`')) as section)
 WHERE section.level = 2;
 ----
-array-0-field	array[0]->field
+array0-field	array[0]->field
 
 # Test nested formatting (bold inside code won't work, but code inside bold)
 query TT
@@ -225,7 +225,7 @@ SELECT section.section_id, section.title
 FROM (SELECT UNNEST(md_extract_sections(E'# Doc\n## **Important**: `config.yaml`')) as section)
 WHERE section.level = 2;
 ----
-important-config-yaml	Important: config.yaml
+important-config.yaml	Important: config.yaml
 
 # Test heading with only backticks
 query TT

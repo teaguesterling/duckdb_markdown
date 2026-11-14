@@ -178,6 +178,8 @@ Reads Markdown files and parses them into hierarchical sections.
 
 **Returns:** `(section_id VARCHAR, section_path VARCHAR, level INTEGER, title VARCHAR, content MARKDOWN, parent_id VARCHAR, start_line BIGINT, end_line BIGINT)` or with `filename := true` appends a trailing `filename VARCHAR` column.
 
+- `section_id`, and a heading block's `attributes['id']`, follow pandoc's `auto_identifiers` rule, as every duck_blocks reader does: lowercase; keep letters and numbers of any script, `_`, `-` and `.`; join the words with `-`; drop everything before the first letter; an empty result is `section` (`Field guide` → `field-guide`, `Café` → `café`, `3. Applications` → `applications`). Sections add `-1`, `-2` to repeated ids; blocks do not.
+
 **Notes:**
 - When `extract_metadata := true`, the frontmatter block is included as a special section with `level=0`, `section_id='frontmatter'`, and the **raw, unparsed** text between the `---` (or `+++`) delimiters as the content. This `level` is heading **rank** (0 for frontmatter, 1-6 for headings) and is a different measurement from `read_markdown_blocks`' `level`, which is structural **depth** and is 1 for every top-level element including frontmatter. Nothing in this extension interprets that text as YAML — see [Frontmatter Handling](#frontmatter-handling).
 - The `section_path` column provides hierarchical navigation paths like `"parent/child/grandchild"`.

@@ -19,7 +19,7 @@ ORDER BY section.start_line;
 ----
 main-title	1	Main Title	1
 section-1	2	Section 1	4
-subsection-1-1	3	Subsection 1.1	7
+subsection-1.1	3	Subsection 1.1	7
 section-2	2	Section 2	10
 
 # Test section filtering by level
@@ -76,7 +76,7 @@ ORDER BY section.start_line;
 ----
 Test: Special & Chars! 🚀	test-special-chars
 More: Testing-123	more-testing-123
-Final.Test_Case	final-test_case
+Final.Test_Case	final.test_case
 
 # Test duplicate heading titles get unique IDs
 query TT

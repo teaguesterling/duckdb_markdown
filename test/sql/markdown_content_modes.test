@@ -190,7 +190,7 @@ LIMIT 3;
 ----
 api-reference
 functions
-read_data-path
+read_datapath
 
 # =============================================================================
 # Test: end_line consistency with content mode
@@ -227,11 +227,11 @@ ORDER BY start_line;
 ----
 api-reference	1	4
 functions	5	8
-read_data-path	9	12
-write_data-path-data	13	16
+read_datapath	9	12
+write_datapath-data	13	16
 classes	17	18
 datamanager	19	22
-initialize-config	23	26
+initializeconfig	23	26
 shutdown	27	30
 bold-and-code-heading	31	34
 italic-heading	35	37
