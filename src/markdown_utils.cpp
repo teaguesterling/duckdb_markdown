@@ -3,6 +3,7 @@
 #include <mutex>
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
+#include "utf8proc.hpp"
 #include <algorithm>
 #include <cctype>
 #include <set>
@@ -660,44 +661,60 @@ MarkdownStats CalculateStats(const std::string &markdown_str_in, bool exact) {
 
 std::string GenerateSectionId(const std::string &heading_text,
                               const std::unordered_map<std::string, int32_t> &id_counts) {
-	// Generate GitHub-style anchor IDs
-	std::string id = heading_text;
-
-	// Convert to lowercase. StringUtil::Lower is ASCII-only and byte-safe; passing a
-	// raw `char` to ::tolower is undefined for any UTF-8 byte >= 0x80 (signed char ->
-	// negative, which is neither EOF nor a valid unsigned char) — see the note on
-	// TrimWhitespace in markdown_utils.hpp. Non-ASCII bytes are mapped to '-' below
-	// either way, so this is behaviour-preserving.
-	id = StringUtil::Lower(id);
-
-	// Linear replacement for the three std::regex passes that previously ran
-	// on (untrusted, possibly large) heading text:
-	//   1. R"([^a-z0-9\-_])" -> "-"   (replace disallowed chars with '-')
-	//   2. R"(-+)"           -> "-"   (collapse consecutive hyphens)
-	//   3. R"(^-+|-+$)"      -> ""    (trim leading/trailing hyphens)
+	// #111: pandoc's auto_identifiers rule (non-GFM), shared by every duck_blocks reader
+	// (markdown, webbed, panduck, dmb; decided by Teague 2026-11-14), so section ids,
+	// links and anchors agree across formats. In pandoc's order:
+	//   1. lowercase, per code point, across Unicode (utf8proc's simple mapping);
+	//   2. keep letters (L*) and numbers (N*) of any script, '_', '-' and '.', as
+	//      Haskell's isAlphaNum; whitespace (Zs and \t..\r, as Haskell's isSpace)
+	//      separates words; everything else, combining marks included, is dropped;
+	//   3. join the words with '-' (a hyphen in the text stays: "a -- b" -> "a----b");
+	//   4. drop everything before the first letter ("3. Applications" -> "applications");
+	//   5. an empty result is "section".
+	// It replaces an ASCII-only [a-z0-9_-] rule that turned "Café" into "caf" and "日本"
+	// into "". The scan is linear, as the regex-free version before it was. Invalid
+	// UTF-8 bytes are skipped.
+	std::string id;
 	{
-		std::string out;
-		out.reserve(id.size());
-		bool prev_dash = false;
-		for (char c : id) {
-			bool keep = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
-			char oc = keep ? c : '-';
-			if (oc == '-') {
-				if (!prev_dash) {
-					out += '-';
-				}
-				prev_dash = true;
-			} else {
-				out += oc;
-				prev_dash = false;
+		bool seen_letter = false;
+		bool pending_sep = false;
+		auto bytes = reinterpret_cast<const utf8proc_uint8_t *>(heading_text.data());
+		utf8proc_ssize_t len = static_cast<utf8proc_ssize_t>(heading_text.size());
+		for (utf8proc_ssize_t i = 0; i < len;) {
+			utf8proc_int32_t cp = 0;
+			utf8proc_ssize_t n = utf8proc_iterate(bytes + i, len - i, &cp);
+			if (n <= 0) {
+				i++;
+				continue;
 			}
+			i += n;
+			cp = utf8proc_tolower(cp);
+			utf8proc_category_t cat = utf8proc_category(cp);
+			if (cat == UTF8PROC_CATEGORY_ZS || (cp >= 0x09 && cp <= 0x0D)) {
+				pending_sep = seen_letter;
+				continue;
+			}
+			bool letter = cat >= UTF8PROC_CATEGORY_LU && cat <= UTF8PROC_CATEGORY_LO;
+			bool number = cat >= UTF8PROC_CATEGORY_ND && cat <= UTF8PROC_CATEGORY_NO;
+			if (!letter && !number && cp != '_' && cp != '-' && cp != '.') {
+				continue;
+			}
+			if (!seen_letter) {
+				if (!letter) {
+					continue;
+				}
+				seen_letter = true;
+			}
+			if (pending_sep) {
+				id += '-';
+				pending_sep = false;
+			}
+			utf8proc_uint8_t buf[4];
+			utf8proc_ssize_t w = utf8proc_encode_char(cp, buf);
+			id.append(reinterpret_cast<const char *>(buf), static_cast<size_t>(w));
 		}
-		size_t b = out.find_first_not_of('-');
-		if (b == std::string::npos) {
-			id.clear();
-		} else {
-			size_t e = out.find_last_not_of('-');
-			id = out.substr(b, e - b + 1);
+		if (id.empty()) {
+			id = "section";
 		}
 	}
 
@@ -1671,9 +1688,11 @@ std::vector<MarkdownBlock> ParseBlocks(const std::string &markdown_str, bool str
 			// Store heading level as attribute (H1=1, H2=2, etc.)
 			block.attributes["heading_level"] = std::to_string(heading_level);
 
-			// Generate ID from the heading text
+			// Generate ID from the heading's rendered text, as read_markdown_sections does
+			// and as pandoc does (#111). block.content keeps the source's markup, so
+			// '[HTML](x)' there would put the URL into the id.
 			std::unordered_map<std::string, int32_t> id_counts;
-			block.attributes["id"] = GenerateSectionId(block.content, id_counts);
+			block.attributes["id"] = GenerateSectionId(RenderNodeContent(child), id_counts);
 			break;
 		}
 
