@@ -1,0 +1,172 @@
+# name: test/sql/duck_block_table_cell_escapes.test
+# description: a table cell must survive the writer -- a pipe must not split it, a newline must not end its row
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# Cells were written straight into the row frame:
+#     result += " " + cell + " |";
+# so the cell's own bytes competed with the frame. Two characters break it.
+#
+# A PIPE SPLITS THE CELL. MEASURED on the installed v1.9.8, md -> blocks -> md:
+#     in   | a \| b | c |        (reader stores the cell as `a | b`)
+#     out  | a | b | c |         (writer wrote the bare pipe back)
+#     back {"headers": ["A", "B"], "rows": [["a", "b"]]}
+# One logical cell became two and `c` was dropped, because GFM drops any cell
+# past the header's column count. The reader UNESCAPES `\|` into a bare pipe,
+# so escaping on the way out is the exact inverse and round-trips cleanly.
+#
+# A NEWLINE ENDS THE ROW. MEASURED on the same build, from d3_nl.html, whose
+# second cell holds a list and so arrives as "\n\nx\ny\n\n":
+#     | A | B |
+#     |---|---|
+#     | 1 |
+#                 <- blank line: the table stopped here
+#     x
+#     y
+#     ...
+# A newline becomes <br>, which is what GFM offers for a line break inside a
+# cell (duckdb/community-extensions#3520, merged 2026-11-03, documents this).
+#
+# Cells may legitimately hold inline markdown, so they are NOT passed through
+# EscapeMarkdownText. Only the two characters that break the frame are touched.
+# Reported by android-share-target, 2026-11-11; the pipe half was inferred
+# there and is measured here.
+# =============================================================================
+
+# A pipe in a body cell is escaped, so the row keeps both cells.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["a | b", "c"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| a \| b | c |%';
+----
+true
+
+# INTENT: the cell comes back as the one value it started as.
+query I
+SELECT b.content LIKE '%"a | b", "c"%'
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["a | b", "c"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}))) AS b)
+WHERE b.kind = 'block';
+----
+true
+
+# A pipe in a HEADER cell has the same defect and the same fix.
+query I
+SELECT b.content LIKE '%"a | b", "B"%'
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["a | b", "B"], "rows": [["1", "2"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}))) AS b)
+WHERE b.kind = 'block';
+----
+true
+
+# A newline in a body cell becomes <br> and does not end the row.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["1", "x\ny"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| 1 | x<br>y |%';
+----
+true
+
+# INTENT: the whole thing is still ONE table block after a reparse. Before the
+# fix the newline ended the row and the rest of the cell became loose prose.
+query I
+SELECT count(*)
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["1", "x\ny"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}))) AS b)
+WHERE b.kind = 'block';
+----
+1
+
+# A newline in a header cell likewise.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A\nB", "C"], "rows": [["1", "2"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| A<br>B | C |%';
+----
+true
+
+# Newlines at the edges of a cell add no <br>. The cell webbed hands over for a
+# list-in-a-cell is "\n\nx\ny\n\n", and a leading or trailing break is noise.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["1", "\n\nx\ny\n\n"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| 1 | x<br>y |%';
+----
+true
+
+# A carriage return counts as the same break, and CRLF makes one <br>, not two.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["1", "x\r\ny"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| 1 | x<br>y |%';
+----
+true
+
+# CONTROL: a cell with no pipe and no newline is written through untouched.
+# Cells carry inline markdown, so emphasis, brackets and backticks must NOT be
+# escaped -- this is not EscapeMarkdownText's job.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": ["A", "B"], "rows": [["*a*", "[x](y) `z`"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| *a* | [x](y) `z` |%';
+----
+true

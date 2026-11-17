@@ -1,0 +1,117 @@
+# name: test/sql/duck_block_text_indent.test
+# description: inline text must not open an indented code block, whatever indentation a producer hands over
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# EscapeMarkdownText escapes the characters that would be read as markup, and
+# `#` or `>` only where they begin a line. It did nothing about leading spaces,
+# and four of them open an indented code block. An HTML reader passes source
+# indentation through verbatim, so prose became code.
+#
+# MEASURED on the installed v1.9.8, from a_indent.html (a <div> whose children
+# are indented six spaces in the source):
+#     out    "\n      **Triple Threat Arcade**\n      Driver: **Lincoln**"
+#     reparse ONE block, element_type 'code', content
+#             "  **Triple Threat Arcade**\n  Driver: **Lincoln**"
+# So the ** showed literally to the reader. Any producer can hand over such
+# text, and no other writer path can turn prose into code without a sign.
+#
+# Whitespace that FOLLOWS a real newline is dropped. CommonMark already drops
+# leading whitespace on a paragraph line, so this loses nothing. It is not
+# dropped at the start of the run: EscapeMarkdownText is always called with
+# at_line_start = true, which is a guess about the renderer's position, and a
+# wrong guess there would eat a word separator -- see the control below.
+#
+# webbed is getting the primary fix (HTML whitespace collapsing in the reader,
+# which an HTML reader owes its callers). This is the writer's own guard.
+# Reported by android-share-target, 2026-11-11.
+# =============================================================================
+
+# Six spaces after a newline do not survive into the output.
+query I
+SELECT duck_block_to_md({
+    kind: 'inline',
+    element_type: 'text',
+    content: e'first\n      second',
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{},
+    element_order: 0
+}) = e'first\nsecond';
+----
+true
+
+# INTENT, the measured failure: the producer's own block sequence must not come
+# back as code. Before the fix this reparsed as a single 'code' block.
+query I
+SELECT b.element_type
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_blocks_to_md([
+    {kind: 'inline', element_type: 'text', content: e'\n      ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 0},
+    {kind: 'inline', element_type: 'bold', content: 'Triple Threat Arcade', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 1},
+    {kind: 'inline', element_type: 'text', content: e'\n      Driver: ', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 2},
+    {kind: 'inline', element_type: 'bold', content: 'Lincoln', level: NULL, encoding: 'text', attributes: MAP{}, element_order: 3}
+]))) AS b)
+WHERE b.kind = 'block';
+----
+paragraph
+
+# A tab after a newline opens the same code block and goes the same way.
+query I
+SELECT duck_block_to_md({
+    kind: 'inline',
+    element_type: 'text',
+    content: e'first\n\tsecond',
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{},
+    element_order: 0
+}) = e'first\nsecond';
+----
+true
+
+# CONTROL: the start of the run is NOT a line start that this code can prove,
+# so its whitespace is kept. This text follows a bold element in a real run,
+# where eating the space would join two words.
+query I
+SELECT duck_block_to_md({
+    kind: 'inline',
+    element_type: 'text',
+    content: ' and more',
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{},
+    element_order: 0
+}) = ' and more';
+----
+true
+
+# CONTROL: trailing spaces BEFORE a newline are a GFM hard line break. They sit
+# before the newline, not after it, so they are untouched.
+query I
+SELECT duck_block_to_md({
+    kind: 'inline',
+    element_type: 'text',
+    content: e'first  \nsecond',
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{},
+    element_order: 0
+}) = e'first  \nsecond';
+----
+true
+
+# CONTROL: the escaping this function already did is unchanged.
+query I
+SELECT duck_block_to_md({
+    kind: 'inline',
+    element_type: 'text',
+    content: e'# not a heading\n    > not a quote',
+    level: NULL,
+    encoding: 'text',
+    attributes: MAP{},
+    element_order: 0
+}) = e'\\# not a heading\n\\> not a quote';
+----
+true

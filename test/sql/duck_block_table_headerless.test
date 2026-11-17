@@ -1,0 +1,139 @@
+# name: test/sql/duck_block_table_headerless.test
+# description: a table block with no headers and some rows must render as a table, not raw JSON
+# group: [sql]
+
+require markdown
+
+# =============================================================================
+# A producer may legitimately emit headers: []. webbed states the rule at its
+# src/duck_block_functions.cpp:3227 -- without <thead>, a first body row is the
+# header row only when EVERY cell is <th>, and any other row is data -- so a
+# <td>-only table always arrives here with no headers.
+#
+# The writer parsed such a block correctly and then threw the result away:
+#     ParseJsonTable(content, headers, rows);
+#     parsed = !headers.empty();            // false, though rows are populated
+# so the block fell through to `result = content + "\n\n"` and the reader of the
+# markdown saw a line of JSON. The renderer just below it already handles the
+# case: it emits an empty header row when headers is empty.
+#
+# MEASURED on the installed v1.9.8 before the fix, via
+#   duck_blocks_to_md(list(b)) FROM read_html_blocks('d4_tbody.html')
+#     {"headers":[],"rows":[["1","2"],["3","4"]]}
+# Wikipedia always writes <tbody>, so on webbed v2.14.0 all 11 tables of a
+# sample article came out as JSON (reported by android-share-target, 2026-11-11).
+# =============================================================================
+
+# Rows with no headers render as a GFM table with an empty header row.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": [["1", "2"], ["3", "4"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%|---|---|%| 1 | 2 |%| 3 | 4 |%';
+----
+true
+
+# The raw JSON must not appear in the output at all.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": [["1", "2"], ["3", "4"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%"rows"%';
+----
+false
+
+# INTENT, not shape: the rendered markdown must parse back as a table block that
+# still carries both rows. A LIKE match can pass on output that no longer parses
+# as a table at all.
+query I
+SELECT b.element_type
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": [["1", "2"], ["3", "4"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}))) AS b)
+WHERE b.kind = 'block';
+----
+table
+
+query I
+SELECT b.content LIKE '%"1", "2"%' AND b.content LIKE '%"3", "4"%'
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": [["1", "2"], ["3", "4"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}))) AS b)
+WHERE b.kind = 'block';
+----
+true
+
+# =============================================================================
+# A headerless table takes its column count from the rows. Taking it from the
+# FIRST row alone loses cells: GFM drops any cell past the header's column
+# count, so a later, wider row is silently truncated. Raw JSON did not lose
+# them, so opening the gate above must not trade one data loss for another.
+# The column count is therefore the widest row.
+# =============================================================================
+
+# A later row wider than the first keeps every cell.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": [["1"], ["2", "3"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%| 2 | 3 |%';
+----
+true
+
+# ... and the wider row survives a reparse, which is what "not lost" means.
+query I
+SELECT b.content LIKE '%"3"%'
+FROM (SELECT unnest(parse_markdown_to_duck_blocks(duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": [["1"], ["2", "3"]]}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}))) AS b)
+WHERE b.kind = 'block';
+----
+true
+
+# A table block with neither headers nor rows has nothing to render and keeps
+# the old fall-through, so an empty table is not turned into a bare `|` frame.
+query I
+SELECT duck_block_to_md({
+    kind: 'block',
+    element_type: 'table',
+    content: '{"headers": [], "rows": []}',
+    level: NULL,
+    encoding: 'json',
+    attributes: MAP{},
+    element_order: 0
+}) LIKE '%"rows"%';
+----
+true

@@ -41,13 +41,35 @@ WHERE b.element_type = 'table';
 
 # CR is still escaped correctly when it does occur (blocks can also be built by
 # hand and handed to duck_block_to_md), and must decode back to a real CR.
+#
+# OBSERVED THROUGH <br> SINCE THE WRITER STOPPED PUTTING A BARE LINE ENDING
+# INSIDE A ROW: one there ended the row and spilled the rest of the cell into
+# the document as loose prose, so any run of line endings now renders as a
+# single <br> (see duck_block_table_cell_escapes.test). This still tests the
+# DECODE, and more tightly than the raw CR did, because a <br> can only come
+# from a real CR or LF byte in the cell. MEASURED both ways on this build:
+#     "x\ry"  escape decoded      ->  | x<br>y |
+#     "x\\ry" escape NOT decoded  ->  | x\ry |      (no <br>)
+# so a regression in the decode still fails here. The note above also applies:
+# a literal CR cannot reach a cell from Markdown source at all, which is why
+# nothing downstream depended on seeing one in the output.
 query I
 SELECT duck_block_to_md({'kind': 'block', 'element_type': 'table', 'content':
         '{"headers": ["a"], "rows": [["x' || chr(92) || 'ry"]]}', 'level': 1,
         'encoding': 'json', 'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
-        'element_order': 1}) LIKE '%x' || chr(13) || 'y%';
+        'element_order': 1}) LIKE '%x<br>y%';
 ----
 true
+
+# The control that gives the assertion above its meaning: an UNDECODED escape
+# (JSON `\\r` -- a literal backslash and 'r' in the cell) must NOT yield a <br>.
+query I
+SELECT duck_block_to_md({'kind': 'block', 'element_type': 'table', 'content':
+        '{"headers": ["a"], "rows": [["x' || chr(92) || chr(92) || 'ry"]]}', 'level': 1,
+        'encoding': 'json', 'attributes': MAP{}::MAP(VARCHAR, VARCHAR),
+        'element_order': 1}) LIKE '%<br>%';
+----
+false
 
 # Control character (0x01) in a table cell -> \u0001, not a raw byte.
 query I

@@ -691,9 +691,37 @@ string MarkdownDuckBlockFunctions::RenderInlineElementToMarkdown(const string &e
 static string EscapeMarkdownText(const string &content, bool at_line_start) {
 	string out;
 	out.reserve(content.size());
+	bool line_start = at_line_start;
 	for (size_t i = 0; i < content.size(); i++) {
+		// Four spaces, or one tab, at the start of a line open an INDENTED CODE
+		// BLOCK. A producer that passes source indentation through hands such
+		// text over routinely -- an HTML reader emits the whitespace between
+		// tags verbatim -- and the output then renders as code with its markup
+		// showing literally, which is the one way this writer can change a
+		// block's type behind the caller's back. CommonMark already drops
+		// leading whitespace on a paragraph line, so dropping it here loses
+		// nothing.
+		//
+		// NEVER at i == 0, where line_start is still the caller's at_line_start.
+		// That is a GUESS about the renderer's position (see INLINE_TEXT below),
+		// and for a `#` a wrong guess costs one backslash, while for whitespace
+		// it would eat a word separator -- the " and" of a run that follows a
+		// bold element. Only a real '\n' in this string proves a line start.
+		//
+		// The first character after the skipped run is still AT a line start, so
+		// line_start stays true across the skip and the '#'/'>' guard below
+		// keeps firing on `"\n    > quoted"`.
+		if (line_start && i > 0) {
+			size_t ws = i;
+			while (ws < content.size() && (content[ws] == ' ' || content[ws] == '\t')) {
+				ws++;
+			}
+			if (ws > i) {
+				i = ws - 1; // the loop's ++ lands on the first non-whitespace
+				continue;
+			}
+		}
 		const char c = content[i];
-		const bool line_start = (i == 0) ? at_line_start : (content[i - 1] == '\n');
 		bool escape = false;
 		switch (c) {
 		case '\\':
@@ -725,6 +753,51 @@ static string EscapeMarkdownText(const string &content, bool at_line_start) {
 			out += '\\';
 		}
 		out += c;
+		line_start = (c == '\n');
+	}
+	return out;
+}
+
+//! Make one table cell safe to place inside a `| ... |` row.
+//!
+//! Only the two characters that break the row frame are touched. A cell
+//! legitimately carries inline markdown -- emphasis, links, code spans -- so it
+//! is NOT passed through EscapeMarkdownText, which would show that markup
+//! literally.
+//!
+//! A '|' would start a new cell, so it is escaped. The reader UNESCAPES `\|`
+//! back to a bare pipe, which makes this the exact inverse and lets a cell
+//! round-trip through md -> blocks -> md unchanged. Written raw, `a | b` came
+//! back as two cells and pushed the row's last cell past the column count,
+//! where GFM drops it.
+//!
+//! A newline ENDS THE ROW, so any run of line endings becomes one `<br>` --
+//! GFM's own line break inside a cell (duckdb/community-extensions#3520). One
+//! `<br>` per run, so CRLF does not make two and a blank line inside a cell
+//! does not make a gap no row can hold.
+static string EscapeTableCell(const string &cell) {
+	// Line endings at the edges carry no break worth keeping: webbed hands over
+	// "\n\nx\ny\n\n" for a list inside a cell, and a leading or trailing <br> is
+	// noise in every renderer.
+	const size_t begin = cell.find_first_not_of("\r\n");
+	if (begin == string::npos) {
+		return "";
+	}
+	const size_t end = cell.find_last_not_of("\r\n");
+	string out;
+	out.reserve(end - begin + 1);
+	for (size_t i = begin; i <= end; i++) {
+		const char c = cell[i];
+		if (c == '\n' || c == '\r') {
+			while (i + 1 <= end && (cell[i + 1] == '\n' || cell[i + 1] == '\r')) {
+				i++;
+			}
+			out += "<br>";
+		} else if (c == '|') {
+			out += "\\|";
+		} else {
+			out += c;
+		}
 	}
 	return out;
 }
@@ -868,7 +941,14 @@ string MarkdownDuckBlockFunctions::RenderBlockElementToMarkdown(const string &el
 			// Try standard {"headers": [...], "rows": [...]} format first
 			if (content.find("\"headers\"") != string::npos) {
 				ParseJsonTable(content, headers, rows);
-				parsed = !headers.empty();
+				// ROWS ALONE ARE A TABLE. headers: [] is a legitimate shape, not
+				// a parse failure: webbed promotes a first body row to the
+				// header only when every cell is a <th>, so a <td>-only table
+				// always arrives with none. Reading `parsed` off the headers
+				// threw a correctly parsed table away and fell through to the
+				// raw JSON below, which is what the reader of the markdown then
+				// saw. Same test as the Pandoc branch underneath.
+				parsed = !headers.empty() || !rows.empty();
 			}
 			// Try Pandoc table format if standard format didn't work
 			if (!parsed && IsPandocTableFormat(content)) {
@@ -878,17 +958,26 @@ string MarkdownDuckBlockFunctions::RenderBlockElementToMarkdown(const string &el
 		}
 
 		if (parsed && (!headers.empty() || !rows.empty())) {
-			// Determine column count
+			// Determine column count. With no headers it comes from the WIDEST
+			// row, not the first one: GFM drops every cell past the header's
+			// column count, so a narrow first row would silently truncate each
+			// wider row below it. The raw JSON this path replaced lost no cells,
+			// and opening the gate above must not trade one data loss for
+			// another.
 			size_t col_count = headers.size();
-			if (col_count == 0 && !rows.empty()) {
-				col_count = rows[0].size();
+			if (col_count == 0) {
+				for (const auto &row : rows) {
+					if (row.size() > col_count) {
+						col_count = row.size();
+					}
+				}
 			}
 
 			// Render headers (or empty header row if we only have body rows)
 			result = "|";
 			if (!headers.empty()) {
 				for (const auto &h : headers) {
-					result += " " + h + " |";
+					result += " " + EscapeTableCell(h) + " |";
 				}
 			} else {
 				for (size_t i = 0; i < col_count; i++) {
@@ -903,7 +992,7 @@ string MarkdownDuckBlockFunctions::RenderBlockElementToMarkdown(const string &el
 			for (const auto &row : rows) {
 				result += "|";
 				for (const auto &cell : row) {
-					result += " " + cell + " |";
+					result += " " + EscapeTableCell(cell) + " |";
 				}
 				result += "\n";
 			}
