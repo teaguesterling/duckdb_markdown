@@ -1793,3 +1793,78 @@ DuckDB, so it is no help in identifying what was built.
 Reference implementations, reached independently and in agreement:
 `duckdb_markdown/src/include/duckdb_compat.hpp` and
 `duckdb_panduck/src/include/panduck_duckdb_compat.hpp` (`AddNamedParameter`).
+
+### 23. `Vector::SetValue` casts through `DefaultCastAs` — and your own casts are invisible to it
+
+Recovered from a note taken against duckdb main in **May 2026**, on an abandoned
+branch (`docs/DUCKDB_API_MIGRATION.md` on `feat/wikilinks-tags-issue-17`), and
+re-measured against the shipped v2.0.0 tree before being written here. The
+mechanism survived; the symptom the note recorded did not.
+
+duckdb commit `ffdceae563` (2026-04-09, "Move Vector::SetValue to virtual
+VectorBuffer::SetValue") made `Vector::SetValue` a dispatcher
+(`src/common/types/vector.cpp:350`), and each concrete buffer opens with a cast
+guard. It is still there in v2.0.0 — `src/common/vector/string_vector.cpp:94`
+and `src/common/vector/flat_vector.cpp:280`:
+
+```cpp
+if (!val.IsNull() && val.type() != type) {
+    SetValue(type, index, val.DefaultCastAs(type));
+    return;
+}
+```
+
+`Value::DefaultCastAs` builds a **stack-local `CastFunctionSet`**
+(`src/common/types/value.cpp:2192`). A cast your extension registered with
+`RegisterCastFunction` lives in the catalog's set, not that one, so it is not
+reachable from here.
+
+#### What the note said, and what v2.0.0 does
+
+The note recorded a failed cast returning a NULL `Value`, so the write landed as
+NULL with validity cleared and no error — a silent data loss. On v2.0.0 that is
+not the behaviour. `DefaultCastAs` routes through `CastAs`, which raises on
+failure (`value.cpp:2182`, reached through `CastAs` at `:2174`):
+
+```
+Invalid Input Error: Failed to cast value: ...
+```
+
+`DefaultTryCastAs` is the non-throwing variant and the buffers do not call it.
+So on this line the symptom is an exception thrown from inside a vector write,
+not a quiet NULL. Pin the behaviour you actually get before you port a shim for
+the one you read about.
+
+#### An aliased VARCHAR is not the case to worry about
+
+Writing a plain `Value(string)` into a column typed as an aliased VARCHAR does
+take the guard, because the alias makes `val.type() != type` true. The default
+cast set then handles VARCHAR to VARCHAR and the write succeeds.
+
+Measured, not assumed: `duck_block_to_md` declares
+`MarkdownTypes::MarkdownType()` as its return type and writes
+`result.SetValue(i, Value(markdown))`
+(`src/duck_block_functions.cpp:1950` and `:1990`). Its tests pass on both the
+release line and the v2.0 next line in run `44013019970`.
+
+The exposure is narrower than the note implied: a target type whose cast **only**
+your extension knows, and a nested `Value::MAP` / `Value::STRUCT` /
+`Value::LIST` whose child types are structurally close to, but not equal to, the
+column's bind-time types.
+
+#### The fix, if you hit it
+
+Cast with the context, so the catalog's cast set applies:
+
+```cpp
+// Instead of:
+vec.SetValue(idx, val);
+
+// Use:
+vec.SetValue(idx, val.CastAs(context, vec.GetType()));
+```
+
+Both lines carry that signature, so it needs no feature probe. `Vector::Append(Value)`
+is not an escape — it reaches `SetValue` internally and takes the same guard.
+Direct `FlatVector::GetDataMutable<T>` writes do avoid it, but they carry the
+const split in §3.
