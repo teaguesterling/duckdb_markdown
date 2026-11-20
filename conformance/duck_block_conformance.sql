@@ -89,7 +89,15 @@ CREATE OR REPLACE MACRO duck_block_is_valid(elem) AS (
     AND elem.element_type IS NOT NULL
     AND list_contains(duck_block_declared_encodings(), elem.encoding)
     AND elem.level IS NOT NULL
-    AND elem.level >= 1
+    -- LEVEL 0 IS THE EXPLICIT DOCUMENT ROOT, and nothing else may sit there. Mirrors
+    -- src/validation.cpp's `is_document_root`: the extension has accepted this shape
+    -- since the 1.4 amendment of 2026-09-16, and these macros refused it, so the two
+    -- encodings of one rule disagreed. A negative level is still refused, because
+    -- neither arm below admits one.
+    AND (
+        elem.level >= 1
+        OR (elem.level = 0 AND elem.kind = 'block' AND elem.element_type = 'document')
+    )
     AND elem.element_order IS NOT NULL
     AND elem.element_order >= 0
 );
@@ -111,22 +119,6 @@ CREATE OR REPLACE MACRO duck_block_is_valid(elem) AS (
 CREATE OR REPLACE MACRO duck_block_declared_types() AS (
     [
         'blockquote', 'blocks', 'bold', 'bool', 'caption', 'cite', 'code', 'deflist',
-        -- CAUTION: this comment block contains no apostrophe and no square bracket.
-        -- Both checkers scrape this list by taking the text up to the first closing
-        -- bracket and then matching single-quoted runs, so either character in comment
-        -- prose truncates the list or invents a type name out of the prose itself.
-        -- Measured, not assumed: an earlier draft of this very comment cut the scraped
-        -- list from 44 names to 9.
-        --
-        -- The entry named document below is TYPE_DOCUMENT, which duck_block_utils added
-        -- in v3.4.0 as an amendment to SPEC_VERSION 1.4 with no version bump. ADDED HERE
-        -- BY HAND rather than re-vendored: upstream vendor/duck_block_conformance.sql at
-        -- v3.5.0 (e00db698) still does not list it, so the upstream header and the
-        -- upstream conformance SQL disagree with each other. Two encodings of one
-        -- vocabulary with no comparator between them; this repo runs that comparator
-        -- via scripts/check_duck_block_vocabulary.py, which is why the gap is visible
-        -- here and in no other consumer. Declaring it is a LINT-list change only: an
-        -- undeclared type is reported, never refused, so nothing about validity moves.
         'div', 'document', 'figure', 'generic', 'heading', 'hr', 'image', 'inlines',
         'italic',
         'lineblock', 'linebreak', 'link', 'list', 'list_item', 'map', 'math', 'metadata',
@@ -167,6 +159,23 @@ CREATE OR REPLACE MACRO duck_blocks_errors(blocks) AS TABLE (
            'Invalid kind ' || chr(39) || coalesce(el.kind, 'NULL') || chr(39)
              || '; see duck_block_kind_names()' AS message
       FROM e WHERE NOT list_contains(duck_block_declared_kinds(), el.kind)
+    UNION ALL
+    -- Rules over the LIST (field = 'list'): the two expressible without an ancestor
+    -- stack. L1: element_order dense from 0 in LIST POSITION order (not sorted by
+    -- order -- a list whose orders are out of sequence is the thing being caught).
+    SELECT el.element_order, 'list',
+           'element_order starts at ' || el.element_order || '; must start at 0'
+      FROM e WHERE pos = 1 AND el.element_order <> 0
+    UNION ALL
+    SELECT ord, 'list', 'element_order gap after ' || prev
+      FROM (SELECT el.element_order AS ord, lag(el.element_order) OVER (ORDER BY pos) AS prev FROM e)
+     WHERE prev IS NOT NULL AND ord <> prev + 1
+    UNION ALL
+    -- L2: the shallowest element is at level 1. L4/L5 (required ancestors) need a
+    -- stack and are reported by duck_blocks_validate() only.
+    SELECT (SELECT el.element_order FROM e ORDER BY el.level, pos LIMIT 1), 'list',
+           'shallowest element is at level ' || min(el.level) || '; top level is 1'
+      FROM e HAVING min(el.level) > 1
     UNION ALL
     SELECT el.element_order, 'element_type', 'element_type is NULL'
       FROM e WHERE el.element_type IS NULL

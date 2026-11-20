@@ -3,8 +3,8 @@
 // VENDORED COPY -- do not edit by hand without re-syncing from upstream.
 //
 // Source: teaguesterling/duckdb_duck_block_utils, src/include/duck_block_vocabulary.hpp
-// Vendored at upstream commit: e00db698 (SPEC_VERSION 1.4)
-// Upstream release: duck_block_utils v3.5.0 (2026-10-03). SPEC_VERSION is
+// Vendored at upstream commit: c978e076 (SPEC_VERSION 1.4)
+// Upstream release: duck_block_utils v4.2.0 (2026-11-20). SPEC_VERSION is
 // UNCHANGED at 1.4 by upstream's deliberate choice -- v3.4.0 added TYPE_DOCUMENT
 // without a version bump, so the version alone cannot tell a copy that has it
 // from one that does not. Test for TYPE_DOCUMENT, not for SPEC_VERSION.
