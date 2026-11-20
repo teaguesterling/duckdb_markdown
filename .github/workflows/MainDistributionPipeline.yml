@@ -426,10 +426,22 @@ jobs:
             reg_version=$(printf '%s\n' "$live" | grep -m1 -o "duckdb_version:.*'v[0-9][^']*'" | grep -o "'v[^']*'" | tr -d "'" || true)
             reg_commit=$(printf '%s\n' "$live" | grep -m1 -o "duckdb_commit:.*'[0-9a-f]\{40\}'" | grep -o '[0-9a-f]\{40\}' || true)
             reg_tools=$(printf '%s\n' "$live" | grep -m1 -o "inputs.ci_tools_version || '[^']*'" | grep -o "'[^']*'$" | tr -d "'" || true)
-            # A duckdb_tag: line with a VALUE on it means the registry went back to naming a
-            # tag, and this parse is then reading the wrong fields. The two input DECLARATIONS
-            # (`duckdb_tag:` with nothing after the colon) are not that, and must not fire.
-            tag_passed=$(printf '%s\n' "$live" | grep -cE "duckdb_tag:[[:space:]]+[^[:space:]]" || true)
+            # A duckdb_tag: line with a LITERAL DEFAULT on it -- a quoted 'v...' version or a
+            # 40-hex commit -- means the registry went back to naming a tag, and this parse is
+            # then reading the wrong fields. The two input DECLARATIONS (`duckdb_tag:` with
+            # nothing after the colon) are not that, and must not fire.
+            #
+            # NOR IS A PURE OVERRIDE PASS-THROUGH. Since community-extensions cf556cd0
+            # (2026-11-19, "Support arbitrary DuckDB version and commit overrides") the build
+            # job passes duckdb_tag the expression
+            #   inputs.duckdb_tag || (inputs.duckdb_commit != '' && inputs.duckdb_version || '')
+            # (written here without its expression delimiters, which Actions would expand even
+            # inside this comment), which is empty unless a caller supplies an override, so a registry build still
+            # pins through the duckdb_version: and duckdb_commit: literals read above. The
+            # rule counted that line as "passes a value" and failed every run. Measured against
+            # that build.yml: the old rule fired on 2 lines, this one on 0; with a literal
+            # 'v2.0.0' planted in one duckdb_tag line, this one fires on 1.
+            tag_passed=$(printf '%s\n' "$live" | grep -E "duckdb_tag:[[:space:]]+[^[:space:]]" | grep -cE "'v[0-9][^']*'|[0-9a-f]{40}" || true)
             if [ "$tag_passed" -ne 0 ]; then
               echo "::error::community-extensions at ${sha:-main} passes a duckdb_tag: value again on ${tag_passed} line(s); this check reads duckdb_version:/duckdb_commit: instead, so re-read build.yml and update this job"
               echo "duckdb-pin: FAILED, registry passes duckdb_tag: again" >> "$summary"; exit 1
