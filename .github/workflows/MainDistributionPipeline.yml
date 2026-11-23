@@ -246,7 +246,7 @@ jobs:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v2.0.0
+      duckdb_version: v2.0.1
       ci_tools_version: v2.0-cyanoptera
       extension_name: markdown
       # Pin to vcpkg commit with verified cmark-gfm support (tested 2025-01-08)
@@ -271,7 +271,7 @@ jobs:
     # required-check configuration may key on this job name.
     runs-on: ubuntu-latest
     env:
-      DUCKDB_VERSION: v2.0.0
+      DUCKDB_VERSION: v2.0.1
       DUCKDB_NEXT: v2.0-cyanoptera
       # What the community registry builds BY DEFAULT, re-measured 2026-10-25 against
       # community-extensions at f13027e5 after the registry restructured its build.yml.
@@ -282,10 +282,10 @@ jobs:
       # registry no longer PASSES a `duckdb_tag:` input at all (its two remaining mentions as
       # a passed value are commented out), it passes `duckdb_version:` plus `duckdb_commit:`.
       # The old comment here said no `v2*` ref existed upstream. That has stopped being true:
-      # 2.0.0 shipped, `refs/tags/v2.0.0` resolves to DUCKDB_REGISTRY_COMMIT, and the step
+      # 2.0.1 shipped, `refs/tags/v2.0.1` resolves to DUCKDB_REGISTRY_COMMIT, and the step
       # below asserts that pairing instead of trusting the label.
-      DUCKDB_REGISTRY_VERSION: v2.0.0
-      DUCKDB_REGISTRY_COMMIT: d54cbbe3df17e8e5ce68312f483b4155836112aa
+      DUCKDB_REGISTRY_VERSION: v2.0.1
+      DUCKDB_REGISTRY_COMMIT: 8d78114e90a53823803660bf821f6073ac87da8c
       DUCKDB_REGISTRY_TOOLS: v2.0-cyanoptera
       # THERE IS NO VARIANT CONSTANT ANY MORE. build.py still carries a
       # `'variegata' in desc` branch for a v1.5.6 build, but the registry does not
@@ -522,7 +522,7 @@ jobs:
       - name: Download the built extension
         uses: actions/download-artifact@v4
         with:
-          name: markdown-v2.0.0-extension-linux_amd64
+          name: markdown-v2.0.1-extension-linux_amd64
           path: ci-ext
       - name: Install a matching DuckDB CLI
         run: |
@@ -532,7 +532,7 @@ jobs:
           # (hyphen, tarball) and the archive holds a single `duckdb` at its root.
           # Measured 2026-11-01: the old .zip URL 404s at v2.0.0. A plain version
           # bump here would have 404'd this step on every run.
-          curl -fsSL -o duckdb.tar.gz https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb-cli-linux-amd64.tar.gz
+          curl -fsSL -o duckdb.tar.gz https://github.com/duckdb/duckdb/releases/download/v2.0.1/duckdb-cli-linux-amd64.tar.gz
           mkdir -p ci-bin
           tar -xzf duckdb.tar.gz -C ci-bin
           chmod +x ci-bin/duckdb
@@ -563,7 +563,7 @@ jobs:
     # v2.0.0 (0c2efa1c), so no style changed -- only whether the config was found.
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v2.0-cyanoptera
     with:
-      duckdb_version: v2.0.0
+      duckdb_version: v2.0.1
       ci_tools_version: v2.0-cyanoptera
       extension_name: markdown
       format_checks: 'format'
@@ -588,7 +588,7 @@ jobs:
       - name: Download WASM artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: markdown-v2.0.0-extension-wasm_*
+          pattern: markdown-v2.0.1-extension-wasm_*
           path: wasm-artifacts
       - name: Static symbol check (cmark-gfm must be linked, not unresolved)
         run: bash test/wasm/run_wasm_checks.sh wasm-artifacts
@@ -599,8 +599,8 @@ jobs:
         run: |
           set -uo pipefail
           timeout 300 npm install --no-save
-          mkdir -p repo/v2.0.0/wasm_eh
-          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v2.0.0-extension-wasm_eh/markdown.duckdb_extension.wasm" \
-             repo/v2.0.0/wasm_eh/
+          mkdir -p repo/v2.0.1/wasm_eh
+          cp "$GITHUB_WORKSPACE/wasm-artifacts/markdown-v2.0.1-extension-wasm_eh/markdown.duckdb_extension.wasm" \
+             repo/v2.0.1/wasm_eh/
           timeout 240 node load_test.cjs --repo repo --name markdown --platform eh \
             --query "SELECT md_to_html('# H') AS h" --expect "<h1>"
