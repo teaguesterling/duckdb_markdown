@@ -453,8 +453,15 @@ jobs:
             registry="${reg_version}/${reg_commit}/${reg_tools}"
             recorded="${DUCKDB_REGISTRY_VERSION}/${DUCKDB_REGISTRY_COMMIT}/${DUCKDB_REGISTRY_TOOLS}"
             if [ "$registry" != "$recorded" ]; then
-              echo "::error::the community registry now builds version/commit/ci-tools ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants after checking what the move means for this repo"
-              echo "duckdb-pin: FAILED, registry ${registry} vs recorded ${recorded}" >> "$summary"; exit 1
+              # On a pull_request the registry moving is not this PR's fault, so it warns;
+              # a push to main still fails. The pin-equals-tag checks above stay hard. (Teague, 2026-11-24)
+              if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+                echo "::warning::the community registry now builds version/commit/ci-tools ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants after checking what the move means for this repo (pull_request: a warning only, because the registry moves outside this PR; a push to main still fails)"
+                echo "duckdb-pin: WARNING (pull_request), registry ${registry} vs recorded ${recorded}" >> "$summary"; exit 0
+              else
+                echo "::error::the community registry now builds version/commit/ci-tools ${registry} (at ${sha:-main}) but this workflow records ${recorded}; update the DUCKDB_REGISTRY_* constants after checking what the move means for this repo"
+                echo "duckdb-pin: FAILED, registry ${registry} vs recorded ${recorded}" >> "$summary"; exit 1
+              fi
             fi
             # Restated every run so it cannot go quiet: the registry's default build target and
             # the line this repo ships are different things, on purpose.
